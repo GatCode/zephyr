@@ -1,18 +1,10 @@
-/*
-	prj.conf file content:
-		CONFIG_BT=y
-		CONFIG_BT_BROADCASTER=y
-		CONFIG_BT_EXT_ADV=y
-		CONFIG_BT_DEBUG_LOG=y
-		CONFIG_BT_DEVICE_NAME="Extended Advertiser"
-*/
-
 #include <bluetooth/bluetooth.h>
 
 static uint64_t packet_id = 0;
 
 struct adv_payload {
 	uint8_t id[8];
+	uint8_t timestamp[8];
 };
 
 static struct adv_payload payload = { .id = {0,0,0,0,0,0,0,0} };
@@ -33,17 +25,22 @@ void sent_cb(struct bt_le_ext_adv *adv, struct bt_le_ext_adv_sent_info *info)
         payload.id[i] = packet_id >> (8 * i);
     }
 
+	uint64_t timestamp = k_uptime_ticks();
+	for (int i = 0; i < 8; i++) {
+        payload.timestamp[i] = timestamp >> (8 * i);
+    }
+
 	int err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err) {
 		printk("Failed to set ad (err %d)\n", err);
 		return;
 	}
 
-	printk("Sending Packet: %lli\n", packet_id);
+	// k_sleep(K_MSEC(1000));
+	// printk("Sending Packet TS: %llu\n", timestamp);
 
+	// printk("Sending Packet: %lli\n", packet_id);
 	packet_id++;
-
-	k_sleep(K_MSEC(20));
 
 	err = bt_le_ext_adv_start(adv, &ext_adv_start_param);
 	if (err) {
@@ -68,7 +65,7 @@ void main(void)
 	}
 
 	struct bt_le_adv_param param = {
-		.options =  BT_LE_ADV_OPT_EXT_ADV,
+		.options =  BT_LE_ADV_OPT_EXT_ADV | BT_LE_ADV_OPT_CODED,
 		.interval_min = 0x0020 /* 20ms */,
 		.interval_max = 0x0020 /* 20ms */,
 		.secondary_max_skip = 0,

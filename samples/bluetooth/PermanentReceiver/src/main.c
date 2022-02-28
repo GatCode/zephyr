@@ -1,21 +1,27 @@
-/*
-	prj.conf file content:
-		CONFIG_BT=y
-		CONFIG_BT_OBSERVER=y
-		CONFIG_BT_EXT_ADV=y
-		CONFIG_BT_DEBUG_LOG=y
-		CONFIG_BT_DEVICE_NAME="Extended Receiver"
-		CONFIG_BT_BUF_EVT_RX_COUNT=180
-*/
-
 #include <bluetooth/bluetooth.h>
 
-static uint64_t last_packet_id = 0;
-static uint64_t failed_messages = 0;
-static uint64_t received_messages = 0;
+struct recv_stat {
+	uint64_t recv;
+	uint64_t lost;
+	uint64_t last_packet_id;
+	uint64_t avg_latency;
+	uint64_t n_avg;
+};
+
+static struct recv_stat statistic;
+
+static void print_stat(char *message, struct recv_stat *stat)
+{
+	uint64_t total_packets = stat->recv + stat->lost;
+
+	printk("%s: Received %llu/%llu (%.2f%%) - Total packets lost %llu - moving avg latency %.2f ms\n",
+		message, stat->recv, total_packets,
+		(float)stat->recv * 100 / total_packets, stat->lost, k_cyc_to_ns_floor64(stat->avg_latency) / 1000000.0);
+}
 
 struct adv_payload {
 	uint8_t id[8];
+	uint8_t timestamp[8];
 };
 
 static bool data_cb(struct bt_data *data, void *user_data)
@@ -46,20 +52,37 @@ void scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type,
 		(uint64_t)payload->id[6] << 6 * 8 |
 		((uint64_t)payload->id[7] << 7 * 8);
 
-		if(sender_packet_id != last_packet_id + 1) {
-			failed_messages++;
+		uint64_t sender_timestamp =
+		(uint64_t)payload->timestamp[0] << 0 * 8 |
+		(uint64_t)payload->timestamp[1] << 1 * 8 |
+		(uint64_t)payload->timestamp[2] << 2 * 8 |
+		(uint64_t)payload->timestamp[3] << 3 * 8 |
+		(uint64_t)payload->timestamp[4] << 4 * 8 |
+		(uint64_t)payload->timestamp[5] << 5 * 8 |
+		(uint64_t)payload->timestamp[6] << 6 * 8 |
+		((uint64_t)payload->timestamp[7] << 7 * 8);
+
+		// printk("Received Packet %.2f ms\n", k_cyc_to_ns_floor64(sender_timestamp - k_uptime_ticks()) / 1000000.0);
+
+		if(sender_packet_id != statistic.last_packet_id + 1) {
+			statistic.lost++;
 		} else {
-			received_messages++;	
+			statistic.recv++;
 		}
 
-		printk("id: %llu - received: %lli - failed: %lli\n", sender_packet_id, received_messages, failed_messages);
+		statistic.avg_latency = statistic.avg_latency + (k_uptime_ticks() - sender_timestamp) / statistic.n_avg;
+		statistic.n_avg++;
 
-		last_packet_id = sender_packet_id;
+		print_stat("Statistic: ", &statistic);
+		statistic.last_packet_id = sender_packet_id;
 	}
 }
 
 void main(void)
 {
+	statistic.avg_latency = 0;
+	statistic.n_avg = 1;
+
 	int err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
@@ -68,9 +91,9 @@ void main(void)
 
 	struct bt_le_scan_param param = {
         .type = BT_LE_SCAN_TYPE_PASSIVE,
-        .options = BT_LE_SCAN_OPT_FILTER_DUPLICATE,
-        .interval = 0x0040  /* 40 ms */,
-        .window = 0x0040 /* 40 */,
+        .options = BT_LE_SCAN_OPT_CODED | BT_LE_SCAN_OPT_NO_1M | BT_LE_SCAN_OPT_FILTER_DUPLICATE,
+        .interval = 0x0c80  /* 40 ms / 2s */,
+        .window = 0x0c80 /* 40 / 2s */,
 		.timeout = 0,
 		.interval_coded = 0,
         .window_coded = 0,
