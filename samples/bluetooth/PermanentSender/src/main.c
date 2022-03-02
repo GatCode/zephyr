@@ -3,11 +3,16 @@
 #include <drivers/counter.h>
 #include <drivers/gpio.h>
 
+#include <drivers/timer/nrf_rtc_timer.h>
+#include <hal/nrf_rtc.h>
+#include <hal/nrf_timer.h>
+
 static uint64_t packet_id = 0;
+static uint64_t rtc_offset = 0;
 
 struct adv_payload {
 	uint8_t id[8];
-	uint8_t timestamp[4];
+	uint8_t timestamp[8];
 };
 
 static struct adv_payload payload = { .id = {0,0,0,0,0,0,0,0} };
@@ -35,11 +40,17 @@ void start_button_pressed(const struct device *dev, struct gpio_callback *cb, ui
 {
 	counter_start(counter_dev);
 	packet_id = 0;
+	rtc_offset = z_nrf_rtc_timer_read();
 }
 
 void status_button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
-	printk("Packet ID: %llu\n", packet_id);
+	// printk("Packet ID: %llu\n", packet_id);
+	uint32_t ticks = 0;
+	// counter_get_value(counter_dev, &ticks);
+	
+	printk("Button pressed at %llu\n", z_nrf_rtc_timer_read() - rtc_offset);
+	// printk("Freq: %u\n", counter_get_frequency(counter_dev));
 }
 
 void sent_cb(struct bt_le_ext_adv *adv, struct bt_le_ext_adv_sent_info *info)
@@ -49,9 +60,9 @@ void sent_cb(struct bt_le_ext_adv *adv, struct bt_le_ext_adv_sent_info *info)
         payload.id[i] = packet_id >> (8 * i);
     }
 
-	uint32_t timestamp = 0;
-	counter_get_value(counter_dev, &timestamp);
-	for (int i = 0; i < 4; i++) {
+	uint64_t timestamp = z_nrf_rtc_timer_read() - rtc_offset;
+	// counter_get_value(counter_dev, &timestamp);
+	for (int i = 0; i < 8; i++) {
         payload.timestamp[i] = timestamp >> (8 * i);
     }
 
@@ -62,7 +73,7 @@ void sent_cb(struct bt_le_ext_adv *adv, struct bt_le_ext_adv_sent_info *info)
 	}
 
 	k_sleep(K_MSEC(10));
-	printk("Sending Packet number %llu at TS: %u\n", packet_id, timestamp);
+	// printk("Sending Packet number %llu at TS: %u\n", packet_id, timestamp);
 
 	// printk("Sending Packet: %lli\n", packet_id);
 	packet_id++;
