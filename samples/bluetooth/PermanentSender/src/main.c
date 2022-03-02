@@ -1,10 +1,13 @@
 #include <bluetooth/bluetooth.h>
+#include <device.h>
+#include <drivers/counter.h>
+#include <drivers/gpio.h>
 
 static uint64_t packet_id = 0;
 
 struct adv_payload {
 	uint8_t id[8];
-	uint8_t timestamp[8];
+	uint8_t timestamp[4];
 };
 
 static struct adv_payload payload = { .id = {0,0,0,0,0,0,0,0} };
@@ -18,6 +21,27 @@ static struct bt_le_ext_adv_start_param ext_adv_start_param = {
 	.num_events = 1,
 };
 
+#define TIMER DT_LABEL(DT_NODELABEL(timer2))
+static const struct device *counter_dev;
+
+#define SW0_NODE DT_ALIAS(sw0)
+#define SW1_NODE DT_ALIAS(sw1)
+static const struct gpio_dt_spec button0 = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios, {0});
+static const struct gpio_dt_spec button1 = GPIO_DT_SPEC_GET_OR(SW1_NODE, gpios, {0});
+static struct gpio_callback button0_cb_data;
+static struct gpio_callback button1_cb_data;
+
+void start_button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	counter_start(counter_dev);
+	packet_id = 0;
+}
+
+void status_button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	printk("Packet ID: %llu\n", packet_id);
+}
+
 void sent_cb(struct bt_le_ext_adv *adv, struct bt_le_ext_adv_sent_info *info)
 {
 	// split uint64_t in uint8_t and store in adv_data
@@ -25,8 +49,9 @@ void sent_cb(struct bt_le_ext_adv *adv, struct bt_le_ext_adv_sent_info *info)
         payload.id[i] = packet_id >> (8 * i);
     }
 
-	uint64_t timestamp = k_uptime_ticks();
-	for (int i = 0; i < 8; i++) {
+	uint32_t timestamp = 0;
+	counter_get_value(counter_dev, &timestamp);
+	for (int i = 0; i < 4; i++) {
         payload.timestamp[i] = timestamp >> (8 * i);
     }
 
@@ -36,8 +61,8 @@ void sent_cb(struct bt_le_ext_adv *adv, struct bt_le_ext_adv_sent_info *info)
 		return;
 	}
 
-	// k_sleep(K_MSEC(1000));
-	// printk("Sending Packet TS: %llu\n", timestamp);
+	k_sleep(K_MSEC(10));
+	printk("Sending Packet number %llu at TS: %u\n", packet_id, timestamp);
 
 	// printk("Sending Packet: %lli\n", packet_id);
 	packet_id++;
@@ -57,6 +82,47 @@ void main(void)
 {
 	int err;
 	struct bt_le_ext_adv *adv;
+
+	counter_dev = device_get_binding(TIMER);
+	if (counter_dev == NULL) {
+		printk("Device not found\n");
+		return;
+	}
+
+	/* Initialize the Buttons */
+	if (!device_is_ready(button0.port) || !device_is_ready(button1.port)) {
+		printk("Error: button device is not ready\n");
+		return;
+	}
+
+	err = gpio_pin_configure_dt(&button0, GPIO_INPUT);
+	if (err != 0) {
+		printk("Error %d: failed to configure %s pin %d\n", err, button0.port->name, button0.pin);
+		return;
+	}
+
+	err = gpio_pin_configure_dt(&button1, GPIO_INPUT);
+	if (err != 0) {
+		printk("Error %d: failed to configure %s pin %d\n", err, button1.port->name, button1.pin);
+		return;
+	}
+
+	err = gpio_pin_interrupt_configure_dt(&button0, GPIO_INT_EDGE_TO_ACTIVE);
+	if (err != 0) {
+		printk("Error %d: failed to configure interrupt on %s pin %d\n", err, button0.port->name, button0.pin);
+		return;
+	}
+
+	err = gpio_pin_interrupt_configure_dt(&button1, GPIO_INT_EDGE_TO_ACTIVE);
+	if (err != 0) {
+		printk("Error %d: failed to configure interrupt on %s pin %d\n", err, button1.port->name, button1.pin);
+		return;
+	}
+
+	gpio_init_callback(&button0_cb_data, start_button_pressed, BIT(button0.pin));
+	gpio_init_callback(&button1_cb_data, status_button_pressed, BIT(button1.pin));
+	gpio_add_callback(button0.port, &button0_cb_data);
+	gpio_add_callback(button1.port, &button1_cb_data);
 
 	err = bt_enable(NULL);
 	if (err) {
