@@ -1,86 +1,44 @@
-#include <bluetooth/bluetooth.h>
 #include <device.h>
-#include <drivers/counter.h>
+#include <bluetooth/bluetooth.h>
 #include <drivers/gpio.h>
 
-#include <drivers/timer/nrf_rtc_timer.h>
-#include <hal/nrf_rtc.h>
-#include <hal/nrf_timer.h>
+#include <throughput_explorer.h>
 
-static uint64_t packet_id = 0;
-static uint64_t rtc_offset = 0;
+#define SW0_NODE DT_ALIAS(sw0)
+static const struct gpio_dt_spec button0 = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios, {0});
+static struct gpio_callback button0_cb_data;
+static K_SEM_DEFINE(sem_synced, 0, 1);
 
-struct adv_payload {
-	uint8_t id[8];
-	uint8_t timestamp[8];
-};
-
-static struct adv_payload payload = { .id = {0,0,0,0,0,0,0,0} };
+static struct explorer_config cfg = {0};
+static struct explorer_payload payload = {0};
 
 static const struct bt_data ad[] = {
-	BT_DATA(BT_DATA_MANUFACTURER_DATA, &payload, sizeof(struct adv_payload)),
+	BT_DATA(BT_DATA_MANUFACTURER_DATA, &payload, sizeof(struct explorer_payload)),
 };
 
 static struct bt_le_ext_adv_start_param ext_adv_start_param = {
-	.timeout = 1,
 	.num_events = 1,
 };
 
-#define TIMER DT_LABEL(DT_NODELABEL(timer2))
-static const struct device *counter_dev;
-
-#define SW0_NODE DT_ALIAS(sw0)
-#define SW1_NODE DT_ALIAS(sw1)
-static const struct gpio_dt_spec button0 = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios, {0});
-static const struct gpio_dt_spec button1 = GPIO_DT_SPEC_GET_OR(SW1_NODE, gpios, {0});
-static struct gpio_callback button0_cb_data;
-static struct gpio_callback button1_cb_data;
-
-void start_button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+void sync_button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
-	counter_start(counter_dev);
-	packet_id = 0;
-	rtc_offset = z_nrf_rtc_timer_read();
-}
-
-void status_button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
-{
-	// printk("Packet ID: %llu\n", packet_id);
-	uint32_t ticks = 0;
-	// counter_get_value(counter_dev, &ticks);
-	
-	printk("Button pressed at %llu\n", z_nrf_rtc_timer_read() - rtc_offset);
-	// printk("Freq: %u\n", counter_get_frequency(counter_dev));
+	reset_config(&cfg);
+	k_sem_give(&sem_synced);
 }
 
 void sent_cb(struct bt_le_ext_adv *adv, struct bt_le_ext_adv_sent_info *info)
 {
-	// split uint64_t in uint8_t and store in adv_data
-	for (int i = 0; i < 8; i++) {
-        payload.id[i] = packet_id >> (8 * i);
-    }
-
-	uint64_t timestamp = z_nrf_rtc_timer_read() - rtc_offset;
-	// counter_get_value(counter_dev, &timestamp);
-	for (int i = 0; i < 8; i++) {
-        payload.timestamp[i] = timestamp >> (8 * i);
-    }
+	update_payload(&cfg, &payload);
 
 	int err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err) {
-		printk("Failed to set ad (err %d)\n", err);
+		printk("Failed to set advertising data!\n");
 		return;
 	}
 
-	k_sleep(K_MSEC(10));
-	// printk("Sending Packet number %llu at TS: %u\n", packet_id, timestamp);
-
-	// printk("Sending Packet: %lli\n", packet_id);
-	packet_id++;
-
 	err = bt_le_ext_adv_start(adv, &ext_adv_start_param);
 	if (err) {
-		printk("Failed to start extended advertising (err %d)\n", err);
+		printk("Failed to start extended advertising!\n");
 		return;
 	}
 }
@@ -94,14 +52,8 @@ void main(void)
 	int err;
 	struct bt_le_ext_adv *adv;
 
-	counter_dev = device_get_binding(TIMER);
-	if (counter_dev == NULL) {
-		printk("Device not found\n");
-		return;
-	}
-
-	/* Initialize the Buttons */
-	if (!device_is_ready(button0.port) || !device_is_ready(button1.port)) {
+	/* Initialize Reset Measurement Button */
+	if (!device_is_ready(button0.port)) {
 		printk("Error: button device is not ready\n");
 		return;
 	}
@@ -112,29 +64,16 @@ void main(void)
 		return;
 	}
 
-	err = gpio_pin_configure_dt(&button1, GPIO_INPUT);
-	if (err != 0) {
-		printk("Error %d: failed to configure %s pin %d\n", err, button1.port->name, button1.pin);
-		return;
-	}
-
 	err = gpio_pin_interrupt_configure_dt(&button0, GPIO_INT_EDGE_TO_ACTIVE);
 	if (err != 0) {
 		printk("Error %d: failed to configure interrupt on %s pin %d\n", err, button0.port->name, button0.pin);
 		return;
 	}
 
-	err = gpio_pin_interrupt_configure_dt(&button1, GPIO_INT_EDGE_TO_ACTIVE);
-	if (err != 0) {
-		printk("Error %d: failed to configure interrupt on %s pin %d\n", err, button1.port->name, button1.pin);
-		return;
-	}
-
-	gpio_init_callback(&button0_cb_data, start_button_pressed, BIT(button0.pin));
-	gpio_init_callback(&button1_cb_data, status_button_pressed, BIT(button1.pin));
+	gpio_init_callback(&button0_cb_data, sync_button_pressed, BIT(button0.pin));
 	gpio_add_callback(button0.port, &button0_cb_data);
-	gpio_add_callback(button1.port, &button1_cb_data);
 
+	/* Enable and setup Bluetooth*/
 	err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
@@ -151,6 +90,12 @@ void main(void)
 	err = bt_le_ext_adv_create(&param, &adv_callbacks, &adv);
 	if (err) {
 		printk("Failed to create extended advertisement (err %d)\n", err);
+		return;
+	}
+
+	err = k_sem_take(&sem_synced, K_FOREVER);
+	if (err) {
+		printk("failed (err %d)\n", err);
 		return;
 	}
 
