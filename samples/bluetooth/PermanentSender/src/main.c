@@ -52,7 +52,7 @@ void main(void)
 	int err;
 	struct bt_le_ext_adv *adv;
 
-	/* Initialize Reset Measurement Button */
+	/* Initialize Sync Button */
 	if (!device_is_ready(button0.port)) {
 		printk("Error: button device is not ready\n");
 		return;
