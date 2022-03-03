@@ -1,11 +1,8 @@
-#include <bluetooth/bluetooth.h>
 #include <device.h>
+#include <bluetooth/bluetooth.h>
 #include <drivers/counter.h>
 #include <drivers/gpio.h>
-
 #include <drivers/timer/nrf_rtc_timer.h>
-#include <hal/nrf_rtc.h>
-#include <hal/nrf_timer.h>
 
 #define TIMER DT_LABEL(DT_NODELABEL(timer2))
 static const struct device *counter_dev;
