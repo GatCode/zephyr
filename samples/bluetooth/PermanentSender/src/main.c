@@ -99,6 +99,8 @@ void main(void)
 		return;
 	}
 
+	update_payload(&cfg, &payload);
+
 	err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err) {
 		printk("Failed to set ad (err %d)\n", err);
