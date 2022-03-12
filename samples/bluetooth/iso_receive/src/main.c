@@ -236,7 +236,7 @@ static struct bt_iso_chan_ops iso_ops = {
 };
 
 static struct bt_iso_chan_io_qos iso_rx_qos = {
-	.phy = BT_GAP_LE_PHY_CODED,
+	.phy = BT_GAP_LE_PHY_2M,
 };
 
 static struct bt_iso_chan_qos bis_iso_qos = {
