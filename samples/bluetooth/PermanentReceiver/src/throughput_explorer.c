@@ -101,7 +101,7 @@ int reset_statistic(struct explorer_statistic *statistic)
     statistic->currently_lost = 0;
     statistic->id = 0;
     statistic->timestamp = 0;
-    statistic->last_packet_id = 0;
+    statistic->last_packet_id = -1;
     statistic->latency = 0;
 
     return 0;
