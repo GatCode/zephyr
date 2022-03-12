@@ -4,6 +4,9 @@
 
 #include <throughput_explorer.h>
 
+#define LED0_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+
 #define SW0_NODE DT_ALIAS(sw0)
 static const struct gpio_dt_spec button0 = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios, {0});
 static struct gpio_callback button0_cb_data;
@@ -35,6 +38,13 @@ void scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type,
 	if(adv_type == BT_GAP_ADV_TYPE_EXT_ADV) {
 		bt_data_parse(buf, data_cb, &payload);
 		update_statistic(&statistic, &cfg, &payload);
+		
+		int err = gpio_pin_toggle_dt(&led);
+		if (err) {
+			printk("Failed to toggle LED (err %d)\n", err);
+			return;
+		}
+
 		print_statistic(&statistic, 25);
 	}
 }
@@ -42,6 +52,18 @@ void scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type,
 void main(void)
 {
 	int err;
+
+	/* Initialize LED */
+	if (!device_is_ready(led.port)) {
+		printk("Error: LED device is not ready\n");
+		return;
+	}
+
+	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+	if (err < 0) {
+		printk("Error %d: failed to configure LED\n", err);
+		return;
+	}
 
 	/* Initialize Sync Button */
 	if (!device_is_ready(button0.port)) {

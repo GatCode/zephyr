@@ -57,7 +57,7 @@ struct explorer_statistic {
 	/**
 	 * @brief ID of the last received packet.
 	 */
-	uint64_t last_packet_id;
+	int64_t last_packet_id;
 	/**
 	 * @brief Latency of the current packet.
 	 */

@@ -4,6 +4,9 @@
 
 #include <throughput_explorer.h>
 
+#define LED0_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+
 #define SW0_NODE DT_ALIAS(sw0)
 static const struct gpio_dt_spec button0 = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios, {0});
 static struct gpio_callback button0_cb_data;
@@ -29,8 +32,14 @@ void sync_button_pressed(const struct device *dev, struct gpio_callback *cb, uin
 void sent_cb(struct bt_le_ext_adv *adv, struct bt_le_ext_adv_sent_info *info)
 {
 	update_payload(&cfg, &payload);
+	
+	int err = gpio_pin_toggle_dt(&led);
+	if (err) {
+		printk("Failed to toggle LED (err %d)\n", err);
+		return;
+	}
 
-	int err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
+	err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err) {
 		printk("Failed to set advertising data!\n");
 		return;
@@ -51,6 +60,18 @@ void main(void)
 {
 	int err;
 	struct bt_le_ext_adv *adv;
+
+	/* Initialize LED */
+	if (!device_is_ready(led.port)) {
+		printk("Error: LED device is not ready\n");
+		return;
+	}
+
+	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+	if (err < 0) {
+		printk("Error %d: failed to configure LED\n", err);
+		return;
+	}
 
 	/* Initialize Sync Button */
 	if (!device_is_ready(button0.port)) {
@@ -100,6 +121,11 @@ void main(void)
 	}
 
 	update_payload(&cfg, &payload);
+	err = gpio_pin_toggle_dt(&led);
+	if (err) {
+		printk("Failed to toggle LED (err %d)\n", err);
+		return;
+	}
 
 	err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err) {
