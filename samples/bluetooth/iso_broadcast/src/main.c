@@ -50,7 +50,7 @@ static struct bt_iso_chan_ops iso_ops = {
 static struct bt_iso_chan_io_qos iso_tx_qos = {
 	.sdu = sizeof(struct explorer_payload),
 	.rtn = 1,
-	.phy = BT_GAP_LE_PHY_CODED,
+	.phy = BT_GAP_LE_PHY_2M,
 };
 
 static struct bt_iso_chan_qos bis_iso_qos = {
@@ -172,7 +172,7 @@ void main(void)
 		update_payload(&cfg, &payload);
 
 		// k_sleep(K_SECONDS(1));
-		k_sleep(K_MSEC(10));
+		// k_sleep(K_MSEC(10));
 
 		buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 		net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
