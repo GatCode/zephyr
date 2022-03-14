@@ -31,6 +31,8 @@ struct explorer_payload {
 	 * @brief u8[8] containing the timestamp.
 	 */
 	uint8_t timestamp[8];
+
+	uint8_t dummy_data[211]; //211+16 = 227 octets
 };
 
 struct explorer_statistic {
