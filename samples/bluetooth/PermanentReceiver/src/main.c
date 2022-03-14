@@ -38,7 +38,9 @@ void scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type,
 	if(adv_type == BT_GAP_ADV_TYPE_EXT_ADV) {
 		bt_data_parse(buf, data_cb, &payload);
 		update_statistic(&statistic, &cfg, &payload);
-		
+
+		printk("Packet len: %u and size of struct %u\n", buf->len, sizeof(struct explorer_payload));
+
 		int err = gpio_pin_toggle_dt(&led);
 		if (err) {
 			printk("Failed to toggle LED (err %d)\n", err);
