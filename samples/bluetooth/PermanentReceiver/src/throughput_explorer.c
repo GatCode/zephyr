@@ -103,6 +103,8 @@ int reset_statistic(struct explorer_statistic *statistic)
     statistic->timestamp = 0;
     statistic->last_packet_id = -1;
     statistic->latency = 0;
+    statistic->recv_since_timer_reset = 0;
+    statistic->current_throughput = 0;
 
     return 0;
 }
@@ -134,6 +136,7 @@ int update_statistic(struct explorer_statistic *statistic, struct explorer_confi
         statistic->lost += statistic->currently_lost;
     } else {
         statistic->recv++;
+        statistic->recv_since_timer_reset++;
     }
 
     statistic->last_packet_id = statistic->id;
@@ -148,10 +151,10 @@ int print_statistic(struct explorer_statistic *statistic, uint8_t skip_packets)
     }
 
 	if((statistic->recv + statistic->lost) % skip_packets == 0) {
-		printk("Received: %llu/%llu (%.2f%%) - Latency %.2f ms\n",
+		printk("Received: %llu/%llu (%.2f%%) - Latency %.2f ms - Throughput (data only) %llu bps\n",
 			statistic->recv, statistic->recv + statistic->lost,
 			(float)statistic->recv * 100 / (statistic->recv + statistic->lost),
-            k_ticks_to_us_floor64(statistic->latency) / 1000.0);
+            k_ticks_to_us_floor64(statistic->latency) / 1000.0, statistic->current_throughput);
 	}
 
     return 0;
