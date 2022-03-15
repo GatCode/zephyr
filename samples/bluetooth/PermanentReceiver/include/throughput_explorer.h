@@ -31,6 +31,8 @@ struct explorer_payload {
 	 * @brief u8[8] containing the timestamp.
 	 */
 	uint8_t timestamp[8];
+
+	uint8_t dummy_data[211];
 };
 
 struct explorer_statistic {
@@ -62,6 +64,9 @@ struct explorer_statistic {
 	 * @brief Latency of the current packet.
 	 */
 	uint64_t latency;
+
+	uint64_t recv_since_timer_reset;
+	uint64_t current_throughput;
 };
 
 /** Convert u64 to u8[8] for Bluetooth transmission. */

@@ -15,10 +15,19 @@ static struct explorer_config cfg = {0};
 static struct explorer_payload payload = {0};
 static struct explorer_statistic statistic = {0};
 
+void my_timer_handler(struct k_timer *dummy)
+{
+	statistic.current_throughput = statistic.recv_since_timer_reset * sizeof(struct explorer_payload) * 8;
+    statistic.recv_since_timer_reset = 0;
+}
+
+K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
+
 void sync_button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
 	reset_config(&cfg);
 	reset_statistic(&statistic);
+	k_timer_start(&my_timer, K_SECONDS(1), K_SECONDS(1));
 }
 
 static bool data_cb(struct bt_data *data, void *user_data)
@@ -39,7 +48,7 @@ void scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type,
 		bt_data_parse(buf, data_cb, &payload);
 		update_statistic(&statistic, &cfg, &payload);
 
-		printk("Packet len: %u and size of struct %u\n", buf->len, sizeof(struct explorer_payload));
+		// printk("Packet len: %u and size of struct %u\n", buf->len, sizeof(struct explorer_payload));
 
 		int err = gpio_pin_toggle_dt(&led);
 		if (err) {
@@ -98,8 +107,8 @@ void main(void)
 	struct bt_le_scan_param param = {
         .type = BT_LE_SCAN_TYPE_PASSIVE,
         .options = BT_LE_SCAN_OPT_CODED | BT_LE_SCAN_OPT_NO_1M | BT_LE_SCAN_OPT_FILTER_DUPLICATE,
-        .interval = 0x0080  /* 80 ms */,
-        .window = 0x0080 /* 80ms */,
+        .interval = 0x0a80  /* 80 ms */,
+        .window = 0x0a80 /* 80ms */,
 		.timeout = 0,
 		.interval_coded = 0,
         .window_coded = 0,
