@@ -22,6 +22,25 @@ struct explorer_config {
 	uint64_t rtc_offset;
 };
 
+struct sync_payload {
+	/**
+	 * @brief u8[8] containing the timestamp.
+	 */
+	uint8_t t1[8];
+	/**
+	 * @brief u8[8] containing the timestamp.
+	 */
+	uint8_t t2[8];
+	/**
+	 * @brief u8[8] containing the timestamp.
+	 */
+	uint8_t t3[8];
+	/**
+	 * @brief u8[8] containing the timestamp.
+	 */
+	uint8_t t4[8];
+};
+
 struct explorer_payload {
 	/**
 	 * @brief u8[8] containing the packet ID.
@@ -32,7 +51,7 @@ struct explorer_payload {
 	 */
 	uint8_t timestamp[8];
 
-	uint8_t dummy_data[211]; //211+16 = 227 octets
+	// uint8_t dummy_data[211]; //211+16 = 227 octets
 };
 
 struct explorer_statistic {
