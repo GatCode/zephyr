@@ -1,12 +1,22 @@
 #include <io_coder.h>
 
-int setup_pin(const struct device *port, uint8_t pin)
+int set_port(struct io_coder *coder, const struct device *port)
 {
-    if(port == NULL) {
+    if(coder == NULL || port == NULL) {
         return -EINVAL;
     }
 
-    int err = gpio_pin_configure(port, pin, 1);
+    coder->port = port;
+    return 0;
+}
+
+int setup_pin(struct io_coder *coder, uint8_t pin, bool read)
+{
+    if(coder->port == NULL) {
+        return -EINVAL;
+    }
+
+    int err = gpio_pin_configure(coder->port, pin, read ? GPIO_INPUT : GPIO_OUTPUT);
     if(err) {
         return err;
     }
@@ -14,15 +24,20 @@ int setup_pin(const struct device *port, uint8_t pin)
     return 0;
 }
 
-int setup_8_consecutive_pins(const struct device *port, uint8_t first_pin, uint8_t last_pin)
+int setup_8_bit_io(struct io_coder *coder, uint8_t first_pin, uint8_t last_pin, bool read)
 {
-    if(first_pin > last_pin || last_pin - first_pin != 7 || first_pin < 0 || last_pin < 0) {
+    if(coder == NULL || first_pin > last_pin || last_pin - first_pin != 7 || first_pin < 0 || last_pin < 0) {
+        return -EINVAL;
+    }
+
+    coder->port = device_get_binding("GPIO_1");
+    if(coder->port == NULL) {
         return -EINVAL;
     }
 
     int err;
     for(uint8_t i = first_pin; i <= last_pin; i++) {
-		err = setup_pin(port, i);
+		err = setup_pin(coder, i, read);
         if(err) {
             return err;
         }
@@ -31,58 +46,25 @@ int setup_8_consecutive_pins(const struct device *port, uint8_t first_pin, uint8
     return 0;
 }
 
-int setup_P0_01_to_P0_08(struct io_coder *coder)
+int read_8_bit(struct io_coder *coder, uint8_t first_pin, uint8_t last_pin, uint8_t *result)
 {
-    if(coder == NULL) {
-        return -EINVAL;
-    }
-
-    coder->port0 = device_get_binding("GPIO_0");
-    if(coder->port0 == NULL) {
-        return -EINVAL;
-    }
-
-    return setup_8_consecutive_pins(coder->port0, 1, 8);
-}
-
-int setup_P1_01_to_P1_08(struct io_coder *coder)
-{
-    if(coder == NULL) {
-        return -EINVAL;
-    }
-
-    coder->port1 = device_get_binding("GPIO_1");
-    if(coder->port1 == NULL) {
-        return -EINVAL;
-    }
-
-    return setup_8_consecutive_pins(coder->port1, 33, 40);
-}
-
-int read_P01_to_P08_from_port(const struct device *port, uint8_t *result)
-{
-    gpio_port_value_t v;
+    gpio_port_value_t value;
     
-    int err = gpio_port_get(port, &v);
+    int err = gpio_port_get(coder->port, &value);
     if(err) {
         return err;
     }
 
     #ifdef IO_CODER_ACTIVE_LEVEL_LOW
-        *result = ~v >> 1;
+        *result = ~value >> 1;
     #else
-        *result = (v & (~BIT(1) | ~BIT(2) | ~BIT(3) | ~BIT(4) | ~BIT(5) | ~BIT(6) | ~BIT(7) | ~BIT(8))) >> 1;
+        uint32_t mask = 0;
+        for (uint8_t i = first_pin; i <= last_pin; i++)
+        {
+            mask |= ~BIT(i);
+        }
+        *result = (value & mask) >> 1;
     #endif
 
     return 0;
-}
-
-int read_P0_01_to_P0_08(struct io_coder *coder, uint8_t *result)
-{
-    return read_P01_to_P08_from_port(coder->port0, result);
-}
-
-int read_P1_01_to_P1_08(struct io_coder *coder, uint8_t *result)
-{
-    return read_P01_to_P08_from_port(coder->port1, result);
 }
