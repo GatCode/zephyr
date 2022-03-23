@@ -1,4 +1,7 @@
 #include <bluetooth/bluetooth.h>
+#include <io_coder.h>
+
+static struct io_coder io_encoder = {0};
 
 static uint64_t packet_id = 0;
 
@@ -32,6 +35,11 @@ void sent_cb(struct bt_le_ext_adv *adv, struct bt_le_ext_adv_sent_info *info)
 
 	printk("Sending Packet: %lli\n", packet_id);
 
+	err = write_8_bit(&io_encoder, packet_id % 256);
+	if(err) {
+		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	}
+
 	packet_id++;
 
 	k_sleep(K_MSEC(1000));
@@ -51,6 +59,11 @@ void main(void)
 {
 	int err;
 	struct bt_le_ext_adv *adv;
+
+	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
+	if(err) {
+		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
+	}
 
 	err = bt_enable(NULL);
 	if (err) {

@@ -1,4 +1,7 @@
 #include <bluetooth/bluetooth.h>
+#include <io_coder.h>
+
+static struct io_coder io_encoder = {0};
 
 static uint64_t last_packet_id = 0;
 static uint64_t failed_messages = 0;
@@ -44,13 +47,23 @@ void scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type,
 
 		printk("id: %llu - received: %lli - failed: %lli\n", sender_packet_id, received_messages, failed_messages);
 
+		int err = write_8_bit(&io_encoder, sender_packet_id % 256);
+		if(err) {
+			printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+		}
+
 		last_packet_id = sender_packet_id;
 	}
 }
 
 void main(void)
 {
-	int err = bt_enable(NULL);
+	int err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
+	if(err) {
+		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
+	}
+
+	err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
 		return;
