@@ -82,20 +82,24 @@ extern "C" {
 #define BT_ISO_BROADCAST_RTN_MAX    0x1E
 /** Broadcast code size */
 #define BT_ISO_BROADCAST_CODE_SIZE  16
+/** Lowest BIS index */
+#define BT_ISO_BIS_INDEX_MIN        0x01
+/** Highest BIS index */
+#define BT_ISO_BIS_INDEX_MAX        0x1F
 
 /** @brief Life-span states of ISO channel. Used only by internal APIs
  *  dealing with setting channel to proper state depending on operational
  *  context.
  */
-enum {
+enum bt_iso_state {
 	/** Channel disconnected */
-	BT_ISO_DISCONNECTED,
+	BT_ISO_STATE_DISCONNECTED,
 	/** Channel in connecting state */
-	BT_ISO_CONNECT,
+	BT_ISO_STATE_CONNECTING,
 	/** Channel ready for upper layer traffic on it */
-	BT_ISO_CONNECTED,
+	BT_ISO_STATE_CONNECTED,
 	/** Channel in disconnecting state */
-	BT_ISO_DISCONNECT,
+	BT_ISO_STATE_DISCONNECTING,
 };
 
 
@@ -114,7 +118,7 @@ struct bt_iso_chan {
 	struct bt_iso_chan_ops		*ops;
 	/** Channel QoS reference */
 	struct bt_iso_chan_qos		*qos;
-	uint8_t				state;
+	enum bt_iso_state		state;
 	bt_security_t			required_sec_level;
 	/** Node used internally by the stack */
 	sys_snode_t node;
