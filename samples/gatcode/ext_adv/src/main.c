@@ -80,7 +80,6 @@ int setup_and_start_sending()
 	for (int i = 0; i < 8; i++) {
         payload.id[i] = packet_id >> (8 * i);
     }
-	packet_id++;
 
 	err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
 	if (err) {
@@ -91,6 +90,8 @@ int setup_and_start_sending()
 	if(err) {
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
 	}
+
+	packet_id++;
 
 	err = bt_le_ext_adv_start(adv, &ext_adv_start_param);
 	if (err) {
@@ -188,14 +189,14 @@ void main(void)
 		printk("Error getting id (err %d)\n", err);
 	}
 
-	if(id == remote_213 /*local_42*/) {
+	if(id == remote_116 /*local_42*/) {
 		k_sleep(K_MSEC(3000)); // wait for receiver to be ready
 		err = setup_and_start_sending();
 		if (err) {
 			printk("Failed to setup and start extended advertising (err %d)\n", err);
 			return;
 		}
-	} else if(id == remote_116 /*local_56*/) {
+	} else if(id == remote_117 /*local_56*/) {
 		err = setup_and_start_receiving();
 		if (err) {
 			printk("Failed to setup and start extended advertising (err %d)\n", err);
