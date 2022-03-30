@@ -43,7 +43,7 @@ static struct bt_iso_chan_ops iso_ops_send = {
 
 static struct bt_iso_chan_io_qos iso_tx_qos_send = {
 	.sdu = sizeof(uint32_t), /* bytes */
-	.rtn = 2,
+	.rtn = 50,
 	.phy = BT_GAP_LE_PHY_2M,
 };
 
@@ -61,8 +61,8 @@ static struct bt_iso_chan *bis_send[BIS_ISO_CHAN_COUNT] = { &bis_iso_chan_send }
 static struct bt_iso_big_create_param big_create_param_send = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_channels = bis_send,
-	.interval = 10000, /* in microseconds */
-	.latency = 10, /* milliseconds */
+	.interval = 50000, /* in microseconds */
+	.latency = 50, /* milliseconds */
 	.packing = 0, /* 0 - sequential, 1 - interleaved */
 	.framing = 0, /* 0 - unframed, 1 - framed */
 };
@@ -300,7 +300,7 @@ static struct bt_iso_big_sync_param big_sync_param_recv = {
 	.bis_channels = bis_recv,
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_bitfield = (BIT_MASK(BIS_ISO_CHAN_COUNT) << 1),
-	.mse = 1,
+	.mse = BT_ISO_SYNC_MSE_MAX,
 	.sync_timeout = 100, /* in 10 ms units */
 };
 
@@ -442,7 +442,7 @@ void main(void)
 				printk("done.\n");
 			}
 		}
-	} else if(id == remote_117 /*local_56*/) { // receiver
+	} else { // receiver - if(id == remote_117 /*local_56*/) 
 		struct bt_le_per_adv_sync_param sync_create_param;
 		struct bt_le_per_adv_sync *sync;
 		struct bt_iso_big *big;
