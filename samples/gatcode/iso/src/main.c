@@ -44,7 +44,7 @@ static struct bt_iso_chan_ops iso_ops_send = {
 static struct bt_iso_chan_io_qos iso_tx_qos_send = {
 	.sdu = sizeof(uint32_t), /* bytes */
 	.rtn = 50,
-	.phy = BT_GAP_LE_PHY_2M,
+	.phy = BT_GAP_LE_PHY_CODED,
 };
 
 static struct bt_iso_chan_qos bis_iso_qos_send = {
@@ -283,7 +283,9 @@ static struct bt_iso_chan_ops iso_ops_recv = {
 	.disconnected	= iso_disconnected_recv,
 };
 
-static struct bt_iso_chan_io_qos iso_rx_qos_recv;
+static struct bt_iso_chan_io_qos iso_rx_qos_recv = {
+	.phy = BT_GAP_LE_PHY_CODED,
+};
 
 static struct bt_iso_chan_qos bis_iso_qos_recv = {
 	.rx = &iso_rx_qos_recv,
@@ -322,7 +324,7 @@ void main(void)
 		printk("Error getting id (err %d)\n", err);
 	}
 
-	if(id == remote_116 /*local_42*/) { // sender
+	if(id == local_42 /*local_42*/) { // sender
 		struct bt_le_ext_adv *adv;
 		struct bt_iso_big *big;
 		int err;
