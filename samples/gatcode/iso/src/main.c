@@ -14,7 +14,7 @@ static struct io_coder io_encoder = {0};
 /* Sender Specific */
 /* ------------------------------------------------------ */
 
-#define BIG_TERMINATE_TIMEOUT 60 /* seconds */
+#define BIG_TERMINATE_TIMEOUT 120 /* seconds */
 
 #define BIS_ISO_CHAN_COUNT 1
 NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BIS_ISO_CHAN_COUNT,
@@ -322,7 +322,7 @@ void main(void)
 		printk("Error getting id (err %d)\n", err);
 	}
 
-	if(id == local_42 /*remote_116*/) { // sender
+	if(id == remote_116 /*remote_116*/) { // sender
 		struct bt_le_ext_adv *adv;
 		struct bt_iso_big *big;
 		int err;
