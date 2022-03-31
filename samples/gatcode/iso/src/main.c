@@ -43,7 +43,7 @@ static struct bt_iso_chan_ops iso_ops_send = {
 
 static struct bt_iso_chan_io_qos iso_tx_qos_send = {
 	.sdu = sizeof(uint32_t), /* bytes */
-	.rtn = 50,
+	.rtn = 8,
 	.phy = BT_GAP_LE_PHY_2M,
 };
 
@@ -61,8 +61,8 @@ static struct bt_iso_chan *bis_send[BIS_ISO_CHAN_COUNT] = { &bis_iso_chan_send }
 static struct bt_iso_big_create_param big_create_param_send = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_channels = bis_send,
-	.interval = 50000, /* in microseconds */
-	.latency = 50, /* milliseconds */
+	.interval = 10000, /* in microseconds */
+	.latency = 10, /* milliseconds */
 	.packing = 0, /* 0 - sequential, 1 - interleaved */
 	.framing = 0, /* 0 - unframed, 1 - framed */
 };
@@ -322,7 +322,7 @@ void main(void)
 		printk("Error getting id (err %d)\n", err);
 	}
 
-	if(id == remote_116 /*local_42*/) { // sender
+	if(id == local_42 /*remote_116*/) { // sender
 		struct bt_le_ext_adv *adv;
 		struct bt_iso_big *big;
 		int err;
