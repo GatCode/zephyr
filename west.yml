@@ -98,7 +98,7 @@ manifest:
       groups:
         - hal
     - name: hal_nxp
-      revision: a3d46260cc3544777c5ca2105f9c2b84c182c04c
+      revision: ca1610119ca147b2cd1b875238881e4abb805297
       path: modules/hal/nxp
       groups:
         - hal
@@ -129,7 +129,7 @@ manifest:
       groups:
         - hal
     - name: hal_stm32
-      revision: f1cae48438a1ababa5e27b261f9e2d172afe6cf7
+      revision: 13964e0af173f19fafad3692869e8486f3c2043d
       path: modules/hal/stm32
       groups:
         - hal
@@ -153,6 +153,9 @@ manifest:
       path: modules/hal/libmetal
       groups:
         - hal
+    - name: liblc3codec
+      revision: 3951cf1b71ff3be086c9b9b595e473e12301337c
+      path: modules/lib/liblc3codec
     - name: littlefs
       path: modules/fs/littlefs
       groups:
@@ -173,13 +176,13 @@ manifest:
       groups:
         - crypto
     - name: mcuboot
-      revision: 7b9e4eecaa2547ba34cd40a13530f10dd70c92ca
+      revision: e86f575f68fdac2cab1898e0a893c8c6d8fd0fa1
       path: bootloader/mcuboot
     - name: mipi-sys-t
       path: modules/debug/mipi-sys-t
       groups:
         - debug
-      revision: d9da086b11cda494d85f4d8a9829f505c2d5e380
+      revision: 2f51407b2ac68e2be41af322a42905063f009d75
     - name: nanopb
       revision: d148bd26718e4c10414f07a7eb1bd24c62e56c5d
       path: modules/lib/nanopb

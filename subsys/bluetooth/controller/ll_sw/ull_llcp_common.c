@@ -359,7 +359,7 @@ static void lp_comm_complete(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 			/* Resume data, but only if there is no remote procedure pending RSP
 			 * in which case, the RSP tx-ACK will resume data
 			 */
-			llcp_tx_resume_data(conn);
+			llcp_tx_resume_data(conn, LLCP_TX_QUEUE_PAUSE_DATA_DATA_LENGTH);
 		}
 		break;
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH */
@@ -414,7 +414,7 @@ static void lp_comm_send_req(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 	switch (ctx->proc) {
 #if defined(CONFIG_BT_CTLR_LE_PING)
 	case PROC_LE_PING:
-		if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+		if (llcp_lr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 			ctx->state = LP_COMMON_STATE_WAIT_TX;
 		} else {
 			lp_comm_tx(conn, ctx);
@@ -423,7 +423,7 @@ static void lp_comm_send_req(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 		break;
 #endif /* CONFIG_BT_CTLR_LE_PING */
 	case PROC_FEATURE_EXCHANGE:
-		if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+		if (llcp_lr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 			ctx->state = LP_COMMON_STATE_WAIT_TX;
 		} else {
 			lp_comm_tx(conn, ctx);
@@ -433,7 +433,7 @@ static void lp_comm_send_req(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 		break;
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN) && defined(CONFIG_BT_PERIPHERAL)
 	case PROC_MIN_USED_CHANS:
-		if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+		if (llcp_lr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 			ctx->state = LP_COMMON_STATE_WAIT_TX;
 		} else {
 			lp_comm_tx(conn, ctx);
@@ -446,7 +446,7 @@ static void lp_comm_send_req(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 		 * one LL_VERSION_IND PDU during a connection.
 		 */
 		if (!conn->llcp.vex.sent) {
-			if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+			if (llcp_lr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 				ctx->state = LP_COMMON_STATE_WAIT_TX;
 			} else {
 				lp_comm_tx(conn, ctx);
@@ -469,14 +469,14 @@ static void lp_comm_send_req(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 #if defined(CONFIG_BT_CTLR_DATA_LENGTH)
 	case PROC_DATA_LENGTH_UPDATE:
 		if (!ull_cp_remote_dle_pending(conn)) {
-			if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+			if (llcp_lr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 				ctx->state = LP_COMMON_STATE_WAIT_TX;
 			} else {
 				/* Pause data tx, to ensure we can later (on RSP rx-ack)
 				 * update DLE without conflicting with out-going LL Data PDUs
 				 * See BT Core 5.2 Vol6: B-4.5.10 & B-5.1.9
 				 */
-				llcp_tx_pause_data(conn);
+				llcp_tx_pause_data(conn, LLCP_TX_QUEUE_PAUSE_DATA_DATA_LENGTH);
 				lp_comm_tx(conn, ctx);
 				ctx->state = LP_COMMON_STATE_WAIT_RX;
 			}
@@ -497,7 +497,7 @@ static void lp_comm_send_req(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 #else
 		if (1) {
 #endif /* CONFIG_BT_CTLR_PHY */
-			if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx) ||
+			if (llcp_lr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx) ||
 			    (llcp_rr_get_paused_cmd(conn) == PROC_CTE_REQ)) {
 				ctx->state = LP_COMMON_STATE_WAIT_TX;
 			} else {
@@ -529,7 +529,7 @@ static void lp_comm_st_idle(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t 
 {
 	switch (evt) {
 	case LP_COMMON_EVT_RUN:
-		if (ctx->pause) {
+		if (llcp_lr_ispaused(conn)) {
 			ctx->state = LP_COMMON_STATE_WAIT_TX;
 		} else {
 			lp_comm_send_req(conn, ctx, evt, param);
@@ -578,7 +578,6 @@ static void lp_comm_st_wait_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, u
 		/* Ignore other evts */
 		break;
 	}
-	/* TODO */
 }
 
 static void lp_comm_rx_decode(struct ll_conn *conn, struct proc_ctx *ctx, struct pdu_data *pdu)
@@ -644,7 +643,6 @@ static void lp_comm_st_wait_rx(struct ll_conn *conn, struct proc_ctx *ctx, uint8
 static void lp_comm_st_wait_ntf(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t evt,
 				void *param)
 {
-	/* TODO */
 	switch (evt) {
 	case LP_COMMON_EVT_RUN:
 		switch (ctx->proc) {
@@ -762,7 +760,7 @@ static void rp_comm_rx_decode(struct ll_conn *conn, struct proc_ctx *ctx, struct
 		 * conflicting with out-going LL Data PDUs
 		 * See BT Core 5.2 Vol6: B-4.5.10 & B-5.1.9
 		 */
-		llcp_tx_pause_data(conn);
+		llcp_tx_pause_data(conn, LLCP_TX_QUEUE_PAUSE_DATA_DATA_LENGTH);
 		break;
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH */
 #if defined(CONFIG_BT_CTLR_DF_CONN_CTE_RSP)
@@ -912,7 +910,7 @@ static void rp_comm_send_rsp(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 #if defined(CONFIG_BT_CTLR_LE_PING)
 	case PROC_LE_PING:
 		/* Always respond on remote ping */
-		if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+		if (llcp_rr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 			ctx->state = RP_COMMON_STATE_WAIT_TX;
 		} else {
 			rp_comm_tx(conn, ctx);
@@ -923,7 +921,7 @@ static void rp_comm_send_rsp(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 #endif /* CONFIG_BT_CTLR_LE_PING */
 	case PROC_FEATURE_EXCHANGE:
 		/* Always respond on remote feature exchange */
-		if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+		if (llcp_rr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 			ctx->state = RP_COMMON_STATE_WAIT_TX;
 		} else {
 			rp_comm_tx(conn, ctx);
@@ -935,9 +933,12 @@ static void rp_comm_send_rsp(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 	case PROC_VERSION_EXCHANGE:
 		/* The Link Layer shall only queue for transmission a maximum of one
 		 * LL_VERSION_IND PDU during a connection.
+		 * If the Link Layer receives an LL_VERSION_IND PDU and has already sent an
+		 * LL_VERSION_IND PDU then the Link Layer shall not send another
+		 * LL_VERSION_IND PDU to the peer device.
 		 */
 		if (!conn->llcp.vex.sent) {
-			if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+			if (llcp_rr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 				ctx->state = RP_COMMON_STATE_WAIT_TX;
 			} else {
 				rp_comm_tx(conn, ctx);
@@ -946,13 +947,12 @@ static void rp_comm_send_rsp(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 				ctx->state = RP_COMMON_STATE_IDLE;
 			}
 		} else {
-			/* Protocol Error.
-			 *
+			/* Invalid behaviour
 			 * A procedure already sent a LL_VERSION_IND and received a LL_VERSION_IND.
+			 * For now we chose to ignore the 'out of order' PDU
 			 */
-			/* TODO */
-			LL_ASSERT(0);
 		}
+
 		break;
 #if defined(CONFIG_BT_CTLR_MIN_USED_CHAN) && defined(CONFIG_BT_CENTRAL)
 	case PROC_MIN_USED_CHANS:
@@ -961,17 +961,18 @@ static void rp_comm_send_rsp(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 		 *     The procedure has completed when the Link Layer acknowledgment of the
 		 *     LL_MIN_USED_CHANNELS_IND PDU is sent or received.
 		 * In effect, for this procedure, this is equivalent to RX of PDU
+		 *
+		 * Also:
+		 *     If the Link Layer receives an LL_MIN_USED_CHANNELS_IND PDU, it should ensure
+		 *     that, whenever the Peripheral-to-Central PHY is one of those specified,
+		 *     the connection uses at least the number of channels given in the
+		 *     MinUsedChannels field of the PDU.
+		 *
+		 * The 'should' is here interpreted as 'permission' to do nothing
+		 *
+		 * Future improvement could implement logic to support this
 		 */
-		/* Inititate a chmap update, but only if acting as central, just in case ... */
-		if (conn->lll.role == BT_HCI_ROLE_CENTRAL &&
-		    ull_conn_lll_phy_active(conn, conn->llcp.muc.phys)) {
-			uint8_t chmap[5];
 
-			ull_chan_map_get((uint8_t *const)chmap);
-			ull_cp_chan_map_update(conn, chmap);
-			/* TODO - what to do on failure of ull_cp_chan_map_update() */
-		}
-		/* No response */
 		llcp_rr_complete(conn);
 		ctx->state = RP_COMMON_STATE_IDLE;
 		break;
@@ -986,7 +987,7 @@ static void rp_comm_send_rsp(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 		break;
 #if defined(CONFIG_BT_CTLR_DATA_LENGTH)
 	case PROC_DATA_LENGTH_UPDATE:
-		if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+		if (llcp_rr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 			ctx->state = RP_COMMON_STATE_WAIT_TX;
 		} else {
 			/* On RSP tx close the window for possible local req piggy-back */
@@ -999,7 +1000,7 @@ static void rp_comm_send_rsp(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH */
 #if defined(CONFIG_BT_CTLR_DF_CONN_CTE_RSP)
 	case PROC_CTE_REQ:
-		if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx) ||
+		if (llcp_rr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx) ||
 		    (llcp_rr_get_paused_cmd(conn) == PROC_CTE_REQ)) {
 			ctx->state = RP_COMMON_STATE_WAIT_TX;
 		} else {
@@ -1051,7 +1052,7 @@ static void rp_comm_st_wait_tx_ack(struct ll_conn *conn, struct proc_ctx *ctx, u
 			/* Apply changes in data lengths/times */
 			uint8_t dle_changed = ull_dle_update_eff(conn);
 
-			llcp_tx_resume_data(conn);
+			llcp_tx_resume_data(conn, LLCP_TX_QUEUE_PAUSE_DATA_DATA_LENGTH);
 
 			if (dle_changed && !llcp_ntf_alloc_is_available()) {
 				ctx->state = RP_COMMON_STATE_WAIT_NTF;

@@ -20,6 +20,7 @@
  */
 #define TEST_SEND_TIMEOUT    K_MSEC(100)
 #define TEST_RECEIVE_TIMEOUT K_MSEC(100)
+#define TEST_RECOVER_TIMEOUT K_MSEC(100)
 
 /**
  * @brief Standard (11-bit) CAN IDs and masks used for testing.
@@ -43,7 +44,7 @@
 /**
  * @brief Global variables.
  */
-const struct device *can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
+ZTEST_DMEM const struct device *can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
 struct k_sem rx_callback_sem;
 struct k_sem tx_callback_sem;
 
@@ -579,10 +580,43 @@ static void send_receive(const struct zcan_filter *filter1,
 }
 
 /**
+ * @brief Test getting the CAN core clock rate.
+ */
+static void test_get_core_clock(void)
+{
+	uint32_t rate;
+	int err;
+
+	err = can_get_core_clock(can_dev, &rate);
+	zassert_equal(err, 0, "failed to get CAN core clock rate (err %d)", err);
+	zassert_not_equal(rate, 0, "CAN core clock rate is 0");
+}
+
+/**
+ * @brief Test setting a too high bitrate.
+ */
+static void test_set_bitrate_too_high(void)
+{
+	uint32_t max;
+	int err;
+
+	err = can_get_max_bitrate(can_dev, &max);
+	if (err == -ENOSYS) {
+		ztest_test_skip();
+	}
+
+	zassert_equal(err, 0, "failed to get max bitrate (err %d)", err);
+	zassert_not_equal(max, 0, "max bitrate is 0");
+
+	err = can_set_bitrate(can_dev, max + 1, max + 1);
+	zassert_equal(err, -ENOTSUP, "too high bitrate accepted");
+}
+
+/**
  * @brief Test configuring the CAN controller for loopback mode.
  *
- * This must be the first test case as it allows the other test cases to
- * send/receive their own frames.
+ * This test case must be run before sending/receiving test cases as it allows
+ * these test cases to send/receive their own frames.
  */
 static void test_set_loopback(void)
 {
@@ -766,8 +800,40 @@ static void test_send_invalid_dlc(void)
 
 	frame.dlc = CAN_MAX_DLC + 1;
 
-	err = can_send(can_dev, &frame, TEST_SEND_TIMEOUT, tx_std_callback_1, NULL);
+	err = can_send(can_dev, &frame, TEST_SEND_TIMEOUT, NULL, NULL);
 	zassert_equal(err, -EINVAL, "sent a frame with an invalid DLC");
+}
+
+static void test_recover(void)
+{
+	int err;
+
+	/* It is not possible to provoke a bus off state, but test the API call */
+	err = can_recover(can_dev, TEST_RECOVER_TIMEOUT);
+	if (err == -ENOTSUP) {
+		ztest_test_skip();
+	}
+
+	zassert_equal(err, 0, "failed to recover (err %d)", err);
+}
+
+static void test_get_state(void)
+{
+	struct can_bus_err_cnt err_cnt;
+	enum can_state state;
+	int err;
+
+	err = can_get_state(can_dev, NULL, NULL);
+	zassert_equal(err, 0, "failed to get CAN state without destinations (err %d)", err);
+
+	err = can_get_state(can_dev, &state, NULL);
+	zassert_equal(err, 0, "failed to get CAN state (err %d)", err);
+
+	err = can_get_state(can_dev, NULL, &err_cnt);
+	zassert_equal(err, 0, "failed to get CAN error counters (err %d)", err);
+
+	err = can_get_state(can_dev, &state, &err_cnt);
+	zassert_equal(err, 0, "failed to get CAN state + error counters (err %d)", err);
 }
 
 void test_main(void)
@@ -777,18 +843,26 @@ void test_main(void)
 
 	zassert_true(device_is_ready(can_dev), "CAN device not ready");
 
+	k_object_access_grant(&can_msgq, k_current_get());
+	k_object_access_grant(can_dev, k_current_get());
+
+	/* Tests without callbacks can run in userspace */
 	ztest_test_suite(can_api_tests,
-			 ztest_unit_test(test_set_loopback),
-			 ztest_unit_test(test_send_and_forget),
+			 ztest_user_unit_test(test_get_core_clock),
+			 ztest_user_unit_test(test_set_bitrate_too_high),
+			 ztest_user_unit_test(test_set_loopback),
+			 ztest_user_unit_test(test_send_and_forget),
 			 ztest_unit_test(test_add_filter),
-			 ztest_unit_test(test_receive_timeout),
+			 ztest_user_unit_test(test_receive_timeout),
 			 ztest_unit_test(test_send_callback),
 			 ztest_unit_test(test_send_receive_std_id),
 			 ztest_unit_test(test_send_receive_ext_id),
 			 ztest_unit_test(test_send_receive_std_id_masked),
 			 ztest_unit_test(test_send_receive_ext_id_masked),
-			 ztest_unit_test(test_send_receive_msgq),
-			 ztest_unit_test(test_send_invalid_dlc),
-			 ztest_unit_test(test_send_receive_wrong_id));
+			 ztest_user_unit_test(test_send_receive_msgq),
+			 ztest_user_unit_test(test_send_invalid_dlc),
+			 ztest_unit_test(test_send_receive_wrong_id),
+			 ztest_user_unit_test(test_recover),
+			 ztest_user_unit_test(test_get_state));
 	ztest_run_test_suite(can_api_tests);
 }
