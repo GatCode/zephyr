@@ -45,7 +45,7 @@
 #define CONN_UPDATE_INSTANT_DELTA 6U
 
 /* TODO: Known, missing items (missing implementation):
- *	LL/CON/MAS/BV-34-C [Accepting Connection Parameter Request – event masked]
+ *	LL/CON/MAS/BV-34-C [Accepting Connection Parameter Request ? event masked]
  */
 
 /* LLCP Local Procedure Connection Update FSM states */
@@ -217,7 +217,8 @@ static void lp_cu_complete(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t e
 static void lp_cu_send_conn_param_req(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t evt,
 				      void *param)
 {
-	if (ctx->pause || llcp_rr_get_collision(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
+	if (llcp_lr_ispaused(conn) || llcp_rr_get_collision(conn) ||
+	    !llcp_tx_alloc_peek(conn, ctx)) {
 		ctx->state = LP_CU_STATE_WAIT_TX_CONN_PARAM_REQ;
 	} else {
 		uint16_t event_counter = ull_conn_event_counter(conn);
@@ -261,7 +262,7 @@ static void lp_cu_send_conn_param_req(struct ll_conn *conn, struct proc_ctx *ctx
 static void lp_cu_send_conn_update_ind(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t evt,
 				       void *param)
 {
-	if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+	if (llcp_lr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 		ctx->state = LP_CU_STATE_WAIT_TX_CONN_UPDATE_IND;
 	} else {
 		ctx->data.cu.win_size = 1U;
@@ -336,7 +337,6 @@ static void lp_cu_st_wait_rx_conn_param_rsp(struct ll_conn *conn, struct proc_ct
 		lp_cu_send_conn_update_ind(conn, ctx, evt, param);
 		break;
 	case LP_CU_EVT_REJECT:
-		/* TODO(tosk): Select between LL_REJECT_IND and LL_REJECT_EXT_IND */
 		if (pdu->llctrl.reject_ext_ind.error_code == BT_HCI_ERR_UNSUPP_REMOTE_FEATURE) {
 			/* Remote legacy Host */
 			llcp_rr_set_incompat(conn, INCOMPAT_RESERVED);
@@ -423,7 +423,6 @@ static void lp_cu_check_instant(struct ll_conn *conn, struct proc_ctx *ctx, uint
 static void lp_cu_st_wait_instant(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t evt,
 				  void *param)
 {
-	/* TODO */
 	switch (evt) {
 	case LP_CU_EVT_RUN:
 		lp_cu_check_instant(conn, ctx, evt, param);
@@ -548,7 +547,6 @@ static void rp_cu_tx(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t opcode)
 		break;
 #if defined(CONFIG_BT_CTLR_CONN_PARAM_REQ)
 	case PDU_DATA_LLCTRL_TYPE_REJECT_EXT_IND:
-		/* TODO(thoh): Select between LL_REJECT_IND and LL_REJECT_EXT_IND */
 		llcp_pdu_encode_reject_ext_ind(pdu, PDU_DATA_LLCTRL_TYPE_CONN_PARAM_REQ,
 					       ctx->data.cu.error);
 		break;
@@ -626,7 +624,7 @@ static void rp_cu_complete(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t e
 static void rp_cu_send_conn_update_ind(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t evt,
 				       void *param)
 {
-	if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+	if (llcp_rr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 		ctx->state = RP_CU_STATE_WAIT_TX_CONN_UPDATE_IND;
 	} else {
 		ctx->data.cu.win_size = 1U;
@@ -643,7 +641,7 @@ static void rp_cu_send_conn_update_ind(struct ll_conn *conn, struct proc_ctx *ct
 static void rp_cu_send_reject_ext_ind(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t evt,
 				      void *param)
 {
-	if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+	if (llcp_rr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 		ctx->state = RP_CU_STATE_WAIT_TX_REJECT_EXT_IND;
 	} else {
 		rp_cu_tx(conn, ctx, PDU_DATA_LLCTRL_TYPE_REJECT_EXT_IND);
@@ -655,7 +653,7 @@ static void rp_cu_send_reject_ext_ind(struct ll_conn *conn, struct proc_ctx *ctx
 static void rp_cu_send_conn_param_rsp(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t evt,
 				      void *param)
 {
-	if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+	if (llcp_rr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 		ctx->state = RP_CU_STATE_WAIT_TX_CONN_PARAM_RSP;
 	} else {
 		rp_cu_tx(conn, ctx, PDU_DATA_LLCTRL_TYPE_CONN_PARAM_RSP);
@@ -679,7 +677,7 @@ static void rp_cu_send_conn_param_req_ntf(struct ll_conn *conn, struct proc_ctx 
 static void rp_cu_send_unknown_rsp(struct ll_conn *conn, struct proc_ctx *ctx, uint8_t evt,
 				   void *param)
 {
-	if (ctx->pause || !llcp_tx_alloc_peek(conn, ctx)) {
+	if (llcp_rr_ispaused(conn) || !llcp_tx_alloc_peek(conn, ctx)) {
 		ctx->state = RP_CU_STATE_WAIT_TX_UNKNOWN_RSP;
 	} else {
 		rp_cu_tx(conn, ctx, PDU_DATA_LLCTRL_TYPE_UNKNOWN_RSP);

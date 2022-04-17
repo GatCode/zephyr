@@ -15,8 +15,8 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(timer, LOG_LEVEL_ERR);
 
-/* RAM code section */
-#define __timer_ram_code __attribute__((section(".__ram_code")))
+BUILD_ASSERT(CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC == 32768,
+	     "ITE RTOS timer HW frequency is fixed at 32768Hz");
 
 /* Event timer configurations */
 #define EVENT_TIMER		EXT_TIMER_3
@@ -138,7 +138,7 @@ void timer_5ms_one_shot(void)
 #endif /* CONFIG_SOC_IT8XXX2_PLL_FLASH_48M */
 
 #ifdef CONFIG_ARCH_HAS_CUSTOM_BUSY_WAIT
-__timer_ram_code void arch_busy_wait(uint32_t usec_to_wait)
+void arch_busy_wait(uint32_t usec_to_wait)
 {
 	if (!usec_to_wait) {
 		return;
@@ -292,7 +292,7 @@ uint32_t sys_clock_elapsed(void)
 uint32_t sys_clock_cycle_get_32(void)
 {
 	/*
-	 * Get free run observer count and transform unit to system tick
+	 * Get free run observer count
 	 *
 	 * NOTE: Timer is counting down from 0xffffffff. In not combined
 	 *       mode, the observer count value is the same as count, so after
@@ -300,8 +300,7 @@ uint32_t sys_clock_cycle_get_32(void)
 	 *       combined mode, the observer count value is the same as NOT
 	 *       count operation.
 	 */
-	uint32_t dticks = (~(IT8XXX2_EXT_CNTOX(FREE_RUN_TIMER)))
-				/ HW_CNT_PER_SYS_TICK;
+	uint32_t dticks = ~(IT8XXX2_EXT_CNTOX(FREE_RUN_TIMER));
 
 	return dticks;
 }
