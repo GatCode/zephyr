@@ -7,8 +7,24 @@
 #include <sys/byteorder.h>
 #include <io_coder.h>
 #include <hw_info.h>
+#include <math.h>
+
+// #include <drivers/timer/nrf_rtc_timer.h>
+// #include <hal/nrf_rtc.h>
+// #include <hal/nrf_timer.h>
+
+// #include <device.h>
+// #include <drivers/counter.h>
+// #include <drivers/gpio.h>
+
+// #include <stdbool.h>
+// #include <stdio.h>
+
+// #include <nrfx_timer.h>
 
 static struct io_coder io_encoder = {0};
+
+// static const nrfx_timer_t timer0 = NRFX_TIMER_INSTANCE(1);
 
 /* ------------------------------------------------------ */
 /* Sender Specific */
@@ -36,9 +52,41 @@ static void iso_disconnected_send(struct bt_iso_chan *chan, uint8_t reason)
 	k_sem_give(&sem_big_term);
 }
 
+static struct bt_iso_chan bis_iso_chan_send;
+
+uint32_t iso_send_count = 0;
+uint8_t iso_data[sizeof(iso_send_count)] = { 0 };
+struct net_buf *buf;
+
+static void stream_sent_cb(struct bt_iso_chan *chan)
+{
+	// printk("Sent Packet\n");
+	static uint8_t timeout = BIG_TERMINATE_TIMEOUT;
+	int ret;
+
+	// k_sleep(K_SECONDS(1));
+
+	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
+	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+	sys_put_le32(++iso_send_count, iso_data);
+	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+	ret = bt_iso_chan_send(&bis_iso_chan_send, buf);
+	if (ret < 0) {
+		printk("Unable to broadcast data: %d", ret);
+		net_buf_unref(buf);
+		return;
+	}
+	printk("Sending value %u\n", iso_send_count);
+	int err = write_8_bit(&io_encoder, iso_send_count % 256);
+	if(err) {
+		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	}
+}
+
 static struct bt_iso_chan_ops iso_ops_send = {
 	.connected	= iso_connected_send,
 	.disconnected	= iso_disconnected_send,
+	.sent = stream_sent_cb,
 };
 
 static struct bt_iso_chan_io_qos iso_tx_qos_send = {
@@ -58,13 +106,15 @@ static struct bt_iso_chan bis_iso_chan_send = {
 
 static struct bt_iso_chan *bis_send[BIS_ISO_CHAN_COUNT] = { &bis_iso_chan_send };
 
+#define SDU_INTERVAL 10000
+
 static struct bt_iso_big_create_param big_create_param_send = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_channels = bis_send,
-	.interval = 10000, /* in microseconds */
+	.interval = SDU_INTERVAL, /* in microseconds */
 	.latency = 10, /* milliseconds */
-	.packing = 0, /* 0 - sequential, 1 - interleaved */
-	.framing = 0, /* 0 - unframed, 1 - framed */
+	.packing = BT_ISO_PACKING_SEQUENTIAL, /* 0 - sequential, 1 - interleaved */
+	.framing = BT_ISO_FRAMING_FRAMED, /* 0 - unframed, 1 - framed */
 };
 
 /* ------------------------------------------------------ */
@@ -240,6 +290,32 @@ static struct bt_le_per_adv_sync_cb sync_callbacks_recv = {
 
 #define BIS_ISO_CHAN_COUNT 1
 
+static uint64_t last_timestamp = 0;
+static uint32_t packet_id = 0;
+#define PRESENTATION_DELAY_US 10000 // 10ms
+
+void my_timer_handler(struct k_timer *dummy)
+{
+	uint64_t current_timestamp = k_cyc_to_us_floor64(k_cycle_get_32());
+    printk("HELLO - current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
+	last_timestamp = current_timestamp;
+
+	int err = write_8_bit(&io_encoder, packet_id % 256);
+	if(err) {
+		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	}
+}
+
+K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
+
+
+// static void timer0_callback(nrf_timer_event_t event_type, void* p_context) {
+//     printk("Hello from timer0 callback!\n");
+// }
+
+uint32_t clock_offset = 0;
+bool doonce = true;
+
 static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
@@ -251,14 +327,68 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 		count = sys_get_le32(buf->data);
 	}
 
-	str_len = bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
-	printk("Incoming data channel %p len %u: %s (counter value %u)\n",
-	       chan, buf->len, data_str, count);
+	packet_id = count;
 
-	int err = write_8_bit(&io_encoder, count % 256);
-	if(err) {
-		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	uint32_t info_ts = info->ts;
+
+	if(doonce) {
+		clock_offset = k_cyc_to_us_near32(k_cycle_get_32()) - info->ts;
+		clock_offset = ceil(clock_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
+		doonce = false;
 	}
+
+	uint32_t curr = k_cyc_to_us_near32(k_cycle_get_32());
+	// printk("info_ts: %u | offset: %u | curr: %u | res: %d\n", info_ts, clock_offset, curr, info->ts + clock_offset - curr + 10000);
+	
+
+
+
+	// uint32_t app_timer_ts = 0;
+	// counter_get_value(counter_dev, &app_timer_ts);
+
+	// uint64_t app_timer_us = counter_ticks_to_us(counter_dev, app_timer_ts);
+
+	// int64_t delta = app_timer_us - info_ts;
+
+	// uint64_t waiting_time = app_timer_us - info_ts - delta + 10000;
+
+	// printk("Timer value: %u\n", nrfx_timer_capture(&timer0, NRF_TIMER_CC_CHANNEL0));
+	// uint32_t nrfx_timer0_ts = nrfx_timer_capture(&timer0, NRF_TIMER_CC_CHANNEL1);
+	// printk("nrfx: %u | info_ts: %u\n", nrfx_timer0_ts, info_ts);
+
+
+	// printk("app_timer_ts = %llu | info_ts = %u | delta = %lld | waiting time: %lld\n", app_timer_us, info_ts, delta, waiting_time);
+
+	// printk("id: %u | info_ts: %llu | curr_ts: %llu | iso_connected_timestamp: %llu | offset: %llu\n", count, info_ts, curr_ts, iso_connected_timestamp, info_ts - iso_connected_timestamp - (count - 5) * 1000000);
+
+	k_timer_start(&my_timer, K_USEC(info->ts + clock_offset - curr + PRESENTATION_DELAY_US), K_NO_WAIT);
+
+
+	// int err = write_8_bit(&io_encoder, packet_id % 256);
+	// if(err) {
+	// 	printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	// }
+
+	
+
+	// uint32_t curr_ts =  k_cyc_to_us_near32(k_cycle_get_32());
+	// printk("tx_delay: %u - ref_ts: %u - curr_ts: %u - diff: %u\n", chan->qos->rx->path->delay, info->ts, curr_ts, curr_ts - info->ts);
+	// uint64_t diff = k_cyc_to_us_floor64(k_cycle_get_32()) - info->ts;
+	// uint64_t intermediate = info->ts;
+
+	// k_timer_start(&my_timer, K_USEC(k_cyc_to_us_floor64(z_nrf_rtc_timer_read()) - intermediate), K_NO_WAIT);
+
+	// k_sleep(K_USEC(k_cyc_to_us_floor64(k_cycle_get_32()) - info->ts));
+	// uint64_t current_timestamp = k_cyc_to_us_floor64(k_cycle_get_32());
+    // printk("HELLO - current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
+	// last_timestamp = current_timestamp;
+
+	// uint64_t current_timestamp = k_ticks_to_us_near64(k_uptime_ticks()); //k_cyc_to_us_near64(k_cycle_get_32());
+	// printk("info->ts (synchronization reference for the SDU) = %u || current_timestamp = %llu || diff: %llu\n", info->ts, current_timestamp, current_timestamp - info->ts);
+
+	// str_len = bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
+	// printk("Incoming data channel %p len %u: %s (counter value %u) - ts: %u - local ts: %llu - latency: %u - current time: %u - iso interval: 0x%04x (%u ms)\n",
+	//        chan, buf->len, data_str, count, info->ts,  k_cyc_to_us_floor64(k_cycle_get_32()), latency, k_cycle_get_32(), iso_interval, (iso_interval * 5 / 4));
 }
 
 static void iso_connected_recv(struct bt_iso_chan *chan)
@@ -322,13 +452,28 @@ void main(void)
 		printk("Error getting id (err %d)\n", err);
 	}
 
+	// static nrfx_timer_config_t timer0_config = NRFX_TIMER_DEFAULT_CONFIG;
+	// // timer0_config.frequency = NRF_TIMER_FREQ_16MHz;
+	// // timer0_config.mode = NRF_TIMER_MODE_TIMER;
+	// // timer0_config.bit_width = NRF_TIMER_BIT_WIDTH_32;
+	// // timer0_config.interrupt_priority = 0;
+
+    // err = nrfx_timer_init(&timer0, &timer0_config, timer0_callback);
+	// if (err != NRFX_SUCCESS) {
+	// 	printk("NRF_TIMER init failed (err %d)\n", err);
+	// 	return;
+	// }
+
+    // nrfx_timer_enable(&timer0);
+	// IRQ_CONNECT(TIMER0_IRQn, 0, nrfx_timer_0_irq_handler, NULL, 0);
+
 	if(id == remote_116 /*remote_116*/) { // sender
 		struct bt_le_ext_adv *adv;
 		struct bt_iso_big *big;
 		int err;
-		uint32_t iso_send_count = 0;
-		uint8_t iso_data[sizeof(iso_send_count)] = { 0 };
-		struct net_buf *buf;
+		// uint32_t iso_send_count = 0;
+		// uint8_t iso_data[sizeof(iso_send_count)] = { 0 };
+		// struct net_buf *buf;
 
 		printk("Starting ISO Broadcast Demo\n");
 
@@ -368,6 +513,11 @@ void main(void)
 			return;
 		}
 
+		// while(1) {
+		// 	k_sleep(K_MSEC(1000));
+		// 	printk("Timer value: %u\n", nrfx_timer_capture(&timer0, NRF_TIMER_CC_CHANNEL0));
+		// }
+
 		/* Create BIG */
 		err = bt_iso_big_create(adv, &big_create_param_send, &big);
 		if (err) {
@@ -383,7 +533,7 @@ void main(void)
 		}
 		printk("done.\n");
 
-		while (true) {
+		// while (true) {
 			static uint8_t timeout = BIG_TERMINATE_TIMEOUT;
 			int ret;
 
@@ -400,7 +550,7 @@ void main(void)
 				return;
 			}
 			printk("Sending value %u\n", iso_send_count);
-			int err = write_8_bit(&io_encoder, iso_send_count % 256);
+			err = write_8_bit(&io_encoder, iso_send_count % 256);
 			if(err) {
 				printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
 			}
@@ -441,7 +591,7 @@ void main(void)
 				}
 				printk("done.\n");
 			}
-		}
+		// }
 	} else { // receiver - if(id == remote_117 /*local_56*/) 
 		struct bt_le_per_adv_sync_param sync_create_param;
 		struct bt_le_per_adv_sync *sync;
