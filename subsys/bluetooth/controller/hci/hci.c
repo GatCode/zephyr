@@ -2869,7 +2869,7 @@ static void le_df_connectionless_iq_report(struct pdu_data *pdu_rx,
 		 * node rx footer field.
 		 */
 		sync_handle = ull_sync_handle_get(sync);
-		per_evt_counter = lll->event_counter;
+		per_evt_counter = iq_report->event_counter;
 	}
 #endif /* CONFIG_BT_CTLR_DF_SCAN_CTE_RX */
 
@@ -3015,7 +3015,7 @@ static void le_df_connection_iq_report(struct node_rx_pdu *node_rx, struct net_b
 	sep->cte_type = iq_report->cte_info.type;
 
 	sep->data_chan_idx = iq_report->chan_idx;
-	sep->conn_evt_counter = sys_cpu_to_le16(lll->event_counter);
+	sep->conn_evt_counter = sys_cpu_to_le16(iq_report->event_counter);
 
 	if (sep->cte_type == BT_HCI_LE_AOA_CTE) {
 		sep->slot_durations = iq_report->local_slot_durations;
@@ -6247,7 +6247,7 @@ static void le_ext_adv_report(struct pdu_data *pdu_data,
 			ptr += sizeof(*adi);
 
 			BT_DBG("    AdvDataInfo DID = 0x%x, SID = 0x%x",
-			       adi->did, adi->sid);
+			       adi_curr->did, adi_curr->sid);
 		}
 
 		if (h->aux_ptr) {
@@ -7913,7 +7913,7 @@ static void encode_data_ctrl(struct node_rx_pdu *node_rx,
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH */
 
 #if defined(CONFIG_BT_CTLR_DF_CONN_CTE_REQ)
-	case PDU_DATA_LLCTRL_TYPE_CTE_REQ:
+	case PDU_DATA_LLCTRL_TYPE_CTE_RSP:
 		le_df_cte_req_failed(BT_HCI_CTE_REQ_STATUS_RSP_WITHOUT_CTE, handle, buf);
 		break;
 #endif /* CONFIG_BT_CTLR_DF_CONN_CTE_REQ */
