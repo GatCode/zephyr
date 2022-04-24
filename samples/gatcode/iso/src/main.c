@@ -310,12 +310,17 @@ K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
 
 
 static void timer2_callback(nrf_timer_event_t event_type, void* p_context) {
-    printk("Hello from timer2 callback!\n");
+    // uint32_t current_timestamp = nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0);
+    // printk("HELLO - current ts: %u - last ts: %u - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
+	// last_timestamp = current_timestamp;
 }
 
 uint32_t nrfx_timer2_offset = 0;
 uint32_t clock_offset = 0;
 bool doonce = true;
+
+uint8_t nrfx_timer_channel_selector = 0;
+
 
 static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
@@ -333,74 +338,40 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 	uint32_t info_ts = info->ts;
 
 	if(doonce) {
-		nrfx_timer2_offset = nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0) - info->ts;
-		// nrfx_timer2_offset = ceil(nrfx_timer2_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
-
-
-		// clock_offset = k_cyc_to_us_near32(k_cycle_get_32()) - info->ts;
-		// clock_offset = ceil(clock_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
+		nrfx_timer2_offset = nrfx_timer_us_to_ticks(&timer2, nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0)) - info->ts;
+		nrfx_timer2_offset = floor(nrfx_timer2_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
 		doonce = false;
 	}
 
-	// uint32_t curr = k_cyc_to_us_near32(k_cycle_get_32());
-	// printk("info_ts: %u | offset: %u | curr: %u | res: %d\n", info_ts, clock_offset, curr, info->ts + clock_offset - curr + 10000);
-	
-	// printk("Timer value: %u\n", nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0));
-	printk("info->ts: %u | curr: %u | offset: %u\n", info->ts, nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL1), nrfx_timer2_offset);
+	// uint32_t curr = k_cyc_to_us_floor64(k_cycle_get_32());
+	uint32_t curr = nrfx_timer_us_to_ticks(&timer2, nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0));
+	int32_t diff = curr - info->ts - nrfx_timer2_offset;
+	printk("offset: %d | diff: %d\n", nrfx_timer2_offset, diff);
+	// uint32_t compare_value = curr + curr - info->ts - nrfx_timer2_offset;
+	// printk("curr: %u | Compare: %u\n", curr, compare_value);
 
-	// uint32_t curr = nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL1);
-	// uint32_t compare_value = info->ts + nrfx_timer2_offset - curr + 100000;
-	// printk("Compare: %u\n", compare_value);
-	// nrfx_timer_compare(&timer2, NRF_TIMER_CC_CHANNEL1, compare_value, true);
+	k_timer_start(&my_timer, K_USEC(diff), K_NO_WAIT);
 
-
-	// uint32_t app_timer_ts = 0;
-	// counter_get_value(counter_dev, &app_timer_ts);
-
-	// uint64_t app_timer_us = counter_ticks_to_us(counter_dev, app_timer_ts);
-
-	// int64_t delta = app_timer_us - info_ts;
-
-	// uint64_t waiting_time = app_timer_us - info_ts - delta + 10000;
-
-	// printk("Timer value: %u\n", nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0));
-	// uint32_t nrfx_timer0_ts = nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL1);
-	// printk("nrfx: %u | info_ts: %u\n", nrfx_timer0_ts, info_ts);
-
-
-	// printk("app_timer_ts = %llu | info_ts = %u | delta = %lld | waiting time: %lld\n", app_timer_us, info_ts, delta, waiting_time);
-
-	// printk("id: %u | info_ts: %llu | curr_ts: %llu | iso_connected_timestamp: %llu | offset: %llu\n", count, info_ts, curr_ts, iso_connected_timestamp, info_ts - iso_connected_timestamp - (count - 5) * 1000000);
-
-	// k_timer_start(&my_timer, K_USEC(info->ts + clock_offset - curr + 1000), K_NO_WAIT);
-
-
-	// int err = write_8_bit(&io_encoder, packet_id % 256);
-	// if(err) {
-	// 	printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	// switch(nrfx_timer_channel_selector) {
+	// 	case 0:
+	// 		nrfx_timer_compare(&timer2, NRF_TIMER_CC_CHANNEL1, compare_value, true);
+	// 		break;
+	// 	case 1:
+	// 		nrfx_timer_compare(&timer2, NRF_TIMER_CC_CHANNEL2, compare_value, true);
+	// 		break;
+	// 	case 2:
+	// 		nrfx_timer_compare(&timer2, NRF_TIMER_CC_CHANNEL3, compare_value, true);
+	// 		break;
+	// 	case 3:
+	// 		nrfx_timer_compare(&timer2, NRF_TIMER_CC_CHANNEL4, compare_value, true);
+	// 		break;
+	// 	case 4:
+	// 		nrfx_timer_compare(&timer2, NRF_TIMER_CC_CHANNEL5, compare_value, true);
+	// 		break;
 	// }
-
-	
-
-	// uint32_t curr_ts =  k_cyc_to_us_near32(k_cycle_get_32());
-	// printk("tx_delay: %u - ref_ts: %u - curr_ts: %u - diff: %u\n", chan->qos->rx->path->delay, info->ts, curr_ts, curr_ts - info->ts);
-	// uint64_t diff = k_cyc_to_us_floor64(k_cycle_get_32()) - info->ts;
-	// uint64_t intermediate = info->ts;
-
-	// k_timer_start(&my_timer, K_USEC(k_cyc_to_us_floor64(z_nrf_rtc_timer_read()) - intermediate), K_NO_WAIT);
-
-	// k_sleep(K_USEC(k_cyc_to_us_floor64(k_cycle_get_32()) - info->ts));
-	// uint64_t current_timestamp = k_cyc_to_us_floor64(k_cycle_get_32());
-    // printk("HELLO - current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
-	// last_timestamp = current_timestamp;
-
-	// uint64_t current_timestamp = k_ticks_to_us_near64(k_uptime_ticks()); //k_cyc_to_us_near64(k_cycle_get_32());
-	// printk("info->ts (synchronization reference for the SDU) = %u || current_timestamp = %llu || diff: %llu\n", info->ts, current_timestamp, current_timestamp - info->ts);
-
-	// str_len = bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
-	// printk("Incoming data channel %p len %u: %s (counter value %u) - ts: %u - local ts: %llu - latency: %u - current time: %u - iso interval: 0x%04x (%u ms)\n",
-	//        chan, buf->len, data_str, count, info->ts,  k_cyc_to_us_floor64(k_cycle_get_32()), latency, k_cycle_get_32(), iso_interval, (iso_interval * 5 / 4));
+	// nrfx_timer_channel_selector >= 4 ? nrfx_timer_channel_selector = 0 : nrfx_timer_channel_selector++;
 }
+
 
 static void iso_connected_recv(struct bt_iso_chan *chan)
 {
