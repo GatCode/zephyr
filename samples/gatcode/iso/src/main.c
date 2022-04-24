@@ -296,14 +296,14 @@ static uint32_t packet_id = 0;
 
 void my_timer_handler(struct k_timer *dummy)
 {
-	uint64_t current_timestamp = k_cyc_to_us_floor64(k_cycle_get_32());
+	uint64_t current_timestamp = k_cyc_to_us_near32(k_cycle_get_32());
     printk("HELLO - current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
 	last_timestamp = current_timestamp;
 
-	int err = write_8_bit(&io_encoder, packet_id % 256);
-	if(err) {
-		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-	}
+	// int err = write_8_bit(&io_encoder, packet_id % 256);
+	// if(err) {
+	// 	printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	// }
 }
 
 K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
@@ -333,7 +333,7 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 
 	if(doonce) {
 		clock_offset = k_cyc_to_us_near32(k_cycle_get_32()) - info->ts;
-		clock_offset = ceil(clock_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
+		clock_offset = floor(clock_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
 		doonce = false;
 	}
 
@@ -361,7 +361,7 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 
 	// printk("id: %u | info_ts: %llu | curr_ts: %llu | iso_connected_timestamp: %llu | offset: %llu\n", count, info_ts, curr_ts, iso_connected_timestamp, info_ts - iso_connected_timestamp - (count - 5) * 1000000);
 
-	k_timer_start(&my_timer, K_USEC(info->ts + clock_offset - curr + PRESENTATION_DELAY_US), K_NO_WAIT);
+	k_timer_start(&my_timer, K_USEC(curr - info->ts - clock_offset /*+ PRESENTATION_DELAY_US*/), K_NO_WAIT);
 
 
 	// int err = write_8_bit(&io_encoder, packet_id % 256);
@@ -467,7 +467,7 @@ void main(void)
     // nrfx_timer_enable(&timer0);
 	// IRQ_CONNECT(TIMER0_IRQn, 0, nrfx_timer_0_irq_handler, NULL, 0);
 
-	if(id == remote_116 /*remote_116*/) { // sender
+	if(id == local_42 /*remote_116*/) { // sender
 		struct bt_le_ext_adv *adv;
 		struct bt_iso_big *big;
 		int err;
