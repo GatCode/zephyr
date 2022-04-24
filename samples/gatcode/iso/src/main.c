@@ -300,10 +300,10 @@ void my_timer_handler(struct k_timer *dummy)
     printk("HELLO - current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
 	last_timestamp = current_timestamp;
 
-	// int err = write_8_bit(&io_encoder, packet_id % 256);
-	// if(err) {
-	// 	printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-	// }
+	int err = write_8_bit(&io_encoder, packet_id % 256);
+	if(err) {
+		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	}
 }
 
 K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
@@ -467,7 +467,7 @@ void main(void)
     // nrfx_timer_enable(&timer0);
 	// IRQ_CONNECT(TIMER0_IRQn, 0, nrfx_timer_0_irq_handler, NULL, 0);
 
-	if(id == local_42 /*remote_116*/) { // sender
+	if(id == remote_116 /*remote_116*/) { // sender
 		struct bt_le_ext_adv *adv;
 		struct bt_iso_big *big;
 		int err;
