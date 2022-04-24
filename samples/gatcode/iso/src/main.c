@@ -9,22 +9,22 @@
 #include <hw_info.h>
 #include <math.h>
 
-// #include <drivers/timer/nrf_rtc_timer.h>
-// #include <hal/nrf_rtc.h>
-// #include <hal/nrf_timer.h>
+#include <drivers/timer/nrf_rtc_timer.h>
+#include <hal/nrf_rtc.h>
+#include <hal/nrf_timer.h>
 
-// #include <device.h>
-// #include <drivers/counter.h>
-// #include <drivers/gpio.h>
+#include <device.h>
+#include <drivers/counter.h>
+#include <drivers/gpio.h>
 
-// #include <stdbool.h>
-// #include <stdio.h>
+#include <stdbool.h>
+#include <stdio.h>
 
-// #include <nrfx_timer.h>
+#include <nrfx_timer.h>
 
 static struct io_coder io_encoder = {0};
 
-// static const nrfx_timer_t timer0 = NRFX_TIMER_INSTANCE(1);
+static const nrfx_timer_t timer2 = NRFX_TIMER_INSTANCE(2);
 
 /* ------------------------------------------------------ */
 /* Sender Specific */
@@ -76,11 +76,11 @@ static void stream_sent_cb(struct bt_iso_chan *chan)
 		net_buf_unref(buf);
 		return;
 	}
-	printk("Sending value %u\n", iso_send_count);
-	int err = write_8_bit(&io_encoder, iso_send_count % 256);
-	if(err) {
-		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-	}
+	// printk("Sending value %u\n", iso_send_count);
+	// int err = write_8_bit(&io_encoder, iso_send_count % 256);
+	// if(err) {
+	// 	printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	// }
 }
 
 static struct bt_iso_chan_ops iso_ops_send = {
@@ -106,7 +106,7 @@ static struct bt_iso_chan bis_iso_chan_send = {
 
 static struct bt_iso_chan *bis_send[BIS_ISO_CHAN_COUNT] = { &bis_iso_chan_send };
 
-#define SDU_INTERVAL 10000
+#define SDU_INTERVAL 20000
 
 static struct bt_iso_big_create_param big_create_param_send = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
@@ -300,19 +300,20 @@ void my_timer_handler(struct k_timer *dummy)
     printk("HELLO - current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
 	last_timestamp = current_timestamp;
 
-	int err = write_8_bit(&io_encoder, packet_id % 256);
-	if(err) {
-		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-	}
+	// int err = write_8_bit(&io_encoder, packet_id % 256);
+	// if(err) {
+	// 	printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	// }
 }
 
 K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
 
 
-// static void timer0_callback(nrf_timer_event_t event_type, void* p_context) {
-//     printk("Hello from timer0 callback!\n");
-// }
+static void timer2_callback(nrf_timer_event_t event_type, void* p_context) {
+    printk("Hello from timer2 callback!\n");
+}
 
+uint32_t nrfx_timer2_offset = 0;
 uint32_t clock_offset = 0;
 bool doonce = true;
 
@@ -332,15 +333,25 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 	uint32_t info_ts = info->ts;
 
 	if(doonce) {
-		clock_offset = k_cyc_to_us_near32(k_cycle_get_32()) - info->ts;
-		clock_offset = ceil(clock_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
+		nrfx_timer2_offset = nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0) - info->ts;
+		// nrfx_timer2_offset = ceil(nrfx_timer2_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
+
+
+		// clock_offset = k_cyc_to_us_near32(k_cycle_get_32()) - info->ts;
+		// clock_offset = ceil(clock_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
 		doonce = false;
 	}
 
-	uint32_t curr = k_cyc_to_us_near32(k_cycle_get_32());
+	// uint32_t curr = k_cyc_to_us_near32(k_cycle_get_32());
 	// printk("info_ts: %u | offset: %u | curr: %u | res: %d\n", info_ts, clock_offset, curr, info->ts + clock_offset - curr + 10000);
 	
+	// printk("Timer value: %u\n", nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0));
+	printk("info->ts: %u | curr: %u | offset: %u\n", info->ts, nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL1), nrfx_timer2_offset);
 
+	// uint32_t curr = nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL1);
+	// uint32_t compare_value = info->ts + nrfx_timer2_offset - curr + 100000;
+	// printk("Compare: %u\n", compare_value);
+	// nrfx_timer_compare(&timer2, NRF_TIMER_CC_CHANNEL1, compare_value, true);
 
 
 	// uint32_t app_timer_ts = 0;
@@ -352,8 +363,8 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 
 	// uint64_t waiting_time = app_timer_us - info_ts - delta + 10000;
 
-	// printk("Timer value: %u\n", nrfx_timer_capture(&timer0, NRF_TIMER_CC_CHANNEL0));
-	// uint32_t nrfx_timer0_ts = nrfx_timer_capture(&timer0, NRF_TIMER_CC_CHANNEL1);
+	// printk("Timer value: %u\n", nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0));
+	// uint32_t nrfx_timer0_ts = nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL1);
 	// printk("nrfx: %u | info_ts: %u\n", nrfx_timer0_ts, info_ts);
 
 
@@ -361,7 +372,7 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 
 	// printk("id: %u | info_ts: %llu | curr_ts: %llu | iso_connected_timestamp: %llu | offset: %llu\n", count, info_ts, curr_ts, iso_connected_timestamp, info_ts - iso_connected_timestamp - (count - 5) * 1000000);
 
-	k_timer_start(&my_timer, K_USEC(info->ts + clock_offset - curr + PRESENTATION_DELAY_US), K_NO_WAIT);
+	// k_timer_start(&my_timer, K_USEC(info->ts + clock_offset - curr + 1000), K_NO_WAIT);
 
 
 	// int err = write_8_bit(&io_encoder, packet_id % 256);
@@ -441,10 +452,10 @@ void main(void)
 {
 	int err;
 
-	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
-	if(err) {
-		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
-	}
+	// err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
+	// if(err) {
+	// 	printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
+	// }
 
 	uint64_t id;
 	err = get_device_id(&id);
@@ -452,22 +463,22 @@ void main(void)
 		printk("Error getting id (err %d)\n", err);
 	}
 
-	// static nrfx_timer_config_t timer0_config = NRFX_TIMER_DEFAULT_CONFIG;
-	// // timer0_config.frequency = NRF_TIMER_FREQ_16MHz;
-	// // timer0_config.mode = NRF_TIMER_MODE_TIMER;
-	// // timer0_config.bit_width = NRF_TIMER_BIT_WIDTH_32;
-	// // timer0_config.interrupt_priority = 0;
+	static nrfx_timer_config_t timer2_config = NRFX_TIMER_DEFAULT_CONFIG;
+	timer2_config.frequency = NRF_TIMER_FREQ_1MHz;
+	timer2_config.mode = NRF_TIMER_MODE_TIMER;
+	timer2_config.bit_width = NRF_TIMER_BIT_WIDTH_32;
+	timer2_config.interrupt_priority = 0;
 
-    // err = nrfx_timer_init(&timer0, &timer0_config, timer0_callback);
-	// if (err != NRFX_SUCCESS) {
-	// 	printk("NRF_TIMER init failed (err %d)\n", err);
-	// 	return;
-	// }
+    err = nrfx_timer_init(&timer2, &timer2_config, timer2_callback);
+	if (err != NRFX_SUCCESS) {
+		printk("NRF_TIMER init failed (err %d)\n", err);
+		return;
+	}
 
-    // nrfx_timer_enable(&timer0);
-	// IRQ_CONNECT(TIMER0_IRQn, 0, nrfx_timer_0_irq_handler, NULL, 0);
+    nrfx_timer_enable(&timer2);
+	IRQ_CONNECT(TIMER2_IRQn, 0, nrfx_timer_2_irq_handler, NULL, 0);
 
-	if(id == remote_116 /*remote_116*/) { // sender
+	if(id == local_42 /*remote_116*/) { // sender
 		struct bt_le_ext_adv *adv;
 		struct bt_iso_big *big;
 		int err;
@@ -513,11 +524,6 @@ void main(void)
 			return;
 		}
 
-		// while(1) {
-		// 	k_sleep(K_MSEC(1000));
-		// 	printk("Timer value: %u\n", nrfx_timer_capture(&timer0, NRF_TIMER_CC_CHANNEL0));
-		// }
-
 		/* Create BIG */
 		err = bt_iso_big_create(adv, &big_create_param_send, &big);
 		if (err) {
@@ -549,11 +555,11 @@ void main(void)
 				net_buf_unref(buf);
 				return;
 			}
-			printk("Sending value %u\n", iso_send_count);
-			err = write_8_bit(&io_encoder, iso_send_count % 256);
-			if(err) {
-				printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-			}
+			// printk("Sending value %u\n", iso_send_count);
+			// err = write_8_bit(&io_encoder, iso_send_count % 256);
+			// if(err) {
+			// 	printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+			// }
 
 			timeout--;
 			if (!timeout) {
