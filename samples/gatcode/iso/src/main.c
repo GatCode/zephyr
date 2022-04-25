@@ -22,6 +22,10 @@
 
 // #include <nrfx_timer.h>
 
+#include <drivers/timer/nrf_rtc_timer.h>
+#include <hal/nrf_rtc.h>
+#include <hal/nrf_timer.h>
+
 static struct io_coder io_encoder = {0};
 
 // static const nrfx_timer_t timer0 = NRFX_TIMER_INSTANCE(1);
@@ -107,12 +111,13 @@ static struct bt_iso_chan bis_iso_chan_send = {
 static struct bt_iso_chan *bis_send[BIS_ISO_CHAN_COUNT] = { &bis_iso_chan_send };
 
 #define SDU_INTERVAL 10000
+#define TRANSPORT_LATENCY 10
 
 static struct bt_iso_big_create_param big_create_param_send = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_channels = bis_send,
 	.interval = SDU_INTERVAL, /* in microseconds */
-	.latency = 10, /* milliseconds */
+	.latency = TRANSPORT_LATENCY, /* milliseconds */
 	.packing = BT_ISO_PACKING_SEQUENTIAL, /* 0 - sequential, 1 - interleaved */
 	.framing = BT_ISO_FRAMING_FRAMED, /* 0 - unframed, 1 - framed */
 };
@@ -331,37 +336,25 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 
 	uint32_t info_ts = info->ts;
 
-	if(doonce) {
-		clock_offset = k_cyc_to_us_near32(k_cycle_get_32()) - info->ts;
-		clock_offset = floor(clock_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
-		doonce = false;
-	}
+	// if(doonce) {
+	// 	clock_offset = k_cyc_to_us_near32(k_cycle_get_32()) - info->ts;
+	// 	clock_offset = floor(clock_offset / SDU_INTERVAL) * SDU_INTERVAL; // floor to SDU interval
+	// 	doonce = false;
+	// }
 
-	uint32_t curr = k_cyc_to_us_near32(k_cycle_get_32());
-	// printk("info_ts: %u | offset: %u | curr: %u | res: %d\n", info_ts, clock_offset, curr, info->ts + clock_offset - curr + 10000);
+	// uint32_t curr = k_cyc_to_us_near64(z_nrf_rtc_timer_read());
+
+	uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get(NRF_RTC0_BASE));
+
+
+	// uint32_t big_sync_delay = chan->qos->rx->path->delay;
+	// printk("BIG sync delay rx: %u\n", info->ts - curr + big_sync_delay);
+	// printk("info_ts: %u | offset: %u | curr: %u | res: %d | rts: %llu\n", info_ts, clock_offset, curr, curr - info->ts + 5000, k_cyc_to_us_near64(z_nrf_rtc_timer_read()));
 	
 
 
 
-	// uint32_t app_timer_ts = 0;
-	// counter_get_value(counter_dev, &app_timer_ts);
-
-	// uint64_t app_timer_us = counter_ticks_to_us(counter_dev, app_timer_ts);
-
-	// int64_t delta = app_timer_us - info_ts;
-
-	// uint64_t waiting_time = app_timer_us - info_ts - delta + 10000;
-
-	// printk("Timer value: %u\n", nrfx_timer_capture(&timer0, NRF_TIMER_CC_CHANNEL0));
-	// uint32_t nrfx_timer0_ts = nrfx_timer_capture(&timer0, NRF_TIMER_CC_CHANNEL1);
-	// printk("nrfx: %u | info_ts: %u\n", nrfx_timer0_ts, info_ts);
-
-
-	// printk("app_timer_ts = %llu | info_ts = %u | delta = %lld | waiting time: %lld\n", app_timer_us, info_ts, delta, waiting_time);
-
-	// printk("id: %u | info_ts: %llu | curr_ts: %llu | iso_connected_timestamp: %llu | offset: %llu\n", count, info_ts, curr_ts, iso_connected_timestamp, info_ts - iso_connected_timestamp - (count - 5) * 1000000);
-
-	k_timer_start(&my_timer, K_USEC(curr - info->ts - clock_offset /*+ PRESENTATION_DELAY_US*/), K_NO_WAIT);
+	k_timer_start(&my_timer, K_USEC(curr - info->ts + 5000 /*+ PRESENTATION_DELAY_US*/), K_NO_WAIT);
 
 
 	// int err = write_8_bit(&io_encoder, packet_id % 256);
@@ -467,7 +460,7 @@ void main(void)
     // nrfx_timer_enable(&timer0);
 	// IRQ_CONNECT(TIMER0_IRQn, 0, nrfx_timer_0_irq_handler, NULL, 0);
 
-	if(id == remote_116 /*remote_116*/) { // sender
+	if(id == local_42 /*remote_116*/) { // sender
 		struct bt_le_ext_adv *adv;
 		struct bt_iso_big *big;
 		int err;
