@@ -15,7 +15,7 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* D-Cube Defines */
 /* ------------------------------------------------------ */
-#define REMOTE false
+#define REMOTE true
 #define SENDER_REMOTE remote_116
 #define SENDER_LOCAL local_42
 
@@ -27,14 +27,15 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* Defines Sender */
 /* ------------------------------------------------------ */
-#define SDU_INTERVAL_US 10000
-#define TRANSPORT_LATENCY_MS 10
-#define RETRANSMISSION_NUMBER 8
+#define SDU_INTERVAL_US 5000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
+#define TRANSPORT_LATENCY_MS 5 // 5ms-4s
+#define RETRANSMISSION_NUMBER 2
+#define MAXIMUM_SUBEVENTS 1 // MSE | 1-31
 
 /* ------------------------------------------------------ */
 /* Defines Receiver */
 /* ------------------------------------------------------ */
-#define PRESENTATION_DELAY_US 5000
+#define PRESENTATION_DELAY_US 0500
 
 /* ------------------------------------------------------ */
 /* Sender Specific */
@@ -174,9 +175,39 @@ static void term_cb_recv(struct bt_le_per_adv_sync *sync,
 	k_sem_give(&sem_per_sync_lost);
 }
 
+static const char *phy2str(uint8_t phy)
+{
+	switch (phy) {
+	case 0: return "No packets";
+	case BT_GAP_LE_PHY_1M: return "LE 1M";
+	case BT_GAP_LE_PHY_2M: return "LE 2M";
+	case BT_GAP_LE_PHY_CODED: return "LE Coded";
+	default: return "Unknown";
+	}
+}
+
 static void biginfo_cb_recv(struct bt_le_per_adv_sync *sync,
 		       const struct bt_iso_biginfo *biginfo)
 {
+	char le_addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(biginfo->addr, le_addr, sizeof(le_addr));
+
+	printk("BIG INFO[%u]: [DEVICE]: %s, sid 0x%02x, "
+	       "num_bis %u, nse %u, interval 0x%04x (%u ms), "
+	       "bn %u, pto %u, irc %u, max_pdu %u, "
+	       "sdu_interval %u us, max_sdu %u, phy %s, "
+	       "%s framing, %sencrypted\n",
+	       bt_le_per_adv_sync_get_index(sync), le_addr, biginfo->sid,
+	       biginfo->num_bis, biginfo->sub_evt_count,
+	       biginfo->iso_interval,
+	       (biginfo->iso_interval * 5 / 4),
+	       biginfo->burst_number, biginfo->offset,
+	       biginfo->rep_count, biginfo->max_pdu, biginfo->sdu_interval,
+	       biginfo->max_sdu, phy2str(biginfo->phy),
+	       biginfo->framing ? "with" : "without",
+	       biginfo->encryption ? "" : "not ");
+
 	k_sem_give(&sem_per_big_info);
 }
 
@@ -261,7 +292,7 @@ static struct bt_iso_big_sync_param big_sync_param_recv = {
 	.bis_channels = bis_recv,
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_bitfield = (BIT_MASK(BIS_ISO_CHAN_COUNT) << 1),
-	.mse = BT_ISO_SYNC_MSE_MAX,
+	.mse = MAXIMUM_SUBEVENTS,//BT_ISO_SYNC_MSE_MAX,
 	.sync_timeout = 100, /* in 10 ms units */
 };
 
