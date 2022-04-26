@@ -8,20 +8,38 @@
 #include <io_coder.h>
 #include <hw_info.h>
 #include <math.h>
-
-#include <drivers/timer/nrf_rtc_timer.h>
 #include <hal/nrf_rtc.h>
-#include <hal/nrf_timer.h>
 
 static struct io_coder io_encoder = {0};
+
+/* ------------------------------------------------------ */
+/* D-Cube Defines */
+/* ------------------------------------------------------ */
+#define REMOTE false
+#define SENDER_REMOTE remote_116
+#define SENDER_LOCAL local_42
+
+/* ------------------------------------------------------ */
+/* Defines */
+/* ------------------------------------------------------ */
+#define BIS_ISO_CHAN_COUNT 1
+
+/* ------------------------------------------------------ */
+/* Defines Sender */
+/* ------------------------------------------------------ */
+#define SDU_INTERVAL_US 10000
+#define TRANSPORT_LATENCY_MS 10
+#define RETRANSMISSION_NUMBER 8
+
+/* ------------------------------------------------------ */
+/* Defines Receiver */
+/* ------------------------------------------------------ */
+#define PRESENTATION_DELAY_US 5000
 
 /* ------------------------------------------------------ */
 /* Sender Specific */
 /* ------------------------------------------------------ */
 
-#define BIG_TERMINATE_TIMEOUT 120 /* seconds */
-
-#define BIS_ISO_CHAN_COUNT 1
 NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BIS_ISO_CHAN_COUNT,
 			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
 
@@ -36,8 +54,7 @@ static void iso_connected_send(struct bt_iso_chan *chan)
 
 static void iso_disconnected_send(struct bt_iso_chan *chan, uint8_t reason)
 {
-	printk("ISO Channel %p disconnected with reason 0x%02x\n",
-	       chan, reason);
+	printk("ISO Channel %p disconnected with reason 0x%02x\n", chan, reason);
 	k_sem_give(&sem_big_term);
 }
 
@@ -47,14 +64,9 @@ uint32_t iso_send_count = 0;
 uint8_t iso_data[sizeof(iso_send_count)] = { 0 };
 struct net_buf *buf;
 
-static void stream_sent_cb(struct bt_iso_chan *chan)
+static void iso_sent_cb(struct bt_iso_chan *chan)
 {
-	// printk("Sent Packet\n");
-	static uint8_t timeout = BIG_TERMINATE_TIMEOUT;
 	int ret;
-
-	// k_sleep(K_SECONDS(1));
-
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 	sys_put_le32(++iso_send_count, iso_data);
@@ -73,14 +85,14 @@ static void stream_sent_cb(struct bt_iso_chan *chan)
 }
 
 static struct bt_iso_chan_ops iso_ops_send = {
-	.connected	= iso_connected_send,
-	.disconnected	= iso_disconnected_send,
-	.sent = stream_sent_cb,
+	.connected = iso_connected_send,
+	.disconnected = iso_disconnected_send,
+	.sent = iso_sent_cb,
 };
 
 static struct bt_iso_chan_io_qos iso_tx_qos_send = {
 	.sdu = sizeof(uint32_t), /* bytes */
-	.rtn = 8,
+	.rtn = RETRANSMISSION_NUMBER,
 	.phy = BT_GAP_LE_PHY_2M,
 };
 
@@ -95,16 +107,13 @@ static struct bt_iso_chan bis_iso_chan_send = {
 
 static struct bt_iso_chan *bis_send[BIS_ISO_CHAN_COUNT] = { &bis_iso_chan_send };
 
-#define SDU_INTERVAL 10000
-#define TRANSPORT_LATENCY_MS 10
-
 static struct bt_iso_big_create_param big_create_param_send = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_channels = bis_send,
-	.interval = SDU_INTERVAL, /* in microseconds*/
-	.latency = TRANSPORT_LATENCY_MS, /* milliseconds - maximum transport latency */
-	.packing = BT_ISO_PACKING_SEQUENTIAL, /* 0 - sequential, 1 - interleaved */
-	.framing = BT_ISO_FRAMING_FRAMED, /* 0 - unframed, 1 - framed */
+	.interval = SDU_INTERVAL_US,
+	.latency = TRANSPORT_LATENCY_MS,
+	.packing = BT_ISO_PACKING_SEQUENTIAL,
+	.framing = BT_ISO_FRAMING_FRAMED,
 };
 
 /* ------------------------------------------------------ */
@@ -134,57 +143,9 @@ static K_SEM_DEFINE(sem_per_big_info, 0, 1);
 static K_SEM_DEFINE(sem_big_sync, 0, 1);
 static K_SEM_DEFINE(sem_big_sync_lost, 0, 1);
 
-static bool data_cb(struct bt_data *data, void *user_data)
-{
-	char *name = user_data;
-	uint8_t len;
-
-	switch (data->type) {
-	case BT_DATA_NAME_SHORTENED:
-	case BT_DATA_NAME_COMPLETE:
-		len = MIN(data->data_len, NAME_LEN - 1);
-		memcpy(name, data->data, len);
-		name[len] = '\0';
-		return false;
-	default:
-		return true;
-	}
-}
-
-static const char *phy2str(uint8_t phy)
-{
-	switch (phy) {
-	case 0: return "No packets";
-	case BT_GAP_LE_PHY_1M: return "LE 1M";
-	case BT_GAP_LE_PHY_2M: return "LE 2M";
-	case BT_GAP_LE_PHY_CODED: return "LE Coded";
-	default: return "Unknown";
-	}
-}
-
 static void scan_recv(const struct bt_le_scan_recv_info *info,
 		      struct net_buf_simple *buf)
 {
-	char le_addr[BT_ADDR_LE_STR_LEN];
-	char name[NAME_LEN];
-
-	(void)memset(name, 0, sizeof(name));
-
-	bt_data_parse(buf, data_cb, name);
-
-	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-	// printk("[DEVICE]: %s, AD evt type %u, Tx Pwr: %i, RSSI %i %s "
-	//        "C:%u S:%u D:%u SR:%u E:%u Prim: %s, Secn: %s, "
-	//        "Interval: 0x%04x (%u ms), SID: %u\n",
-	//        le_addr, info->adv_type, info->tx_power, info->rssi, name,
-	//        (info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0,
-	//        (info->adv_props & BT_GAP_ADV_PROP_SCANNABLE) != 0,
-	//        (info->adv_props & BT_GAP_ADV_PROP_DIRECTED) != 0,
-	//        (info->adv_props & BT_GAP_ADV_PROP_SCAN_RESPONSE) != 0,
-	//        (info->adv_props & BT_GAP_ADV_PROP_EXT_ADV) != 0,
-	//        phy2str(info->primary_phy), phy2str(info->secondary_phy),
-	//        info->interval, BT_CONN_INTERVAL_TO_MS(info->interval), info->sid);
-
 	if (!per_adv_found && info->interval) {
 		per_adv_found = true;
 
@@ -203,91 +164,35 @@ static struct bt_le_scan_cb scan_callbacks = {
 static void sync_cb_recv(struct bt_le_per_adv_sync *sync,
 		    struct bt_le_per_adv_sync_synced_info *info)
 {
-	char le_addr[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-
-	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
-	//        "Interval 0x%04x (%u ms), PHY %s\n",
-	//        bt_le_per_adv_sync_get_index(sync), le_addr,
-	//        info->interval, info->interval * 5 / 4, phy2str(info->phy));
-
 	k_sem_give(&sem_per_sync);
 }
 
 static void term_cb_recv(struct bt_le_per_adv_sync *sync,
 		    const struct bt_le_per_adv_sync_term_info *info)
 {
-	char le_addr[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-
-	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s sync terminated\n",
-	//        bt_le_per_adv_sync_get_index(sync), le_addr);
-
 	per_adv_lost = true;
 	k_sem_give(&sem_per_sync_lost);
-}
-
-static void recv_cb_recv(struct bt_le_per_adv_sync *sync,
-		    const struct bt_le_per_adv_sync_recv_info *info,
-		    struct net_buf_simple *buf)
-{
-	char le_addr[BT_ADDR_LE_STR_LEN];
-	char data_str[129];
-
-	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-	bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
-
-	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s, tx_power %i, "
-	//        "RSSI %i, CTE %u, data length %u, data: %s\n",
-	//        bt_le_per_adv_sync_get_index(sync), le_addr, info->tx_power,
-	//        info->rssi, info->cte_type, buf->len, data_str);
 }
 
 static void biginfo_cb_recv(struct bt_le_per_adv_sync *sync,
 		       const struct bt_iso_biginfo *biginfo)
 {
-	char le_addr[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(biginfo->addr, le_addr, sizeof(le_addr));
-
-	// printk("BIG INFO[%u]: [DEVICE]: %s, sid 0x%02x, "
-	//        "num_bis %u, nse %u, interval 0x%04x (%u ms), "
-	//        "bn %u, pto %u, irc %u, max_pdu %u, "
-	//        "sdu_interval %u us, max_sdu %u, phy %s, "
-	//        "%s framing, %sencrypted\n",
-	//        bt_le_per_adv_sync_get_index(sync), le_addr, biginfo->sid,
-	//        biginfo->num_bis, biginfo->sub_evt_count,
-	//        biginfo->iso_interval,
-	//        (biginfo->iso_interval * 5 / 4),
-	//        biginfo->burst_number, biginfo->offset,
-	//        biginfo->rep_count, biginfo->max_pdu, biginfo->sdu_interval,
-	//        biginfo->max_sdu, phy2str(biginfo->phy),
-	//        biginfo->framing ? "with" : "without",
-	//        biginfo->encryption ? "" : "not ");
-
-
 	k_sem_give(&sem_per_big_info);
 }
 
 static struct bt_le_per_adv_sync_cb sync_callbacks_recv = {
 	.synced = sync_cb_recv,
 	.term = term_cb_recv,
-	.recv = recv_cb_recv,
 	.biginfo = biginfo_cb_recv,
 };
 
-#define BIS_ISO_CHAN_COUNT 1
-
 static uint64_t last_timestamp = 0;
 static uint32_t packet_id = 0;
-#define PRESENTATION_DELAY_US 5000 // 5ms
 
 void my_timer_handler(struct k_timer *dummy)
 {
 	uint64_t current_timestamp = k_cyc_to_us_near32(k_cycle_get_32());
-    printk("HELLO - current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
+    printk("current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
 	last_timestamp = current_timestamp;
 
 	int err = write_8_bit(&io_encoder, packet_id % 256);
@@ -295,27 +200,20 @@ void my_timer_handler(struct k_timer *dummy)
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
 	}
 }
-
 K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
 
 static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
-	char data_str[128];
-	size_t str_len;
-	uint32_t count = 0; /* only valid if the data is a counter */
-
+	uint32_t count = 0;
 	if (buf->len == sizeof(count)) {
 		count = sys_get_le32(buf->data);
 	}
-
 	packet_id = count;
 
 	uint32_t info_ts = info->ts;
-	uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get(NRF_RTC0_BASE));
+	uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
 	uint32_t delta = curr - info_ts;
-
-	// SDU_Synchronization_Reference = anchor point + BIG_Sync_Delay + SDU_Interval + ISO_Interval – Time_Offset.
 
 	// struct bt_iso_info iso_chan_info;
 	// bt_iso_chan_get_info(chan, &iso_chan_info);
@@ -385,28 +283,10 @@ void main(void)
 		printk("Error getting id (err %d)\n", err);
 	}
 
-	// static nrfx_timer_config_t timer0_config = NRFX_TIMER_DEFAULT_CONFIG;
-	// // timer0_config.frequency = NRF_TIMER_FREQ_16MHz;
-	// // timer0_config.mode = NRF_TIMER_MODE_TIMER;
-	// // timer0_config.bit_width = NRF_TIMER_BIT_WIDTH_32;
-	// // timer0_config.interrupt_priority = 0;
-
-    // err = nrfx_timer_init(&timer0, &timer0_config, timer0_callback);
-	// if (err != NRFX_SUCCESS) {
-	// 	printk("NRF_TIMER init failed (err %d)\n", err);
-	// 	return;
-	// }
-
-    // nrfx_timer_enable(&timer0);
-	// IRQ_CONNECT(TIMER0_IRQn, 0, nrfx_timer_0_irq_handler, NULL, 0);
-
-	if(id == local_42 /*remote_116*/) { // sender
+	if(id == (REMOTE == true ? SENDER_REMOTE : SENDER_LOCAL)) { // sender
 		struct bt_le_ext_adv *adv;
 		struct bt_iso_big *big;
 		int err;
-		// uint32_t iso_send_count = 0;
-		// uint8_t iso_data[sizeof(iso_send_count)] = { 0 };
-		// struct net_buf *buf;
 
 		printk("Starting ISO Broadcast Demo\n");
 
@@ -446,11 +326,6 @@ void main(void)
 			return;
 		}
 
-		// while(1) {
-		// 	k_sleep(K_MSEC(1000));
-		// 	printk("Timer value: %u\n", nrfx_timer_capture(&timer0, NRF_TIMER_CC_CHANNEL0));
-		// }
-
 		/* Create BIG */
 		err = bt_iso_big_create(adv, &big_create_param_send, &big);
 		if (err) {
@@ -466,66 +341,23 @@ void main(void)
 		}
 		printk("done.\n");
 
-		// while (true) {
-			static uint8_t timeout = BIG_TERMINATE_TIMEOUT;
-			int ret;
-
-			k_sleep(K_SECONDS(1));
-
-			buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
-			net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-			sys_put_le32(++iso_send_count, iso_data);
-			net_buf_add_mem(buf, iso_data, sizeof(iso_data));
-			ret = bt_iso_chan_send(&bis_iso_chan_send, buf);
-			if (ret < 0) {
-				printk("Unable to broadcast data: %d", ret);
-				net_buf_unref(buf);
-				return;
-			}
-			printk("Sending value %u\n", iso_send_count);
-			err = write_8_bit(&io_encoder, iso_send_count % 256);
-			if(err) {
-				printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-			}
-
-			timeout--;
-			if (!timeout) {
-				timeout = BIG_TERMINATE_TIMEOUT;
-
-				printk("BIG Terminate...");
-				err = bt_iso_big_terminate(big);
-				if (err) {
-					printk("failed (err %d)\n", err);
-					return;
-				}
-				printk("done.\n");
-
-				printk("Waiting for BIG terminate complete...");
-				err = k_sem_take(&sem_big_term, K_FOREVER);
-				if (err) {
-					printk("failed (err %d)\n", err);
-					return;
-				}
-				printk("done.\n");
-
-				printk("Create BIG...");
-				err = bt_iso_big_create(adv, &big_create_param_send, &big);
-				if (err) {
-					printk("failed (err %d)\n", err);
-					return;
-				}
-				printk("done.\n");
-
-				printk("Waiting for BIG complete...");
-				err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-				if (err) {
-					printk("failed (err %d)\n", err);
-					return;
-				}
-				printk("done.\n");
-			}
-		// }
-	} else { // receiver - if(id == remote_117 /*local_56*/) 
+		int ret;
+		buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
+		net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+		sys_put_le32(++iso_send_count, iso_data);
+		net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+		ret = bt_iso_chan_send(&bis_iso_chan_send, buf);
+		if (ret < 0) {
+			printk("Unable to broadcast data: %d", ret);
+			net_buf_unref(buf);
+			return;
+		}
+		printk("Sending value %u\n", iso_send_count);
+		err = write_8_bit(&io_encoder, iso_send_count % 256);
+		if(err) {
+			printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+		}
+	} else { // receiver
 		struct bt_le_per_adv_sync_param sync_create_param;
 		struct bt_le_per_adv_sync *sync;
 		struct bt_iso_big *big;
