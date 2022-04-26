@@ -13,6 +13,8 @@
 #include <hal/nrf_rtc.h>
 #include <hal/nrf_timer.h>
 
+#include <nrfx_timer.h>
+
 static struct io_coder io_encoder = {0};
 
 /* ------------------------------------------------------ */
@@ -284,19 +286,30 @@ static uint64_t last_timestamp = 0;
 static uint32_t packet_id = 0;
 #define PRESENTATION_DELAY_US 5000 // 5ms
 
-void my_timer_handler(struct k_timer *dummy)
-{
-	uint64_t current_timestamp = k_cyc_to_us_near32(k_cycle_get_32());
-    printk("HELLO - current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
-	last_timestamp = current_timestamp;
+// void my_timer_handler(struct k_timer *dummy)
+// {
+// 	uint64_t current_timestamp = k_cyc_to_us_near32(k_cycle_get_32());
+//     printk("HELLO - current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
+// 	last_timestamp = current_timestamp;
+
+// 	int err = write_8_bit(&io_encoder, packet_id % 256);
+// 	if(err) {
+// 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+// 	}
+// }
+// K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
+
+static const nrfx_timer_t timer2 = NRFX_TIMER_INSTANCE(2);
+
+static void timer2_callback(nrf_timer_event_t event_type, void* p_context) {
+    uint32_t current_timestamp = nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0);
+    printk("HELLO - current ts: %u\n", current_timestamp);
 
 	int err = write_8_bit(&io_encoder, packet_id % 256);
 	if(err) {
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
 	}
 }
-
-K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
 
 static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
@@ -321,7 +334,11 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 	// bt_iso_chan_get_info(chan, &iso_chan_info);
 
 	// printk("Diff: %u\n", PRESENTATION_DELAY_US - delta);
-	k_timer_start(&my_timer, K_USEC(PRESENTATION_DELAY_US - delta), K_NO_WAIT);
+	// k_timer_start(&my_timer, K_USEC(PRESENTATION_DELAY_US - delta), K_NO_WAIT);
+
+	uint32_t timer2_ts = nrfx_timer_capture(&timer2, NRF_TIMER_CC_CHANNEL0);
+	uint32_t compare_value = timer2_ts + PRESENTATION_DELAY_US - delta;
+	nrfx_timer_compare(&timer2, NRF_TIMER_CC_CHANNEL1, compare_value, true);
 }
 
 static void iso_connected_recv(struct bt_iso_chan *chan)
@@ -385,22 +402,22 @@ void main(void)
 		printk("Error getting id (err %d)\n", err);
 	}
 
-	// static nrfx_timer_config_t timer0_config = NRFX_TIMER_DEFAULT_CONFIG;
-	// // timer0_config.frequency = NRF_TIMER_FREQ_16MHz;
-	// // timer0_config.mode = NRF_TIMER_MODE_TIMER;
-	// // timer0_config.bit_width = NRF_TIMER_BIT_WIDTH_32;
-	// // timer0_config.interrupt_priority = 0;
+	static nrfx_timer_config_t timer2_config = NRFX_TIMER_DEFAULT_CONFIG;
+	timer2_config.frequency = NRF_TIMER_FREQ_1MHz;
+	timer2_config.mode = NRF_TIMER_MODE_TIMER;
+	timer2_config.bit_width = NRF_TIMER_BIT_WIDTH_32;
+	timer2_config.interrupt_priority = 0;
 
-    // err = nrfx_timer_init(&timer0, &timer0_config, timer0_callback);
-	// if (err != NRFX_SUCCESS) {
-	// 	printk("NRF_TIMER init failed (err %d)\n", err);
-	// 	return;
-	// }
+    err = nrfx_timer_init(&timer2, &timer2_config, timer2_callback);
+	if (err != NRFX_SUCCESS) {
+		printk("NRF_TIMER init failed (err %d)\n", err);
+		return;
+	}
 
-    // nrfx_timer_enable(&timer0);
-	// IRQ_CONNECT(TIMER0_IRQn, 0, nrfx_timer_0_irq_handler, NULL, 0);
+    nrfx_timer_enable(&timer2);
+	IRQ_CONNECT(TIMER2_IRQn, 0, nrfx_timer_2_irq_handler, NULL, 0);
 
-	if(id == local_42 /*remote_116*/) { // sender
+	if(id == remote_116 /*remote_116*/) { // sender
 		struct bt_le_ext_adv *adv;
 		struct bt_iso_big *big;
 		int err;
