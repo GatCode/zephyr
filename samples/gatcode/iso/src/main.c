@@ -16,8 +16,9 @@ static struct io_coder io_encoder = {0};
 /* D-Cube Defines */
 /* ------------------------------------------------------ */
 #define REMOTE true
-#define SENDER_REMOTE remote_116
+#define SENDER_REMOTE remote_213
 #define SENDER_LOCAL local_42
+#define SENDER_START_DELAY_MS 25000
 
 /* ------------------------------------------------------ */
 /* Defines */
@@ -27,15 +28,15 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* Defines Sender */
 /* ------------------------------------------------------ */
-#define SDU_INTERVAL_US 5000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
-#define TRANSPORT_LATENCY_MS 5 // 5ms-4s
+#define SDU_INTERVAL_US 8000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
+#define TRANSPORT_LATENCY_MS 10 // 5ms-4s
 #define RETRANSMISSION_NUMBER 2
-#define MAXIMUM_SUBEVENTS 1 // MSE | 1-31
+#define MAXIMUM_SUBEVENTS 10 // MSE | 1-31
 
 /* ------------------------------------------------------ */
 /* Defines Receiver */
 /* ------------------------------------------------------ */
-#define PRESENTATION_DELAY_US 0500
+#define PRESENTATION_DELAY_US 10000
 
 /* ------------------------------------------------------ */
 /* Sender Specific */
@@ -68,21 +69,23 @@ struct net_buf *buf;
 static void iso_sent_cb(struct bt_iso_chan *chan)
 {
 	int ret;
-	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
-	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-	sys_put_le32(++iso_send_count, iso_data);
-	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
 	ret = bt_iso_chan_send(&bis_iso_chan_send, buf);
 	if (ret < 0) {
 		printk("Unable to broadcast data: %d", ret);
 		net_buf_unref(buf);
 		return;
 	}
+
 	printk("Sending value %u\n", iso_send_count);
 	int err = write_8_bit(&io_encoder, iso_send_count % 256);
 	if(err) {
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
 	}
+
+	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
+	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+	sys_put_le32(iso_send_count++, iso_data);
+	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
 }
 
 static struct bt_iso_chan_ops iso_ops_send = {
@@ -246,11 +249,11 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 	uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
 	uint32_t delta = curr - info_ts;
 
-	// struct bt_iso_info iso_chan_info;
-	// bt_iso_chan_get_info(chan, &iso_chan_info);
-
-	// printk("Diff: %u\n", PRESENTATION_DELAY_US - delta);
 	k_timer_start(&my_timer, K_USEC(PRESENTATION_DELAY_US - delta), K_NO_WAIT);
+
+	struct bt_iso_info iso_chan_info;
+	bt_iso_chan_get_info(chan, &iso_chan_info);
+	printk("sync_delay: %u, pto: %u, pto: %u\n", iso_chan_info.broadcaster.sync_delay, iso_chan_info.broadcaster.pto, iso_chan_info.sync_receiver.pto);
 }
 
 static void iso_connected_recv(struct bt_iso_chan *chan)
@@ -372,6 +375,8 @@ void main(void)
 		}
 		printk("done.\n");
 
+		k_sleep(K_MSEC(SENDER_START_DELAY_MS));
+
 		int ret;
 		buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 		net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
@@ -383,6 +388,11 @@ void main(void)
 			net_buf_unref(buf);
 			return;
 		}
+		buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
+		net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+		sys_put_le32(iso_send_count++, iso_data);
+		net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+
 		printk("Sending value %u\n", iso_send_count);
 		err = write_8_bit(&io_encoder, iso_send_count % 256);
 		if(err) {
