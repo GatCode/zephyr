@@ -16,7 +16,7 @@ static struct io_coder io_encoder = {0};
 /* D-Cube Defines */
 /* ------------------------------------------------------ */
 #define REMOTE true
-#define SENDER_REMOTE remote_213
+#define SENDER_REMOTE remote_201
 #define SENDER_LOCAL local_42
 #define SENDER_START_DELAY_MS 25000
 
@@ -28,10 +28,10 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* Defines Sender */
 /* ------------------------------------------------------ */
-#define SDU_INTERVAL_US 8000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
+#define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 10 // 5ms-4s
-#define RETRANSMISSION_NUMBER 2
-#define MAXIMUM_SUBEVENTS 10 // MSE | 1-31
+#define RETRANSMISSION_NUMBER 8
+#define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 
 /* ------------------------------------------------------ */
 /* Defines Receiver */
@@ -117,7 +117,7 @@ static struct bt_iso_big_create_param big_create_param_send = {
 	.interval = SDU_INTERVAL_US,
 	.latency = TRANSPORT_LATENCY_MS,
 	.packing = BT_ISO_PACKING_SEQUENTIAL,
-	.framing = BT_ISO_FRAMING_FRAMED,
+	.framing = BT_ISO_FRAMING_UNFRAMED,
 };
 
 /* ------------------------------------------------------ */
@@ -220,14 +220,14 @@ static struct bt_le_per_adv_sync_cb sync_callbacks_recv = {
 	.biginfo = biginfo_cb_recv,
 };
 
-static uint64_t last_timestamp = 0;
+// static uint64_t last_timestamp = 0;
 static uint32_t packet_id = 0;
 
 void my_timer_handler(struct k_timer *dummy)
 {
-	uint64_t current_timestamp = k_cyc_to_us_near32(k_cycle_get_32());
-    printk("current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
-	last_timestamp = current_timestamp;
+	// uint64_t current_timestamp = k_cyc_to_us_near32(k_cycle_get_32());
+    // printk("current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
+	// last_timestamp = current_timestamp;
 
 	int err = write_8_bit(&io_encoder, packet_id % 256);
 	if(err) {
@@ -249,11 +249,13 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 	uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
 	uint32_t delta = curr - info_ts;
 
-	k_timer_start(&my_timer, K_USEC(PRESENTATION_DELAY_US - delta), K_NO_WAIT);
+	// struct bt_iso_info iso_chan_info;
+	// bt_iso_chan_get_info(chan, &iso_chan_info);
 
-	struct bt_iso_info iso_chan_info;
-	bt_iso_chan_get_info(chan, &iso_chan_info);
-	printk("sync_delay: %u, pto: %u, pto: %u\n", iso_chan_info.broadcaster.sync_delay, iso_chan_info.broadcaster.pto, iso_chan_info.sync_receiver.pto);
+	if(delta < PRESENTATION_DELAY_US) { // if not, we're too late - forget the packet
+		k_timer_start(&my_timer, K_USEC(PRESENTATION_DELAY_US - delta), K_NO_WAIT);
+		printk("info_ts: %u, curr: %u, delta: %u, computation time left: %u\n", info_ts, curr, delta, PRESENTATION_DELAY_US - delta);
+	}
 }
 
 static void iso_connected_recv(struct bt_iso_chan *chan)
@@ -375,7 +377,9 @@ void main(void)
 		}
 		printk("done.\n");
 
-		k_sleep(K_MSEC(SENDER_START_DELAY_MS));
+		if(REMOTE) {
+			k_sleep(K_MSEC(SENDER_START_DELAY_MS));
+		}
 
 		int ret;
 		buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
