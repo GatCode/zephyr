@@ -625,17 +625,17 @@ struct bt_iso_unicast_tx_info {
 	/** The transport latency in us */
 	uint32_t latency;
 
-	/** The flush timeout in ms */
+	/** The flush timeout (N * 1.25 ms) */
 	uint32_t flush_timeout;
+
+	/** The maximum PDU size in octets */
+	uint16_t max_pdu;
 
 	/** The transport PHY  */
 	uint8_t  phy;
 
 	/** The burst number */
 	uint8_t  bn;
-
-	/** The maximum PDU size in octets */
-	uint16_t max_pdu;
 };
 
 struct bt_iso_unicast_info {
@@ -645,22 +645,10 @@ struct bt_iso_unicast_info {
 	/** The maximum time in us for all PDUs of this CIS in a CIG event */
 	uint32_t cis_sync_delay;
 
-	/** The maximum number of subevents in each ISO event */
-	uint8_t  max_subevent;
-
-	/** The ISO interval in ms */
-	uint16_t interval;
-
-	/** @brief TX information when sending from central to peripheral
-	 *
-	 *  All values will be 0 if the central cannot send to the peripheral.
-	 */
+	/** @brief TX information for the central to peripheral data path */
 	struct bt_iso_unicast_tx_info central;
 
-	/** TX information when sending from peripheral to central
-	 *
-	 *  All values will be 0 if the peripheral cannot send to the central.
-	 */
+	/** TX information for  the peripheral to central data */
 	struct bt_iso_unicast_tx_info peripheral;
 };
 
@@ -671,55 +659,49 @@ struct bt_iso_broadcaster_info {
 	/** The transport latency in us */
 	uint32_t latency;
 
+	/** Pre-transmission offset (N * 1.25 ms) */
+	uint32_t  pto;
+
+	/** The maximum PDU size in octets */
+	uint16_t max_pdu;
+
 	/** The transport PHY  */
 	uint8_t  phy;
-
-	/** The maximum number of subevents in each ISO event */
-	uint8_t  max_subevent;
 
 	/** The burst number */
 	uint8_t  bn;
 
 	/** Number of times a payload is transmitted in a BIS event */
 	uint8_t  irc;
-
-	/** Pre-transmission offset in ms */
-	uint32_t  pto;
-
-	/** The maximum PDU size in octets */
-	uint16_t max_pdu;
-
-	/** The ISO interval in ms */
-	uint16_t interval;
 };
 
 struct bt_iso_sync_receiver_info {
 	/** The transport latency in us */
 	uint32_t latency;
 
-	/** The maximum number of subevents in each ISO event */
-	uint8_t  max_subevent;
+	/** Pre-transmission offset (N * 1.25 ms) */
+	uint32_t  pto;
+
+	/** The maximum PDU size in octets */
+	uint16_t max_pdu;
 
 	/** The burst number */
 	uint8_t  bn;
 
 	/** Number of times a payload is transmitted in a BIS event */
 	uint8_t  irc;
-
-	/** Pre-transmission offset in ms */
-	uint32_t  pto;
-
-	/** The maximum PDU size in octets */
-	uint16_t max_pdu;
-
-	/** The ISO interval in ms */
-	uint16_t interval;
 };
 
 /** ISO channel Info Structure */
 struct bt_iso_info {
 	/** Channel Type. */
 	enum bt_iso_chan_type type;
+
+	/** The ISO interval (N * 1.25 ms) */
+	uint16_t iso_interval;
+
+	/** The maximum number of subevents in each ISO event */
+	uint8_t  max_subevent;
 
 	/** Connection Type specific Info.*/
 	union {

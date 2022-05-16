@@ -868,37 +868,31 @@ void bt_iso_cleanup_acl(struct bt_conn *iso)
 }
 
 static void store_cis_info(const struct bt_hci_evt_le_cis_established *evt,
-			   struct bt_iso_unicast_info *info)
+			   struct bt_iso_info *info)
 {
-	struct bt_iso_unicast_tx_info *central = &info->central;
-	struct bt_iso_unicast_tx_info *peripheral = &info->peripheral;
+	struct bt_iso_unicast_info *unicast_info = &info->unicast;
+	struct bt_iso_unicast_tx_info *central = &unicast_info->central;
+	struct bt_iso_unicast_tx_info *peripheral = &unicast_info->peripheral;
 
-	info->cig_sync_delay = sys_get_le24(evt->cig_sync_delay);
-	info->cis_sync_delay = sys_get_le24(evt->cis_sync_delay);
-	info->interval = sys_le16_to_cpu(evt->interval);
+	info->iso_interval = sys_le16_to_cpu(evt->interval);
 	info->max_subevent = evt->nse;
 
-	if (evt->c_max_pdu != 0) {
-		central->bn = evt->c_bn;
-		central->phy = evt->c_phy;
-		central->latency = sys_get_le16(evt->c_latency);
-		central->max_pdu = sys_le16_to_cpu(evt->c_max_pdu);
-		/* Transform to ms */
-		central->flush_timeout = info->interval * evt->c_ft;
-	} else {
-		(void)memset(central, 0, sizeof(*central));
-	}
+	unicast_info->cig_sync_delay = sys_get_le24(evt->cig_sync_delay);
+	unicast_info->cis_sync_delay = sys_get_le24(evt->cis_sync_delay);
 
-	if (evt->p_max_pdu != 0) {
-		peripheral->bn = evt->p_bn;
-		peripheral->phy = evt->p_phy;
-		peripheral->latency = sys_get_le16(evt->p_latency);
-		peripheral->max_pdu = sys_le16_to_cpu(evt->p_max_pdu);
-		/* Transform to ms */
-		peripheral->flush_timeout = info->interval * evt->p_ft;
-	} else {
-		(void)memset(peripheral, 0, sizeof(*peripheral));
-	}
+	central->bn = evt->c_bn;
+	central->phy = bt_get_phy(evt->c_phy);
+	central->latency = sys_get_le16(evt->c_latency);
+	central->max_pdu = sys_le16_to_cpu(evt->c_max_pdu);
+	/* Transform to n * 1.25ms */
+	central->flush_timeout = info->iso_interval * evt->c_ft;
+
+	peripheral->bn = evt->p_bn;
+	peripheral->phy = bt_get_phy(evt->p_phy);
+	peripheral->latency = sys_get_le16(evt->p_latency);
+	peripheral->max_pdu = sys_le16_to_cpu(evt->p_max_pdu);
+	/* Transform to n * 1.25ms */
+	peripheral->flush_timeout = info->iso_interval * evt->p_ft;
 }
 
 void hci_le_cis_established(struct net_buf *buf)
@@ -943,19 +937,19 @@ void hci_le_cis_established(struct net_buf *buf)
 			tx = chan->qos->tx;
 
 			if (rx != NULL) {
-				rx->phy = evt->c_phy;
-				rx->sdu = evt->c_max_pdu;
+				rx->phy = bt_get_phy(evt->c_phy);
+				rx->sdu = sys_le16_to_cpu(evt->c_max_pdu);
 			}
 
 			if (tx != NULL) {
-				tx->phy = evt->p_phy;
-				tx->sdu = evt->p_max_pdu;
+				tx->phy = bt_get_phy(evt->p_phy);
+				tx->sdu = sys_le16_to_cpu(evt->p_max_pdu);
 			}
 
 			iso_conn->info.type = BT_ISO_CHAN_TYPE_CONNECTED;
 		} /* values are already set for central */
 
-		store_cis_info(evt, &iso_conn->info.unicast);
+		store_cis_info(evt, &iso_conn->info);
 
 		bt_conn_set_state(iso, BT_CONN_CONNECTED);
 		bt_conn_unref(iso);
@@ -1956,18 +1950,21 @@ int bt_iso_big_create(struct bt_le_ext_adv *padv, struct bt_iso_big_create_param
 }
 
 static void store_bis_broadcaster_info(const struct bt_hci_evt_le_big_complete *evt,
-				       struct bt_iso_broadcaster_info *info)
+				       struct bt_iso_info *info)
 {
-	info->sync_delay = sys_get_le24(evt->sync_delay);
-	info->latency = sys_get_le24(evt->latency);
-	info->phy = evt->phy;
+	struct bt_iso_broadcaster_info *broadcaster_info = &info->broadcaster;
+
+	info->iso_interval = sys_le16_to_cpu(evt->iso_interval);
 	info->max_subevent = evt->nse;
-	info->bn = evt->bn;
-	info->irc = evt->irc;
-	info->interval = sys_le16_to_cpu(evt->iso_interval);
-	/* Transform to ms */
-	info->pto = info->interval * evt->pto;
-	info->max_pdu = sys_le16_to_cpu(evt->max_pdu);
+
+	broadcaster_info->sync_delay = sys_get_le24(evt->sync_delay);
+	broadcaster_info->latency = sys_get_le24(evt->latency);
+	broadcaster_info->phy = bt_get_phy(evt->phy);
+	broadcaster_info->bn = evt->bn;
+	broadcaster_info->irc = evt->irc;
+	/* Transform to n * 1.25ms */
+	broadcaster_info->pto = info->iso_interval * evt->pto;
+	broadcaster_info->max_pdu = sys_le16_to_cpu(evt->max_pdu);
 }
 
 void hci_le_big_complete(struct net_buf *buf)
@@ -2011,8 +2008,7 @@ void hci_le_big_complete(struct net_buf *buf)
 
 		iso_conn->iso.seq_num = 0;
 		iso_conn->handle = sys_le16_to_cpu(handle);
-		store_bis_broadcaster_info(evt,
-					   &iso_conn->iso.info.broadcaster);
+		store_bis_broadcaster_info(evt, &iso_conn->iso.info);
 		bt_conn_set_state(iso_conn, BT_CONN_CONNECTED);
 	}
 }
@@ -2131,16 +2127,19 @@ int bt_iso_big_terminate(struct bt_iso_big *big)
 
 #if defined(CONFIG_BT_ISO_SYNC_RECEIVER)
 static void store_bis_sync_receiver_info(const struct bt_hci_evt_le_big_sync_established *evt,
-					 struct bt_iso_sync_receiver_info *info)
+					 struct bt_iso_info *info)
 {
-	info->latency = sys_get_le24(evt->latency);
+	struct bt_iso_sync_receiver_info *receiver_info = &info->sync_receiver;
+
 	info->max_subevent = evt->nse;
-	info->bn = evt->bn;
-	info->irc = evt->irc;
-	info->interval = sys_le16_to_cpu(evt->iso_interval);
-	/* Transform to ms */
-	info->pto = info->interval * evt->pto;
-	info->max_pdu = sys_le16_to_cpu(evt->max_pdu);
+	info->iso_interval = sys_le16_to_cpu(evt->iso_interval);
+
+	receiver_info->latency = sys_get_le24(evt->latency);
+	receiver_info->bn = evt->bn;
+	receiver_info->irc = evt->irc;
+	/* Transform to n * 1.25ms */
+	receiver_info->pto = info->iso_interval * evt->pto;
+	receiver_info->max_pdu = sys_le16_to_cpu(evt->max_pdu);
 }
 
 void hci_le_big_sync_established(struct net_buf *buf)
@@ -2182,8 +2181,7 @@ void hci_le_big_sync_established(struct net_buf *buf)
 		struct bt_conn *iso_conn = bis->iso;
 
 		iso_conn->handle = sys_le16_to_cpu(handle);
-		store_bis_sync_receiver_info(evt,
-					     &iso_conn->iso.info.sync_receiver);
+		store_bis_sync_receiver_info(evt, &iso_conn->iso.info);
 		bt_conn_set_state(iso_conn, BT_CONN_CONNECTED);
 	}
 }
