@@ -143,6 +143,7 @@ static uint8_t      per_sid;
 static uint16_t     per_interval_ms;
 
 static bool         big_info_printed;
+static bool         big_info_printed_reset;
 
 static K_SEM_DEFINE(sem_per_adv, 0, 1);
 static K_SEM_DEFINE(sem_per_sync, 0, 1);
@@ -207,6 +208,17 @@ static void biginfo_cb_recv(struct bt_le_per_adv_sync *sync,
 		}	
 
 		big_info_printed = true;
+	}
+
+	if(big_info_printed && !big_info_printed_reset) {
+		uint8_t val = 0;
+
+		int err = write_8_bit(&io_encoder, val);
+		if(err) {
+			printk("Error resetting 8bit ISO_IVAL + BN to P1.01 - P1.08 (err %d)\n", err);
+		}	
+
+		big_info_printed_reset = true;
 	}
 
 	char le_addr[BT_ADDR_LE_STR_LEN];
