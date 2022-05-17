@@ -15,7 +15,7 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* D-Cube Defines */
 /* ------------------------------------------------------ */
-#define REMOTE false
+#define REMOTE true
 #define SENDER_REMOTE remote_201
 #define SENDER_LOCAL local_42
 #define SENDER_START_DELAY_MS 25000
@@ -24,14 +24,14 @@ static struct io_coder io_encoder = {0};
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 100 // must be > 23 (MTU minimum)
+#define DATA_SIZE_BYTE 251 // must be > 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 
 /* ------------------------------------------------------ */
 /* Defines Sender */
 /* ------------------------------------------------------ */
-#define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
-#define TRANSPORT_LATENCY_MS 10 // 5ms-4s
-#define RETRANSMISSION_NUMBER 8
+#define SDU_INTERVAL_US 5000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
+#define TRANSPORT_LATENCY_MS 5 // 5ms-4s
+#define RETRANSMISSION_NUMBER 0
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 
 /* ------------------------------------------------------ */
@@ -97,7 +97,7 @@ static struct bt_iso_chan_ops iso_ops_send = {
 };
 
 static struct bt_iso_chan_io_qos iso_tx_qos_send = {
-	.sdu = sizeof(uint32_t), /* bytes */
+	.sdu = DATA_SIZE_BYTE, /* bytes */
 	.rtn = RETRANSMISSION_NUMBER,
 	.phy = BT_GAP_LE_PHY_2M,
 };
@@ -141,6 +141,8 @@ static bool         per_adv_lost;
 static bt_addr_le_t per_addr;
 static uint8_t      per_sid;
 static uint16_t     per_interval_ms;
+
+static bool         big_info_printed;
 
 static K_SEM_DEFINE(sem_per_adv, 0, 1);
 static K_SEM_DEFINE(sem_per_sync, 0, 1);
@@ -194,6 +196,19 @@ static const char *phy2str(uint8_t phy)
 static void biginfo_cb_recv(struct bt_le_per_adv_sync *sync,
 		       const struct bt_iso_biginfo *biginfo)
 {
+	if(!big_info_printed) { // print ISO_IVAL + BN on GPIO
+		uint8_t info = 0;
+		info |= biginfo->iso_interval;
+		info |= biginfo->burst_number << 5;
+
+		int err = write_8_bit(&io_encoder, info);
+		if(err) {
+			printk("Error writing 8bit ISO_IVAL + BN to P1.01 - P1.08 (err %d)\n", err);
+		}	
+
+		big_info_printed = true;
+	}
+
 	char le_addr[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(biginfo->addr, le_addr, sizeof(le_addr));
@@ -227,10 +242,6 @@ static uint32_t packet_id = 0;
 
 void my_timer_handler(struct k_timer *dummy)
 {
-	// uint64_t current_timestamp = k_cyc_to_us_near32(k_cycle_get_32());
-    // printk("current ts: %llu - last ts: %llu - diff: %llu - diff in ms: %llu\n", current_timestamp, last_timestamp, current_timestamp - last_timestamp, (uint64_t)((current_timestamp - last_timestamp) / 1000.0));
-	// last_timestamp = current_timestamp;
-
 	int err = write_8_bit(&io_encoder, packet_id % 256);
 	if(err) {
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
@@ -388,6 +399,8 @@ void main(void)
 
 		if(REMOTE) {
 			k_sleep(K_MSEC(SENDER_START_DELAY_MS));
+		} else {
+			k_sleep(K_MSEC(5000));
 		}
 
 		iso_sent_cb(&bis_iso_chan_send);
