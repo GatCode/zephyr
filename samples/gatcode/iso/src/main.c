@@ -24,7 +24,7 @@ static struct io_coder io_encoder = {0};
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 251 // must be > 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
+#define DATA_SIZE_BYTE 251 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 
 /* ------------------------------------------------------ */
 /* Defines Sender */
@@ -202,16 +202,20 @@ static void biginfo_cb_recv(struct bt_le_per_adv_sync *sync,
 		info |= biginfo->iso_interval;
 		info |= biginfo->burst_number << 5;
 
+		k_sleep(K_MSEC(SENDER_START_DELAY_MS / 4)); // wait on D-Cube
+
 		int err = write_8_bit(&io_encoder, info);
 		if(err) {
 			printk("Error writing 8bit ISO_IVAL + BN to P1.01 - P1.08 (err %d)\n", err);
-		}	
+		}
 
 		big_info_printed = true;
 	}
 
 	if(big_info_printed && !big_info_printed_reset) {
 		uint8_t val = 0;
+
+		k_sleep(K_MSEC(SENDER_START_DELAY_MS / 4)); // wait on D-Cube
 
 		int err = write_8_bit(&io_encoder, val);
 		if(err) {
