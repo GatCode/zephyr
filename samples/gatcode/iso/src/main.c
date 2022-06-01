@@ -16,7 +16,7 @@ static struct io_coder io_encoder = {0};
 /* D-Cube Defines */
 /* ------------------------------------------------------ */
 #define REMOTE true
-#define SENDER_REMOTE remote_201
+#define SENDER_REMOTE remote_223
 #define SENDER_LOCAL local_42
 #define SENDER_START_DELAY_MS 25000
 
@@ -24,14 +24,14 @@ static struct io_coder io_encoder = {0};
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 251 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
+#define DATA_SIZE_BYTE 250 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 
 /* ------------------------------------------------------ */
 /* Defines Sender */
 /* ------------------------------------------------------ */
-#define SDU_INTERVAL_US 5000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
-#define TRANSPORT_LATENCY_MS 5 // 5ms-4s
-#define RETRANSMISSION_NUMBER 0
+#define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
+#define TRANSPORT_LATENCY_MS 10 // 5ms-4s
+#define RETRANSMISSION_NUMBER 8
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 
 /* ------------------------------------------------------ */
@@ -66,17 +66,16 @@ static struct bt_iso_chan bis_iso_chan_send;
 uint32_t iso_send_count = 0;
 uint8_t iso_data[DATA_SIZE_BYTE] = { 0 };
 struct net_buf *buf;
+uint32_t last_send_ts;
 
-static void iso_sent_cb(struct bt_iso_chan *chan)
+void send_packet_handler(struct k_timer *dummy)
 {
-	int ret;
-	
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 	sys_put_le32(iso_send_count++, iso_data);
 	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
 
-	ret = bt_iso_chan_send(&bis_iso_chan_send, buf);
+	int ret = bt_iso_chan_send(&bis_iso_chan_send, buf);
 	if (ret < 0) {
 		printk("Unable to broadcast data: %d", ret);
 		net_buf_unref(buf);
@@ -87,7 +86,17 @@ static void iso_sent_cb(struct bt_iso_chan *chan)
 	int err = write_8_bit(&io_encoder, iso_send_count % 256);
 	if(err) {
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-	}	
+	}
+}
+K_TIMER_DEFINE(send_packet, send_packet_handler, NULL);
+
+static void iso_sent_cb(struct bt_iso_chan *chan)
+{
+	uint32_t curr_send_ts = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
+	uint32_t diff = curr_send_ts - last_send_ts;
+	uint32_t wait_time = 2 * SDU_INTERVAL_US > diff ? 2 * SDU_INTERVAL_US - diff : 0;
+	k_timer_start(&send_packet, K_USEC(wait_time), K_NO_WAIT);
+	last_send_ts = curr_send_ts;
 }
 
 static struct bt_iso_chan_ops iso_ops_send = {
@@ -256,14 +265,14 @@ static struct bt_le_per_adv_sync_cb sync_callbacks_recv = {
 // static uint64_t last_timestamp = 0;
 static uint32_t packet_id = 0;
 
-void my_timer_handler(struct k_timer *dummy)
+void recv_packet_handler(struct k_timer *dummy)
 {
 	int err = write_8_bit(&io_encoder, packet_id % 256);
 	if(err) {
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
 	}
 }
-K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
+K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 
 static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
@@ -289,7 +298,7 @@ static void iso_recv_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_inf
 	// bt_iso_chan_get_info(chan, &iso_chan_info);
 
 	if(delta < PRESENTATION_DELAY_US) { // if not, we're too late - forget the packet
-		k_timer_start(&my_timer, K_USEC(PRESENTATION_DELAY_US - delta), K_NO_WAIT);
+		k_timer_start(&recv_packet, K_USEC(PRESENTATION_DELAY_US - delta), K_NO_WAIT);
 		printk("info_ts: %u, curr: %u, delta: %u, computation time left: %u\n", info_ts, curr, delta, PRESENTATION_DELAY_US - delta);
 	}
 }
@@ -413,12 +422,7 @@ void main(void)
 		}
 		printk("done.\n");
 
-		if(REMOTE) {
-			k_sleep(K_MSEC(SENDER_START_DELAY_MS));
-		} else {
-			k_sleep(K_MSEC(5000));
-		}
-
+		last_send_ts = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
 		iso_sent_cb(&bis_iso_chan_send);
 
 	} else { // receiver
