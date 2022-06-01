@@ -422,6 +422,12 @@ void main(void)
 		}
 		printk("done.\n");
 
+		if(REMOTE) {
+			k_sleep(K_MSEC(SENDER_START_DELAY_MS));
+		} else {
+			k_sleep(K_MSEC(5000));
+		}
+
 		last_send_ts = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
 		iso_sent_cb(&bis_iso_chan_send);
 
