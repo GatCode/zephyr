@@ -34,7 +34,7 @@ static struct io_coder io_encoder = {0};
 #define NAME_LEN            30
 
 #define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_ACTIVE, \
-					   BT_LE_SCAN_OPT_NONE, \
+					   BT_LE_SCAN_OPT_CODED, \
 					   BT_GAP_SCAN_FAST_INTERVAL, \
 					   BT_GAP_SCAN_FAST_WINDOW)
 

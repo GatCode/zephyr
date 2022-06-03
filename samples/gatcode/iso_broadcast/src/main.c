@@ -144,8 +144,12 @@ void main(void)
 		return;
 	}
 
+	#define BT_LE_PER_ADV_CUSTOM BT_LE_PER_ADV_PARAM(BT_GAP_PER_ADV_SLOW_INT_MIN, \
+						  BT_GAP_PER_ADV_SLOW_INT_MAX, \
+						  BT_LE_ADV_OPT_CODED)
+
 	/* Set periodic advertising parameters */
-	err = bt_le_per_adv_set_param(adv, BT_LE_PER_ADV_DEFAULT);
+	err = bt_le_per_adv_set_param(adv, BT_LE_PER_ADV_CUSTOM);
 	if (err) {
 		printk("Failed to set periodic advertising parameters"
 		       " (err %d)\n", err);
