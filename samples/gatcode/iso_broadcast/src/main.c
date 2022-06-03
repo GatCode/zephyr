@@ -146,7 +146,7 @@ void main(void)
 
 	#define BT_LE_PER_ADV_CUSTOM BT_LE_PER_ADV_PARAM(BT_GAP_PER_ADV_SLOW_INT_MIN, \
 						  BT_GAP_PER_ADV_SLOW_INT_MAX, \
-						  BT_LE_ADV_OPT_CODED)
+						  BT_LE_ADV_OPT_CODED | BT_LE_ADV_OPT_EXT_ADV)
 
 	/* Set periodic advertising parameters */
 	err = bt_le_per_adv_set_param(adv, BT_LE_PER_ADV_CUSTOM);
