@@ -277,7 +277,7 @@ void main(void)
 		per_adv_lost = false;
 
 		printk("Start scanning...");
-		err = bt_le_scan_start(BT_LE_SCAN_CUSTOM, NULL);
+		err = bt_le_scan_start(BT_LE_SCAN_CODED_ACTIVE, NULL);
 		if (err) {
 			printk("failed (err %d)\n", err);
 			return;
