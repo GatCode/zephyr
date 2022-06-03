@@ -9,7 +9,7 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* D-Cube Defines */
 /* ------------------------------------------------------ */
-#define REMOTE false
+#define REMOTE true
 #define SENDER_START_DELAY_MS 25000
 
 /* ------------------------------------------------------ */
