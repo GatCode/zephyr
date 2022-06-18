@@ -42,8 +42,8 @@ static struct bt_iso_chan_ops iso_ops = {
 
 static struct bt_iso_chan_io_qos iso_tx_qos = {
 	.sdu = sizeof(uint32_t), /* bytes */
-	.rtn = 2,
-	.phy = BT_GAP_LE_PHY_2M,
+	.rtn = 0,
+	.phy = BT_GAP_LE_PHY_CODED,
 };
 
 static struct bt_iso_chan_qos bis_iso_qos = {
@@ -60,8 +60,8 @@ static struct bt_iso_chan *bis[BIS_ISO_CHAN_COUNT] = { &bis_iso_chan };
 static struct bt_iso_big_create_param big_create_param = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_channels = bis,
-	.interval = 10000, /* in microseconds */
-	.latency = 10, /* milliseconds */
+	.interval = 25000, /* in microseconds */
+	.latency = 50, /* milliseconds */
 	.packing = 0, /* 0 - sequential, 1 - interleaved */
 	.framing = 0, /* 0 - unframed, 1 - framed */
 };
@@ -147,41 +147,41 @@ void main(void)
 		}
 		printk("Sending value %u\n", iso_send_count);
 
-		timeout--;
-		if (!timeout) {
-			timeout = BIG_TERMINATE_TIMEOUT;
+	// 	timeout--;
+	// 	if (!timeout) {
+	// 		timeout = BIG_TERMINATE_TIMEOUT;
 
-			printk("BIG Terminate...");
-			err = bt_iso_big_terminate(big);
-			if (err) {
-				printk("failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
+	// 		printk("BIG Terminate...");
+	// 		err = bt_iso_big_terminate(big);
+	// 		if (err) {
+	// 			printk("failed (err %d)\n", err);
+	// 			return;
+	// 		}
+	// 		printk("done.\n");
 
-			printk("Waiting for BIG terminate complete...");
-			err = k_sem_take(&sem_big_term, K_FOREVER);
-			if (err) {
-				printk("failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
+	// 		printk("Waiting for BIG terminate complete...");
+	// 		err = k_sem_take(&sem_big_term, K_FOREVER);
+	// 		if (err) {
+	// 			printk("failed (err %d)\n", err);
+	// 			return;
+	// 		}
+	// 		printk("done.\n");
 
-			printk("Create BIG...");
-			err = bt_iso_big_create(adv, &big_create_param, &big);
-			if (err) {
-				printk("failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
+	// 		printk("Create BIG...");
+	// 		err = bt_iso_big_create(adv, &big_create_param, &big);
+	// 		if (err) {
+	// 			printk("failed (err %d)\n", err);
+	// 			return;
+	// 		}
+	// 		printk("done.\n");
 
-			printk("Waiting for BIG complete...");
-			err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-			if (err) {
-				printk("failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
-		}
+	// 		printk("Waiting for BIG complete...");
+	// 		err = k_sem_take(&sem_big_cmplt, K_FOREVER);
+	// 		if (err) {
+	// 			printk("failed (err %d)\n", err);
+	// 			return;
+	// 		}
+	// 		printk("done.\n");
+	// 	}
 	}
 }

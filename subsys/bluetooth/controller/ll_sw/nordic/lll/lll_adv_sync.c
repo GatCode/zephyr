@@ -162,10 +162,10 @@ static int prepare_cb(struct lll_prepare_param *p)
 	radio_tx_power_set(RADIO_TXP_DEFAULT);
 #endif
 
-	phy_s = lll->adv->phy_s;
+	phy_s = PHY_CODED;
 
 	/* TODO: if coded we use S8? */
-	radio_phy_set(phy_s, lll->adv->phy_flags);
+	radio_phy_set(phy_s, PHY_FLAGS_S2);
 	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_AC_PAYLOAD_SIZE_MAX,
 			    RADIO_PKT_CONF_PHY(phy_s));
 	radio_aa_set(lll->access_addr);
@@ -414,7 +414,7 @@ static void pdu_b2b_update(struct lll_adv_sync *lll, struct pdu_adv *pdu, uint32
 {
 	while (pdu) {
 		/* FIXME: Use implementation defined channel index */
-		pdu_b2b_aux_ptr_update(pdu, lll->adv->phy_s, lll->adv->phy_flags, 0,
+		pdu_b2b_aux_ptr_update(pdu, PHY_CODED, PHY_FLAGS_S2, 0,
 				       EVENT_SYNC_B2B_MAFS_US, cte_len_us);
 		pdu = lll_adv_pdu_linked_next_get(pdu);
 	}

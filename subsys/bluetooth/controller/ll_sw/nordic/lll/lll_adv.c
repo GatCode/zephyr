@@ -960,9 +960,9 @@ static int prepare_cb(struct lll_prepare_param *p)
 
 #if defined(CONFIG_BT_CTLR_ADV_EXT)
 	/* TODO: if coded we use S8? */
-	radio_phy_set(lll->phy_p, lll->phy_flags);
+	radio_phy_set(PHY_CODED, PHY_FLAGS_S2);
 	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_AC_LEG_PAYLOAD_SIZE_MAX,
-			    RADIO_PKT_CONF_PHY(lll->phy_p));
+			    RADIO_PKT_CONF_PHY(PHY_CODED));
 #else /* !CONFIG_BT_CTLR_ADV_EXT */
 	radio_phy_set(0, 0);
 	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_AC_LEG_PAYLOAD_SIZE_MAX,
@@ -1128,8 +1128,8 @@ static void isr_tx(void *param)
 	struct node_rx_pdu *node_rx;
 #if defined(CONFIG_BT_CTLR_ADV_EXT)
 	struct lll_adv *lll = param;
-	uint8_t phy_p = lll->phy_p;
-	uint8_t phy_flags = lll->phy_flags;
+	uint8_t phy_p = PHY_CODED;
+	uint8_t phy_flags = PHY_FLAGS_S2;
 #else
 	const uint8_t phy_p = 0U;
 	const uint8_t phy_flags = 0U;

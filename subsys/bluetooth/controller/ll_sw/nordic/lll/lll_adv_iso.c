@@ -539,6 +539,11 @@ static void isr_tx_common(void *param,
 		return;
 	}
 
+	// if (lll->irc_curr == lll->irc) {
+	// 	uint16_t stream_handle22222222222;
+	// 	stream_handle22222222222 = lll_chan_id(access_addr);
+	// }
+
 	lll_isr_tx_status_reset();
 
 	/* Calculate the Access Address for the BIS event */
@@ -621,6 +626,8 @@ static void isr_tx_common(void *param,
 
 	}
 	pdu->rfu = 0U;
+
+	// printk("Used Radio Channel %d\n", data_chan_use);
 
 	lll_chan_set(data_chan_use);
 

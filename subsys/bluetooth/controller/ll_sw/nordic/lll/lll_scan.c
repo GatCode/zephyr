@@ -382,9 +382,9 @@ static int common_prepare_cb(struct lll_prepare_param *p, bool is_resume)
 
 #if defined(CONFIG_BT_CTLR_ADV_EXT)
 	/* TODO: if coded we use S8? */
-	radio_phy_set(lll->phy, PHY_FLAGS_S8);
+	radio_phy_set(PHY_CODED, PHY_FLAGS_S2);
 	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_AC_LEG_PAYLOAD_SIZE_MAX,
-			    RADIO_PKT_CONF_PHY(lll->phy));
+			    RADIO_PKT_CONF_PHY(PHY_CODED));
 
 	lll->is_adv_ind = 0U;
 	lll->is_aux_sched = 0U;
@@ -434,7 +434,7 @@ static int common_prepare_cb(struct lll_prepare_param *p, bool is_resume)
 				       (uint8_t *)filter->bdaddr);
 
 #if defined(CONFIG_BT_CTLR_ADV_EXT)
-		radio_ar_configure(count, irks, (lll->phy << 2));
+		radio_ar_configure(count, irks, (PHY_CODED << 2));
 #else
 		radio_ar_configure(count, irks, 0);
 #endif
@@ -797,7 +797,7 @@ static void isr_tx(void *param)
 		uint8_t count, *irks = ull_filter_lll_irks_get(&count);
 
 #if defined(CONFIG_BT_CTLR_ADV_EXT)
-		radio_ar_configure(count, irks, (lll->phy << 2));
+		radio_ar_configure(count, irks, (PHY_CODED << 2));
 #else
 		radio_ar_configure(count, irks, 0);
 #endif
@@ -864,7 +864,7 @@ static void isr_common_done(void *param)
 		uint8_t count, *irks = ull_filter_lll_irks_get(&count);
 
 #if defined(CONFIG_BT_CTLR_ADV_EXT)
-		radio_ar_configure(count, irks, (lll->phy << 2));
+		radio_ar_configure(count, irks, (PHY_CODED << 2));
 #else
 		ARG_UNUSED(lll);
 		radio_ar_configure(count, irks, 0);
@@ -1370,7 +1370,7 @@ static inline int isr_rx_pdu(struct lll_scan *lll, struct pdu_adv *pdu_adv_rx,
 					rl_idx, &dir_report))) ||
 #if defined(CONFIG_BT_CTLR_ADV_EXT)
 		  ((pdu_adv_rx->type == PDU_ADV_TYPE_EXT_IND) &&
-		   lll->phy && lll_scan_ext_tgta_check(lll, true, false,
+		   PHY_CODED && lll_scan_ext_tgta_check(lll, true, false,
 						       pdu_adv_rx, rl_idx,
 						       &dir_report)) ||
 #endif /* CONFIG_BT_CTLR_ADV_EXT */
@@ -1506,10 +1506,10 @@ static int isr_rx_scan_report(struct lll_scan *lll, uint8_t devmatch_ok,
 #endif /* CONFIG_BT_HCI_MESH_EXT */
 
 #if defined(CONFIG_BT_CTLR_ADV_EXT)
-	} else if (lll->phy) {
+	} else if (PHY_CODED) {
 		struct pdu_adv *pdu_adv_rx;
 
-		switch (lll->phy) {
+		switch (PHY_CODED) {
 		case PHY_1M:
 			node_rx->hdr.type = NODE_RX_TYPE_EXT_1M_REPORT;
 			break;
@@ -1541,11 +1541,11 @@ static int isr_rx_scan_report(struct lll_scan *lll, uint8_t devmatch_ok,
 				ftr->ticks_anchor = radio_tmr_start_get();
 				ftr->radio_end_us =
 					radio_tmr_end_get() -
-					radio_rx_chain_delay_get(lll->phy,
+					radio_rx_chain_delay_get(PHY_CODED,
 								 phy_flags_rx);
 				ftr->phy_flags = phy_flags_rx;
 				ftr->aux_lll_sched =
-					lll_scan_aux_setup(pdu_adv_rx, lll->phy,
+					lll_scan_aux_setup(pdu_adv_rx, PHY_CODED,
 							   phy_flags_rx,
 							   lll_scan_aux_isr_aux_setup,
 							   lll);

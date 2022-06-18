@@ -261,8 +261,8 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 	radio_tx_power_set(RADIO_TXP_DEFAULT);
 #endif
 
-	phy = lll->phy;
-	radio_phy_set(phy, PHY_FLAGS_S8);
+	phy = PHY_CODED;
+	radio_phy_set(phy, PHY_FLAGS_S2);
 	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, lll->max_pdu,
 			    RADIO_PKT_CONF_PHY(phy));
 	radio_aa_set(access_addr);
@@ -293,9 +293,9 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 	       ((EVENT_JITTER_US + EVENT_TICKER_RES_MARGIN_US +
 		 lll->window_widening_event_us) << 1) +
 	       lll->window_size_event_us;
-	hcto += radio_rx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
-	hcto += addr_us_get(lll->phy);
-	hcto += radio_rx_chain_delay_get(lll->phy, PHY_FLAGS_S8);
+	hcto += radio_rx_ready_delay_get(PHY_CODED, PHY_FLAGS_S2);
+	hcto += addr_us_get(PHY_CODED);
+	hcto += radio_rx_chain_delay_get(PHY_CODED, PHY_FLAGS_S2);
 	radio_tmr_hcto_configure(hcto);
 
 	radio_tmr_end_capture();
@@ -305,7 +305,7 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 	radio_gpio_lna_setup();
 
 	radio_gpio_pa_lna_enable(remainder_us +
-				 radio_rx_ready_delay_get(lll->phy, PHY_FLAGS_S8) -
+				 radio_rx_ready_delay_get(PHY_CODED, PHY_FLAGS_S2) -
 				 HAL_RADIO_GPIO_LNA_OFFSET);
 #endif /* HAL_RADIO_GPIO_HAVE_LNA_PIN */
 
@@ -362,7 +362,7 @@ static void isr_rx_estab(void *param)
 		struct lll_sync_iso *lll;
 
 		lll = param;
-		e->drift.preamble_to_addr_us = addr_us_get(lll->phy);
+		e->drift.preamble_to_addr_us = addr_us_get(PHY_CODED);
 		e->drift.start_to_address_actual_us =
 			radio_tmr_aa_get() - radio_tmr_ready_get();
 		e->drift.window_widening_event_us =
@@ -666,7 +666,7 @@ isr_rx_find_subevent:
 	e->crc_valid = crc_ok_anchor;
 
 	if (trx_cnt) {
-		e->drift.preamble_to_addr_us = addr_us_get(lll->phy);
+		e->drift.preamble_to_addr_us = addr_us_get(PHY_CODED);
 		e->drift.start_to_address_actual_us =
 			radio_tmr_aa_restore() - radio_tmr_ready_restore();
 		e->drift.window_widening_event_us =
@@ -737,9 +737,9 @@ isr_rx_next_subevent:
 		 * listen early by 4 us.
 		 */
 		hcto += radio_tmr_aa_restore();
-		hcto -= radio_rx_chain_delay_get(lll->phy, PHY_FLAGS_S8);
-		hcto -= addr_us_get(lll->phy);
-		hcto -= radio_rx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
+		hcto -= radio_rx_chain_delay_get(PHY_CODED, PHY_FLAGS_S2);
+		hcto -= addr_us_get(PHY_CODED);
+		hcto -= radio_rx_ready_delay_get(PHY_CODED, PHY_FLAGS_S2);
 		hcto -= (EVENT_CLOCK_JITTER_US << 1);
 
 		start_us = hcto;
@@ -764,9 +764,9 @@ isr_rx_next_subevent:
 	/* header complete timeout to consider the radio ready delay, chain
 	 * delay and access address duration.
 	 */
-	hcto += radio_rx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
-	hcto += addr_us_get(lll->phy);
-	hcto += radio_rx_chain_delay_get(lll->phy, PHY_FLAGS_S8);
+	hcto += radio_rx_ready_delay_get(PHY_CODED, PHY_FLAGS_S2);
+	hcto += addr_us_get(PHY_CODED);
+	hcto += radio_rx_chain_delay_get(PHY_CODED, PHY_FLAGS_S2);
 
 	/* setup absolute PDU header reception timeout */
 	radio_tmr_hcto_configure(hcto);
@@ -778,8 +778,8 @@ isr_rx_next_subevent:
 	radio_gpio_lna_setup();
 
 	radio_gpio_pa_lna_enable(start_us +
-				 radio_rx_ready_delay_get(lll->phy,
-							  PHY_FLAGS_S8) -
+				 radio_rx_ready_delay_get(PHY_CODED,
+							  PHY_FLAGS_S2) -
 				 HAL_RADIO_GPIO_LNA_OFFSET);
 #endif /* HAL_RADIO_GPIO_HAVE_LNA_PIN */
 }
@@ -796,7 +796,7 @@ static void isr_rx_iso_data_valid(struct lll_sync_iso *lll, uint8_t bis_idx,
 	iso_meta->payload_number = lll->payload_count + (lll->bn_curr - 1U) +
 				   (lll->ptc_curr * lll->pto) - lll->bn;
 	iso_meta->timestamp = HAL_TICKER_TICKS_TO_US(radio_tmr_start_get()) +
-			      radio_tmr_aa_restore() - addr_us_get(lll->phy) +
+			      radio_tmr_aa_restore() - addr_us_get(PHY_CODED) +
 			      (ceiling_fraction(lll->ptc_curr, lll->bn) *
 			       lll->iso_interval * PERIODIC_INT_UNIT_US);
 	iso_meta->status = 0U;
@@ -813,7 +813,7 @@ static void isr_rx_iso_data_invalid(struct lll_sync_iso *lll, uint8_t bis_idx,
 	iso_meta = &node_rx->hdr.rx_iso_meta;
 	iso_meta->payload_number = lll->payload_count - bn - 1U;
 	iso_meta->timestamp = HAL_TICKER_TICKS_TO_US(radio_tmr_start_get()) +
-			      radio_tmr_aa_restore() - addr_us_get(lll->phy);
+			      radio_tmr_aa_restore() - addr_us_get(PHY_CODED);
 	iso_meta->status = 1U;
 }
 

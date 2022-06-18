@@ -148,7 +148,7 @@ void lll_sync_aux_prepare_cb(struct lll_sync *lll,
 	/* Start setting up Radio h/w */
 	radio_reset();
 
-	radio_phy_set(lll_aux->phy, PHY_FLAGS_S8);
+	radio_phy_set(lll_aux->phy, PHY_FLAGS_S2);
 	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, LL_EXT_OCTETS_RX_MAX,
 			    RADIO_PKT_CONF_PHY(lll_aux->phy));
 
@@ -281,7 +281,7 @@ static int create_prepare_cb(struct lll_prepare_param *p)
 	} else if (cfg->is_enabled) {
 
 		lll_df_conf_cte_rx_enable(cfg->slot_durations, cfg->ant_sw_len, cfg->ant_ids,
-					  chan_idx, CTE_INFO_IN_PAYLOAD, lll->phy);
+					  chan_idx, CTE_INFO_IN_PAYLOAD, PHY_CODED);
 		cfg->cte_count = 0;
 #endif /* CONFIG_BT_CTLR_DF_SCAN_CTE_RX */
 	} else if (IS_ENABLED(CONFIG_BT_CTLR_DF_SUPPORT)) {
@@ -340,7 +340,7 @@ static int prepare_cb(struct lll_prepare_param *p)
 
 	if (cfg->is_enabled) {
 		lll_df_conf_cte_rx_enable(cfg->slot_durations, cfg->ant_sw_len, cfg->ant_ids,
-					  chan_idx, CTE_INFO_IN_PAYLOAD, lll->phy);
+					  chan_idx, CTE_INFO_IN_PAYLOAD, PHY_CODED);
 		cfg->cte_count = 0;
 	}
 #endif /* CONFIG_BT_CTLR_DF_SCAN_CTE_RX */
@@ -388,9 +388,9 @@ static int prepare_cb_common(struct lll_prepare_param *p, uint8_t chan_idx)
 	/* Start setting up Radio h/w */
 	radio_reset();
 
-	radio_phy_set(lll->phy, PHY_FLAGS_S8);
+	radio_phy_set(PHY_CODED, PHY_FLAGS_S2);
 	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, LL_EXT_OCTETS_RX_MAX,
-			    RADIO_PKT_CONF_PHY(lll->phy));
+			    RADIO_PKT_CONF_PHY(PHY_CODED));
 	radio_aa_set(lll->access_addr);
 	radio_crc_configure(PDU_CRC_POLYNOMIAL,
 					sys_get_le24(lll->crc_init));
@@ -418,9 +418,9 @@ static int prepare_cb_common(struct lll_prepare_param *p, uint8_t chan_idx)
 	       ((EVENT_JITTER_US + EVENT_TICKER_RES_MARGIN_US + lll->window_widening_event_us)
 		<< 1) +
 	       lll->window_size_event_us;
-	hcto += radio_rx_ready_delay_get(lll->phy, PHY_FLAGS_S8);
-	hcto += addr_us_get(lll->phy);
-	hcto += radio_rx_chain_delay_get(lll->phy, PHY_FLAGS_S8);
+	hcto += radio_rx_ready_delay_get(PHY_CODED, PHY_FLAGS_S2);
+	hcto += addr_us_get(PHY_CODED);
+	hcto += radio_rx_chain_delay_get(PHY_CODED, PHY_FLAGS_S2);
 	radio_tmr_hcto_configure(hcto);
 
 	radio_tmr_end_capture();
@@ -429,8 +429,8 @@ static int prepare_cb_common(struct lll_prepare_param *p, uint8_t chan_idx)
 	radio_gpio_lna_setup();
 
 	radio_gpio_pa_lna_enable(remainder_us +
-				 radio_rx_ready_delay_get(lll->phy,
-							  PHY_FLAGS_S8) -
+				 radio_rx_ready_delay_get(PHY_CODED,
+							  PHY_FLAGS_S2) -
 				 HAL_RADIO_GPIO_LNA_OFFSET);
 #endif /* HAL_RADIO_GPIO_HAVE_LNA_PIN */
 
@@ -555,7 +555,7 @@ static void isr_aux_setup(void *param)
 	}
 
 	/* Setup radio for auxiliary PDU scan */
-	radio_phy_set(phy_aux, PHY_FLAGS_S8);
+	radio_phy_set(phy_aux, PHY_FLAGS_S2);
 	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, LL_EXT_OCTETS_RX_MAX,
 			    RADIO_PKT_CONF_PHY(phy_aux));
 
@@ -581,7 +581,7 @@ static void isr_aux_setup(void *param)
 	 * PDU start time in this case.
 	 */
 	aux_start_us = ftr->radio_end_us + aux_offset_us;
-	aux_start_us -= lll_radio_rx_ready_delay_get(phy_aux, PHY_FLAGS_S8);
+	aux_start_us -= lll_radio_rx_ready_delay_get(phy_aux, PHY_FLAGS_S2);
 	aux_start_us -= window_widening_us;
 	aux_start_us -= EVENT_JITTER_US;
 	radio_tmr_start_us(0, aux_start_us);
@@ -591,7 +591,7 @@ static void isr_aux_setup(void *param)
 	hcto += window_size_us;
 	hcto += window_widening_us;
 	hcto += EVENT_JITTER_US;
-	hcto += radio_rx_chain_delay_get(phy_aux, PHY_FLAGS_S8);
+	hcto += radio_rx_chain_delay_get(phy_aux, PHY_FLAGS_S2);
 	hcto += addr_us_get(phy_aux);
 	radio_tmr_hcto_configure(hcto);
 
@@ -608,7 +608,7 @@ static void isr_aux_setup(void *param)
 
 	radio_gpio_pa_lna_enable(aux_start_us +
 				 radio_rx_ready_delay_get(phy_aux,
-							  PHY_FLAGS_S8) -
+							  PHY_FLAGS_S2) -
 				 HAL_RADIO_GPIO_LNA_OFFSET);
 #endif /* HAL_RADIO_GPIO_HAVE_LNA_PIN */
 }
@@ -661,7 +661,7 @@ static int isr_rx(struct lll_sync *lll, uint8_t node_type, uint8_t crc_ok,
 						   BT_HCI_LE_RSSI_NOT_AVAILABLE;
 			ftr->ticks_anchor = radio_tmr_start_get();
 			ftr->radio_end_us = radio_tmr_end_get() -
-					    radio_rx_chain_delay_get(lll->phy,
+					    radio_rx_chain_delay_get(PHY_CODED,
 								     phy_flags_rx);
 			ftr->phy_flags = phy_flags_rx;
 			ftr->sync_status = status;
@@ -673,7 +673,7 @@ static int isr_rx(struct lll_sync *lll, uint8_t node_type, uint8_t crc_ok,
 
 			pdu = (void *)node_rx->pdu;
 
-			ftr->aux_lll_sched = lll_scan_aux_setup(pdu, lll->phy,
+			ftr->aux_lll_sched = lll_scan_aux_setup(pdu, PHY_CODED,
 								phy_flags_rx,
 								isr_aux_setup,
 								lll);
@@ -989,7 +989,7 @@ static void isr_rx_done_cleanup(struct lll_sync *lll, uint8_t crc_ok, bool sync_
 	e->sync_term = sync_term;
 #endif /* CONFIG_BT_CTLR_SYNC_PERIODIC_CTE_TYPE_FILTERING && CONFIG_BT_CTLR_CTEINLINE_SUPPORT */
 	if (trx_cnt) {
-		e->drift.preamble_to_addr_us = addr_us_get(lll->phy);
+		e->drift.preamble_to_addr_us = addr_us_get(PHY_CODED);
 		e->drift.start_to_address_actual_us =
 			radio_tmr_aa_restore() - radio_tmr_ready_restore();
 		e->drift.window_widening_event_us = lll->window_widening_event_us;

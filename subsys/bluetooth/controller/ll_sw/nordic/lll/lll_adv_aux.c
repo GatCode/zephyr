@@ -359,8 +359,8 @@ static void isr_tx_chain(void *param)
 	if (pdu->adv_ext_ind.ext_hdr_len && pdu->adv_ext_ind.ext_hdr.aux_ptr) {
 		radio_isr_set(isr_tx_chain, lll_aux);
 		radio_tmr_tifs_set(EVENT_B2B_MAFS_US);
-		radio_switch_complete_and_b2b_tx(lll->phy_s, lll->phy_flags,
-						 lll->phy_s, lll->phy_flags);
+		radio_switch_complete_and_b2b_tx(PHY_CODED, PHY_FLAGS_S2,
+						 PHY_CODED, PHY_FLAGS_S2);
 	} else {
 		radio_isr_set(isr_done, lll_aux);
 		radio_switch_complete_and_disable();
@@ -392,8 +392,8 @@ static void isr_tx_chain(void *param)
 	radio_gpio_pa_lna_enable(radio_tmr_tifs_base_get() +
 				 EVENT_B2B_MAFS_US -
 				 (EVENT_CLOCK_JITTER_US << 1U) -
-				 radio_tx_chain_delay_get(lll->phy_s,
-							  lll->phy_flags) -
+				 radio_tx_chain_delay_get(PHY_CODED,
+							  PHY_FLAGS_S2) -
 				 HAL_RADIO_GPIO_PA_OFFSET);
 #endif /* HAL_RADIO_GPIO_HAVE_PA_PIN */
 
@@ -424,7 +424,7 @@ static void isr_tx_rx(void *param)
 
 	/* setup tIFS switching */
 	radio_tmr_tifs_set(EVENT_IFS_US);
-	radio_switch_complete_and_tx(lll->phy_s, 0, lll->phy_s, lll->phy_flags);
+	radio_switch_complete_and_tx(PHY_CODED, 0, PHY_CODED, PHY_FLAGS_S2);
 
 	/* setup Rx buffer */
 	node_rx = ull_pdu_rx_alloc_peek(1);
@@ -444,16 +444,16 @@ static void isr_tx_rx(void *param)
 	if (ull_filter_lll_rl_enabled()) {
 		uint8_t count, *irks = ull_filter_lll_irks_get(&count);
 
-		radio_ar_configure(count, irks, (lll->phy_s << 2) | BIT(0));
+		radio_ar_configure(count, irks, (PHY_CODED << 2) | BIT(0));
 	}
 #endif /* CONFIG_BT_CTLR_PRIVACY */
 
 	/* +/- 2us active clock jitter, +1 us hcto compensation */
 	hcto = radio_tmr_tifs_base_get() + EVENT_IFS_US +
 	       (EVENT_CLOCK_JITTER_US << 1U) + 1U;
-	hcto += radio_rx_chain_delay_get(lll->phy_s, PHY_FLAGS_S8);
-	hcto += addr_us_get(lll->phy_s);
-	hcto -= radio_tx_chain_delay_get(lll->phy_s, PHY_FLAGS_S8);
+	hcto += radio_rx_chain_delay_get(PHY_CODED, PHY_FLAGS_S8);
+	hcto += addr_us_get(PHY_CODED);
+	hcto -= radio_tx_chain_delay_get(PHY_CODED, PHY_FLAGS_S8);
 	radio_tmr_hcto_configure(hcto);
 
 	/* capture end of CONNECT_IND PDU, used for calculating first
@@ -477,7 +477,7 @@ static void isr_tx_rx(void *param)
 	radio_gpio_lna_setup();
 	radio_gpio_pa_lna_enable(radio_tmr_tifs_base_get() + EVENT_IFS_US -
 				 (EVENT_CLOCK_JITTER_US << 1U) -
-				 radio_tx_chain_delay_get(lll->phy_s,
+				 radio_tx_chain_delay_get(PHY_CODED,
 							  PHY_FLAGS_S8) -
 				 HAL_RADIO_GPIO_LNA_OFFSET);
 #endif /* HAL_RADIO_GPIO_HAVE_LNA_PIN */
@@ -614,10 +614,10 @@ static inline int isr_rx_pdu(struct lll_adv_aux *lll_aux, uint8_t phy_flags_rx,
 
 			radio_isr_set(isr_tx_chain, lll_aux);
 			radio_tmr_tifs_set(EVENT_B2B_MAFS_US);
-			radio_switch_complete_and_b2b_tx(lll->phy_s,
-							 lll->phy_flags,
-							 lll->phy_s,
-							 lll->phy_flags);
+			radio_switch_complete_and_b2b_tx(PHY_CODED,
+							 PHY_FLAGS_S2,
+							 PHY_CODED,
+							 PHY_FLAGS_S2);
 #if defined(HAL_RADIO_GPIO_HAVE_PA_PIN)
 			radio_tmr_end_capture();
 #endif /* HAL_RADIO_GPIO_HAVE_PA_PIN */
@@ -663,7 +663,7 @@ static inline int isr_rx_pdu(struct lll_adv_aux *lll_aux, uint8_t phy_flags_rx,
 		radio_gpio_pa_setup();
 		radio_gpio_pa_lna_enable(radio_tmr_tifs_base_get() +
 					 EVENT_IFS_US -
-					 radio_rx_chain_delay_get(lll->phy_s,
+					 radio_rx_chain_delay_get(PHY_CODED,
 								  phy_flags_rx) -
 					 HAL_RADIO_GPIO_PA_OFFSET);
 #endif /* HAL_RADIO_GPIO_HAVE_PA_PIN */
@@ -715,7 +715,7 @@ static inline int isr_rx_pdu(struct lll_adv_aux *lll_aux, uint8_t phy_flags_rx,
 		radio_gpio_pa_setup();
 		radio_gpio_pa_lna_enable(radio_tmr_tifs_base_get() +
 					 EVENT_IFS_US -
-					 radio_rx_chain_delay_get(lll->phy_s,
+					 radio_rx_chain_delay_get(PHY_CODED,
 								  phy_flags_rx) -
 					 HAL_RADIO_GPIO_PA_OFFSET);
 #endif /* HAL_RADIO_GPIO_HAVE_PA_PIN */
@@ -730,7 +730,7 @@ static inline int isr_rx_pdu(struct lll_adv_aux *lll_aux, uint8_t phy_flags_rx,
 		ftr->param = lll;
 		ftr->ticks_anchor = radio_tmr_start_get();
 		ftr->radio_end_us = radio_tmr_end_get() -
-				    radio_rx_chain_delay_get(lll->phy_s,
+				    radio_rx_chain_delay_get(PHY_CODED,
 							     phy_flags_rx);
 
 #if defined(CONFIG_BT_CTLR_PRIVACY)
