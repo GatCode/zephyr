@@ -55,11 +55,21 @@ static struct bt_iso_chan bis_iso_chan;
 uint8_t iso_data[DATA_SIZE_BYTE] = { 0 };
 struct net_buf *buf;
 
+void gpio_work_handler(struct k_work *work)
+{
+    printk("Sending value %u\n", seq_num);
+	int err = write_8_bit(&io_encoder, seq_num % 256);
+	if(err) {
+		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	}
+}
+K_WORK_DEFINE(gpio_work, gpio_work_handler);
+
 static void iso_sent(struct bt_iso_chan *chan)
 {
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-	sys_put_le32(seq_num++, iso_data);
+	sys_put_le32(++seq_num, iso_data);
 	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
 
 	int ret = bt_iso_chan_send(&bis_iso_chan, buf, seq_num, BT_ISO_TIMESTAMP_NONE);
@@ -69,11 +79,7 @@ static void iso_sent(struct bt_iso_chan *chan)
 		return;
 	}
 
-	printk("Sending value %u\n", seq_num);
-	int err = write_8_bit(&io_encoder, seq_num % 256);
-	if(err) {
-		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-	}
+	k_work_submit(&gpio_work);
 }
 
 static struct bt_iso_chan_ops iso_ops = {

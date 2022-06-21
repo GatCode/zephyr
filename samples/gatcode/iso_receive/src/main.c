@@ -159,12 +159,18 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 
 static uint32_t seq_num = 0;
 
-void recv_packet_handler(struct k_timer *dummy)
+void gpio_work_handler(struct k_work *work)
 {
-	int err = write_8_bit(&io_encoder, seq_num % 256);
+    int err = write_8_bit(&io_encoder, seq_num % 256);
 	if(err) {
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
 	}
+}
+K_WORK_DEFINE(gpio_work, gpio_work_handler);
+
+void recv_packet_handler(struct k_timer *dummy)
+{
+	k_work_submit(&gpio_work);
 }
 K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 
