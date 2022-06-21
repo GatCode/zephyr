@@ -134,15 +134,25 @@ void main(void)
 		return;
 	}
 
+	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
+			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER | BT_LE_ADV_OPT_NO_2M, \
+			BT_GAP_ADV_FAST_INT_MIN_2, \
+			BT_GAP_ADV_FAST_INT_MAX_2, \
+			NULL)
+
 	/* Create a non-connectable non-scannable advertising set */
-	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN_NAME, NULL, &adv);
+	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CUSTOM, NULL, &adv);
 	if (err) {
 		printk("Failed to create advertising set (err %d)\n", err);
 		return;
 	}
 
+	#define BT_LE_PER_ADV_CUSTOM BT_LE_PER_ADV_PARAM(BT_GAP_PER_ADV_SLOW_INT_MIN, \
+			BT_GAP_PER_ADV_SLOW_INT_MAX, \
+			BT_LE_PER_ADV_OPT_USE_TX_POWER)
+
 	/* Set periodic advertising parameters */
-	err = bt_le_per_adv_set_param(adv, BT_LE_PER_ADV_DEFAULT);
+	err = bt_le_per_adv_set_param(adv, BT_LE_PER_ADV_CUSTOM);
 	if (err) {
 		printk("Failed to set periodic advertising parameters"
 		       " (err %d)\n", err);
