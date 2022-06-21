@@ -100,9 +100,9 @@ enum sm_engine_state {
 
 struct lwm2m_rd_client_info {
 	struct k_mutex mutex;
-
-	uint32_t lifetime;
+	struct lwm2m_message rd_message;
 	struct lwm2m_ctx *ctx;
+	uint32_t lifetime;
 	uint8_t engine_state;
 	uint8_t retries;
 	uint8_t retry_delay;
@@ -126,6 +126,25 @@ struct lwm2m_rd_client_info {
  * documented in the LwM2M specification.
  */
 static char query_buffer[MAX(32, sizeof("ep=") + CLIENT_EP_LEN)];
+
+static struct lwm2m_message *rd_get_message(void)
+{
+	if (client.rd_message.ctx) {
+		return NULL;
+	}
+
+	client.rd_message.ctx = client.ctx;
+	return &client.rd_message;
+
+}
+
+struct lwm2m_message *lwm2m_get_ongoing_rd_msg(void)
+{
+	if (!client.ctx || !client.rd_message.ctx) {
+		return NULL;
+	}
+	return &client.rd_message;
+}
 
 void engine_update_tx_time(void)
 {
@@ -618,7 +637,7 @@ static int sm_send_bootstrap_registration(void)
 	struct lwm2m_message *msg;
 	int ret;
 
-	msg = lwm2m_get_message(client.ctx);
+	msg = rd_get_message();
 	if (!msg) {
 		LOG_ERR("Unable to get a lwm2m message!");
 		return -ENOMEM;
@@ -645,6 +664,22 @@ static int sm_send_bootstrap_registration(void)
 	/* TODO: handle return error */
 	coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_QUERY,
 				  query_buffer, strlen(query_buffer));
+
+
+	if (IS_ENABLED(CONFIG_LWM2M_VERSION_1_1)) {
+		int pct = LWM2M_FORMAT_OMA_TLV;
+
+		if (IS_ENABLED(CONFIG_LWM2M_RW_SENML_CBOR_SUPPORT)) {
+			pct = LWM2M_FORMAT_APP_SENML_CBOR;
+		} else if (IS_ENABLED(CONFIG_LWM2M_RW_SENML_JSON_SUPPORT)) {
+			pct = LWM2M_FORMAT_APP_SEML_JSON;
+		}
+
+		snprintk(query_buffer, sizeof(query_buffer) - 1, "pct=%d", pct);
+
+		coap_packet_append_option(&msg->cpkt, COAP_OPTION_URI_QUERY,
+				  query_buffer, strlen(query_buffer));
+	}
 
 	/* log the bootstrap attempt */
 	LOG_DBG("Register ID with bootstrap server as '%s'",
@@ -729,7 +764,7 @@ static int sm_send_registration(bool send_obj_support_data,
 	char binding[CLIENT_BINDING_LEN];
 	char queue[CLIENT_QUEUE_LEN];
 
-	msg = lwm2m_get_message(client.ctx);
+	msg = rd_get_message();
 	if (!msg) {
 		LOG_ERR("Unable to get a lwm2m message!");
 		return -ENOMEM;
@@ -985,7 +1020,7 @@ static int sm_do_deregister(void)
 	struct lwm2m_message *msg;
 	int ret;
 
-	msg = lwm2m_get_message(client.ctx);
+	msg = rd_get_message();
 	if (!msg) {
 		LOG_ERR("Unable to get a lwm2m message!");
 		ret = -ENOMEM;
@@ -1262,6 +1297,7 @@ bool lwm2m_rd_client_is_registred(struct lwm2m_ctx *client_ctx)
 static int lwm2m_rd_client_init(const struct device *dev)
 {
 	client.ctx = NULL;
+	client.rd_message.ctx = NULL;
 	client.engine_state = ENGINE_IDLE;
 	k_mutex_init(&client.mutex);
 
