@@ -189,10 +189,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		seq_num = sys_get_le32(count_arr);
 		printk(" | Packet ID: %u ", seq_num);
 
-		uint32_t info_ts = info->ts;
-		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
-		uint32_t delta = curr - info_ts;
-
 		// struct bt_iso_info iso_chan_info;
 		// bt_iso_chan_get_info(chan, &iso_chan_info);
 
@@ -203,6 +199,10 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		}
 		printk("PDR: %.2f%%\n", (float)packets_recv * 100 / (packets_recv + packets_lost));
 		prev_seq_num = seq_num;
+
+		uint32_t info_ts = info->ts;
+		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
+		uint32_t delta = curr - info_ts;
 		
 		k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
 	}

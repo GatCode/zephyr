@@ -21,9 +21,9 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* Defines Sender */
 /* ------------------------------------------------------ */
-#define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
+#define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 10 // 5ms-4s
-#define RETRANSMISSION_NUMBER 8
+#define RETRANSMISSION_NUMBER 2
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
 
 /* ------------------------------------------------------ */
@@ -54,9 +54,8 @@ static struct bt_iso_chan bis_iso_chan;
 
 uint8_t iso_data[DATA_SIZE_BYTE] = { 0 };
 struct net_buf *buf;
-uint32_t last_send_ts;
 
-void send_packet_handler(struct k_timer *dummy)
+static void iso_sent(struct bt_iso_chan *chan)
 {
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
@@ -75,16 +74,6 @@ void send_packet_handler(struct k_timer *dummy)
 	if(err) {
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
 	}
-}
-K_TIMER_DEFINE(send_packet, send_packet_handler, NULL);
-
-static void iso_sent(struct bt_iso_chan *chan)
-{
-	uint32_t curr_send_ts = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
-	uint32_t diff = curr_send_ts - last_send_ts;
-	uint32_t wait_time = 2 * SDU_INTERVAL_US > diff ? 2 * SDU_INTERVAL_US - diff : 0;
-	k_timer_start(&send_packet, K_USEC(wait_time), K_NO_WAIT);
-	last_send_ts = curr_send_ts;
 }
 
 static struct bt_iso_chan_ops iso_ops = {
@@ -190,10 +179,7 @@ void main(void)
 	}
 
 	printk("Initialize sending (fill buffer)\n");
-	for (unsigned int j = 0U; j < BROADCAST_ENQUEUE_COUNT - 1; j++) {
+	for (unsigned int j = 0U; j < BROADCAST_ENQUEUE_COUNT; j++) {
 		iso_sent(&bis_iso_chan);
 	}
-
-	last_send_ts = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
-	iso_sent(&bis_iso_chan);
 }
