@@ -1,6 +1,7 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
+#include "bluetooth/hci.h"
 #include <hal/nrf_rtc.h>
 #include <io_coder.h>
 
@@ -9,7 +10,7 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* D-Cube Defines */
 /* ------------------------------------------------------ */
-#define REMOTE true
+#define REMOTE false
 #define SENDER_START_DELAY_MS 25000
 
 /* ------------------------------------------------------ */
@@ -135,7 +136,7 @@ void main(void)
 	}
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
-			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER | BT_LE_ADV_OPT_NO_2M, \
+			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER, \
 			BT_GAP_ADV_FAST_INT_MIN_2, \
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
@@ -187,6 +188,49 @@ void main(void)
 		return;
 	}
 	printk("done.\n");
+
+
+
+	enum ble_hci_vs_max_tx_power {
+		BLE_HCI_VSC_MAX_TX_PWR_0dBm = 0,
+		BLE_HCI_VSC_MAX_TX_PWR_3dBm = 3,
+	};
+
+	struct ble_hci_vs_cp_set_radio_fe_cfg {
+		int8_t max_tx_power;
+		uint8_t ant_id;
+	} __packed;
+
+	struct ble_hci_vs_rp_status {
+		int8_t status;
+	} __packed;
+
+	int ret;
+	struct ble_hci_vs_cp_set_radio_fe_cfg *cp;
+	struct ble_hci_vs_rp_status *rp;
+	struct net_buf *buf, *rsp = NULL;
+
+	#define HCI_OPCODE_VS_SET_RADIO_FE_CFG BT_OP(BT_OGF_VS, 0x3A3)
+
+	buf = bt_hci_cmd_create(HCI_OPCODE_VS_SET_RADIO_FE_CFG, sizeof(*cp));
+	if (!buf) {
+		printk("Unable to allocate command buffer\n");
+		return -ENOMEM;
+	}
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->max_tx_power = 0;
+	cp->ant_id = 0;
+
+	ret = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_RADIO_FE_CFG, buf, &rsp);
+	if (ret) {
+		printk("Error for HCI VS command HCI_OPCODE_VS_SET_RADIO_FE_CFG\n");
+		return ret;
+	}
+
+	rp = (void *)rsp->data;
+	ret = rp->status;
+	net_buf_unref(rsp);
+
 
 	if(REMOTE) {
 		k_sleep(K_MSEC(SENDER_START_DELAY_MS));
