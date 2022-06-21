@@ -9,7 +9,7 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* D-Cube Defines */
 /* ------------------------------------------------------ */
-#define REMOTE true
+#define REMOTE false
 #define SENDER_START_DELAY_MS 25000
 
 /* ------------------------------------------------------ */
@@ -23,12 +23,13 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 #define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 10 // 5ms-4s
-#define RETRANSMISSION_NUMBER 0
+#define RETRANSMISSION_NUMBER 2
+#define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
 
 /* ------------------------------------------------------ */
 /* Start */
 /* ------------------------------------------------------ */
-NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BIS_ISO_CHAN_COUNT,
+NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BROADCAST_ENQUEUE_COUNT * BIS_ISO_CHAN_COUNT,
 			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
 
 static K_SEM_DEFINE(sem_big_cmplt, 0, 1);
@@ -186,6 +187,11 @@ void main(void)
 		k_sleep(K_MSEC(SENDER_START_DELAY_MS));
 	} else {
 		k_sleep(K_MSEC(5000));
+	}
+
+	printk("Initialize sending (fill buffer)\n");
+	for (unsigned int j = 0U; j < BROADCAST_ENQUEUE_COUNT - 1; j++) {
+		iso_sent(&bis_iso_chan);
 	}
 
 	last_send_ts = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));

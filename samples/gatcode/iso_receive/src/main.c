@@ -168,6 +168,10 @@ void recv_packet_handler(struct k_timer *dummy)
 }
 K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 
+static uint32_t prev_seq_num = 0;
+static uint32_t packets_recv = 0;
+static uint32_t packets_lost = 0;
+
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
@@ -192,10 +196,18 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		// struct bt_iso_info iso_chan_info;
 		// bt_iso_chan_get_info(chan, &iso_chan_info);
 
-		if(delta < PRESENTATION_DELAY_US) { // if not, we're too late - forget the packet
-			k_timer_start(&recv_packet, K_USEC(PRESENTATION_DELAY_US - delta), K_NO_WAIT);
-			printk("info_ts: %u, curr: %u, delta: %u, computation time left: %u\n", info_ts, curr, delta, PRESENTATION_DELAY_US - delta);
+		packets_recv++;
+		if(prev_seq_num + 1 != seq_num) {
+			printk("WHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAT\n");
+			packets_lost++; // Quick and Dirty hack - maybe account for multiple lost packets
 		}
+		printk("PDR: %.2f%%\n", (float)packets_recv * 100 / (packets_recv + packets_lost));
+		prev_seq_num = seq_num;
+		
+		// if(delta < PRESENTATION_DELAY_US) { // if not, we're too late - forget the packet
+		// 	k_timer_start(&recv_packet, K_USEC(PRESENTATION_DELAY_US - delta), K_NO_WAIT);
+		// 	printk("info_ts: %u, curr: %u, delta: %u, computation time left: %u\n", info_ts, curr, delta, PRESENTATION_DELAY_US - delta);
+		// }
 	}
 }
 
