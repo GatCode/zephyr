@@ -9,7 +9,7 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* D-Cube Defines */
 /* ------------------------------------------------------ */
-#define REMOTE false
+#define REMOTE true
 #define SENDER_START_DELAY_MS 25000
 
 /* ------------------------------------------------------ */
@@ -21,9 +21,9 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* Defines Sender */
 /* ------------------------------------------------------ */
-#define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
+#define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 10 // 5ms-4s
-#define RETRANSMISSION_NUMBER 2
+#define RETRANSMISSION_NUMBER 8
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
 
 /* ------------------------------------------------------ */

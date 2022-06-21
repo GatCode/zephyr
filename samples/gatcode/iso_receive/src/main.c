@@ -187,7 +187,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			printk("%x", data);
 		}
 		seq_num = sys_get_le32(count_arr);
-		printk(" | Packet ID: %u\n", seq_num);
+		printk(" | Packet ID: %u ", seq_num);
 
 		uint32_t info_ts = info->ts;
 		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
@@ -198,16 +198,13 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 		packets_recv++;
 		if(prev_seq_num + 1 != seq_num) {
-			printk("WHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAT\n");
+			printk("\n------------------------- LOST PACKET -------------------------\n");
 			packets_lost++; // Quick and Dirty hack - maybe account for multiple lost packets
 		}
 		printk("PDR: %.2f%%\n", (float)packets_recv * 100 / (packets_recv + packets_lost));
 		prev_seq_num = seq_num;
 		
-		// if(delta < PRESENTATION_DELAY_US) { // if not, we're too late - forget the packet
-		// 	k_timer_start(&recv_packet, K_USEC(PRESENTATION_DELAY_US - delta), K_NO_WAIT);
-		// 	printk("info_ts: %u, curr: %u, delta: %u, computation time left: %u\n", info_ts, curr, delta, PRESENTATION_DELAY_US - delta);
-		// }
+		k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
 	}
 }
 
