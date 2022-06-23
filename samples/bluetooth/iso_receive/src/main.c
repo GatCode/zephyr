@@ -102,17 +102,17 @@ static void scan_recv(const struct bt_le_scan_recv_info *info,
 	bt_data_parse(buf, data_cb, name);
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-	printk("[DEVICE]: %s, AD evt type %u, Tx Pwr: %i, RSSI %i %s "
-	       "C:%u S:%u D:%u SR:%u E:%u Prim: %s, Secn: %s, "
-	       "Interval: 0x%04x (%u ms), SID: %u\n",
-	       le_addr, info->adv_type, info->tx_power, info->rssi, name,
-	       (info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_SCANNABLE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_DIRECTED) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_SCAN_RESPONSE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_EXT_ADV) != 0,
-	       phy2str(info->primary_phy), phy2str(info->secondary_phy),
-	       info->interval, BT_CONN_INTERVAL_TO_MS(info->interval), info->sid);
+	// printk("[DEVICE]: %s, AD evt type %u, Tx Pwr: %i, RSSI %i %s "
+	//        "C:%u S:%u D:%u SR:%u E:%u Prim: %s, Secn: %s, "
+	//        "Interval: 0x%04x (%u ms), SID: %u\n",
+	//        le_addr, info->adv_type, info->tx_power, info->rssi, name,
+	//        (info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_SCANNABLE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_DIRECTED) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_SCAN_RESPONSE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_EXT_ADV) != 0,
+	//        phy2str(info->primary_phy), phy2str(info->secondary_phy),
+	//        info->interval, BT_CONN_INTERVAL_TO_MS(info->interval), info->sid);
 
 	if (!per_adv_found && info->interval) {
 		per_adv_found = true;
@@ -136,10 +136,10 @@ static void sync_cb(struct bt_le_per_adv_sync *sync,
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
-	       "Interval 0x%04x (%u ms), PHY %s\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr,
-	       info->interval, info->interval * 5 / 4, phy2str(info->phy));
+	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
+	//        "Interval 0x%04x (%u ms), PHY %s\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr,
+	//        info->interval, info->interval * 5 / 4, phy2str(info->phy));
 
 	k_sem_give(&sem_per_sync);
 }
@@ -151,8 +151,8 @@ static void term_cb(struct bt_le_per_adv_sync *sync,
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s sync terminated\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr);
+	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s sync terminated\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr);
 
 	per_adv_lost = true;
 	k_sem_give(&sem_per_sync_lost);
@@ -181,20 +181,20 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 
 	bt_addr_le_to_str(biginfo->addr, le_addr, sizeof(le_addr));
 
-	printk("BIG INFO[%u]: [DEVICE]: %s, sid 0x%02x, "
-	       "num_bis %u, nse %u, interval 0x%04x (%u ms), "
-	       "bn %u, pto %u, irc %u, max_pdu %u, "
-	       "sdu_interval %u us, max_sdu %u, phy %s, "
-	       "%s framing, %sencrypted\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr, biginfo->sid,
-	       biginfo->num_bis, biginfo->sub_evt_count,
-	       biginfo->iso_interval,
-	       (biginfo->iso_interval * 5 / 4),
-	       biginfo->burst_number, biginfo->offset,
-	       biginfo->rep_count, biginfo->max_pdu, biginfo->sdu_interval,
-	       biginfo->max_sdu, phy2str(biginfo->phy),
-	       biginfo->framing ? "with" : "without",
-	       biginfo->encryption ? "" : "not ");
+	// printk("BIG INFO[%u]: [DEVICE]: %s, sid 0x%02x, "
+	//        "num_bis %u, nse %u, interval 0x%04x (%u ms), "
+	//        "bn %u, pto %u, irc %u, max_pdu %u, "
+	//        "sdu_interval %u us, max_sdu %u, phy %s, "
+	//        "%s framing, %sencrypted\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr, biginfo->sid,
+	//        biginfo->num_bis, biginfo->sub_evt_count,
+	//        biginfo->iso_interval,
+	//        (biginfo->iso_interval * 5 / 4),
+	//        biginfo->burst_number, biginfo->offset,
+	//        biginfo->rep_count, biginfo->max_pdu, biginfo->sdu_interval,
+	//        biginfo->max_sdu, phy2str(biginfo->phy),
+	//        biginfo->framing ? "with" : "without",
+	//        biginfo->encryption ? "" : "not ");
 
 
 	k_sem_give(&sem_per_big_info);
@@ -209,21 +209,53 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 
 #define BIS_ISO_CHAN_COUNT 1
 
+static uint32_t prev_seq_num = 0;
+static uint32_t packets_recv = 0;
+static uint32_t packets_lost = 0;
+static uint32_t seq_num = 0;
+
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
-	char data_str[128];
-	size_t str_len;
-	uint32_t count = 0; /* only valid if the data is a counter */
+	// char data_str[128];
+	// size_t str_len;
+	// uint32_t count = 0; /* only valid if the data is a counter */
 
-	if (buf->len == sizeof(count)) {
-		count = sys_get_le32(buf->data);
+	// if (buf->len == sizeof(count)) {
+	// 	count = sys_get_le32(buf->data);
+	// }
+
+	// str_len = bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
+	// printk("Incoming data channel %p flags 0x%x seq_num %u ts %u len %u: "
+	//        "%s (counter value %u)\n", chan, info->flags, info->seq_num,
+	//        info->ts, buf->len, data_str, count);
+
+	#define DATA_SIZE_BYTE 50
+
+	// printk("Flags: %u ", info->flags);
+	uint8_t count_arr[4];
+
+	// printk("Data: ");
+	for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
+		if(i < 4) {
+			count_arr[i] = buf->data[i];
+		}
+		uint8_t data = buf->data[i];
+		// printk("%x", data);
 	}
+	seq_num = sys_get_le32(count_arr);
+	// printk(" | Packet ID: %u ", seq_num);
 
-	str_len = bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
-	printk("Incoming data channel %p flags 0x%x seq_num %u ts %u len %u: "
-	       "%s (counter value %u)\n", chan, info->flags, info->seq_num,
-	       info->ts, buf->len, data_str, count);
+	// struct bt_iso_info iso_chan_info;
+	// bt_iso_chan_get_info(chan, &iso_chan_info);
+
+	packets_recv++;
+	if(prev_seq_num + 1 != seq_num) {
+		printk("\n------------------------- LOST PACKET -------------------------\n");
+		packets_lost++; // Quick and Dirty hack - maybe account for multiple lost packets
+	}
+	// printk("PDR: %.2f%%\n", (float)packets_recv * 100 / (packets_recv + packets_lost));
+	prev_seq_num = seq_num;
 }
 
 static void iso_connected(struct bt_iso_chan *chan)

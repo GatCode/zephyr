@@ -33,7 +33,7 @@ static struct io_coder io_encoder = {0};
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
 #define NAME_LEN            30
 
-#define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_ACTIVE, \
+#define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, \
 					   BT_LE_SCAN_OPT_NONE, \
 					   BT_GAP_SCAN_FAST_INTERVAL, \
 					   BT_GAP_SCAN_FAST_WINDOW)
@@ -159,12 +159,20 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 
 static uint32_t seq_num = 0;
 
+static uint32_t last_recv_ts = 0;
+
 void gpio_work_handler(struct k_work *work)
 {
+	uint32_t curr_recv_ts = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_S_BASE));
+
+	printk("PACKET DIFF: %u", curr_recv_ts - last_recv_ts);
+
     int err = write_8_bit(&io_encoder, seq_num % 256);
 	if(err) {
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
 	}
+
+	last_recv_ts = curr_recv_ts;
 }
 K_WORK_DEFINE(gpio_work, gpio_work_handler);
 
@@ -181,6 +189,7 @@ static uint32_t packets_lost = 0;
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
+	printk("Flags: %u ", info->flags);
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 
@@ -203,11 +212,11 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			printk("\n------------------------- LOST PACKET -------------------------\n");
 			packets_lost++; // Quick and Dirty hack - maybe account for multiple lost packets
 		}
-		printk("PDR: %.2f%%\n", (float)packets_recv * 100 / (packets_recv + packets_lost));
+		printk("PDR: %.2f%%", (float)packets_recv * 100 / (packets_recv + packets_lost));
 		prev_seq_num = seq_num;
 
 		uint32_t info_ts = info->ts;
-		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
+		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_S_BASE));
 		uint32_t delta = curr - info_ts;
 		
 		k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
@@ -368,7 +377,7 @@ big_sync_create:
 		err = bt_iso_big_sync(sync, &big_sync_param, &big);
 		if (err) {
 			printk("failed (err %d)\n", err);
-			return;
+			continue;
 		}
 		printk("success.\n");
 

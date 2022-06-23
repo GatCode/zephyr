@@ -4,6 +4,7 @@
 #include "bluetooth/hci.h"
 #include <hal/nrf_rtc.h>
 #include <io_coder.h>
+#include <zephyr/bluetooth/hci_vs.h>
 
 static struct io_coder io_encoder = {0};
 
@@ -22,10 +23,126 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 /* Defines Sender */
 /* ------------------------------------------------------ */
-#define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
-#define TRANSPORT_LATENCY_MS 10 // 5ms-4s
-#define RETRANSMISSION_NUMBER 2
+#define SDU_INTERVAL_US 50000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
+#define TRANSPORT_LATENCY_MS 50 // 5ms-4s
+#define RETRANSMISSION_NUMBER 0
+#define TX_POWER 0
+#define VREQCTRL false // high power mode, +3dBm
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
+
+/* ------------------------------------------------------ */
+/* VSC - copied from Nordic nrf5340_audio sample */
+/* ------------------------------------------------------ */
+#define HCI_OPCODE_VS_SET_ADV_TX_PWR BT_OP(BT_OGF_VS, 0x3F5)
+#define HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR BT_OP(BT_OGF_VS, 0x000)
+#define HCI_OPCODE_VS_SET_RADIO_FE_CFG BT_OP(BT_OGF_VS, 0x3A3)
+
+struct ble_hci_vs_rp_status {
+	int8_t status;
+} __packed;
+
+struct ble_hci_vs_cp_set_adv_tx_pwr {
+	int8_t tx_power;
+} __packed;
+
+struct ble_hci_vs_cp_set_radio_fe_cfg {
+	int8_t max_tx_power;
+	uint8_t ant_id;
+} __packed;
+
+enum ble_hci_vs_max_tx_power {
+	BLE_HCI_VSC_MAX_TX_PWR_0dBm = 0,
+	BLE_HCI_VSC_MAX_TX_PWR_3dBm = 3,
+};
+
+int ble_hci_vsc_set_adv_tx_pwr(int8_t tx_power)
+{
+	int ret;
+	struct ble_hci_vs_cp_set_adv_tx_pwr *cp;
+	struct ble_hci_vs_rp_status *rp;
+	struct net_buf *buf, *rsp = NULL;
+
+	buf = bt_hci_cmd_create(HCI_OPCODE_VS_SET_ADV_TX_PWR, sizeof(*cp));
+	if (!buf) {
+		printk("Unable to allocate command buffer\n");
+		return -ENOMEM;
+	}
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->tx_power = tx_power;
+
+	ret = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_ADV_TX_PWR, buf, &rsp);
+	if (ret) {
+		printk("Error for HCI VS command HCI_OPCODE_VS_SET_ADV_TX_PWR\n");
+		return ret;
+	}
+
+	rp = (void *)rsp->data;
+	ret = rp->status;
+	net_buf_unref(rsp);
+
+	return ret;
+}
+
+int ble_hci_vsc_set_pri_ext_adv_max_tx_pwr(int8_t tx_power)
+{
+	int ret;
+	struct ble_hci_vs_cp_set_adv_tx_pwr *cp;
+	struct ble_hci_vs_rp_status *rp;
+	struct net_buf *buf, *rsp = NULL;
+
+	buf = bt_hci_cmd_create(HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR, sizeof(*cp));
+	if (!buf) {
+		printk("Unable to allocate command buffer\n");
+		return -ENOMEM;
+	}
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->tx_power = tx_power;
+
+	ret = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR, buf, &rsp);
+	if (ret) {
+		printk("Error for HCI VS command HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR\n");
+		return ret;
+	}
+
+	rp = (void *)rsp->data;
+	ret = rp->status;
+	net_buf_unref(rsp);
+	return ret;
+}
+
+int ble_hci_vsc_set_radio_high_pwr_mode(bool high_power_mode)
+{
+	int ret;
+	struct ble_hci_vs_cp_set_radio_fe_cfg *cp;
+	struct ble_hci_vs_rp_status *rp;
+	struct net_buf *buf, *rsp = NULL;
+
+	buf = bt_hci_cmd_create(HCI_OPCODE_VS_SET_RADIO_FE_CFG, sizeof(*cp));
+	if (!buf) {
+		printk("Unable to allocate command buffer\n");
+		return -ENOMEM;
+	}
+	cp = net_buf_add(buf, sizeof(*cp));
+	if (high_power_mode) {
+		printk("Enable VREGRADIO.VREQH\n");
+		cp->max_tx_power = BLE_HCI_VSC_MAX_TX_PWR_3dBm;
+	} else {
+		printk("Disable VREGRADIO.VREQH\n");
+		cp->max_tx_power = BLE_HCI_VSC_MAX_TX_PWR_0dBm;
+	}
+	cp->ant_id = 0;
+
+	ret = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_RADIO_FE_CFG, buf, &rsp);
+	if (ret) {
+		printk("Error for HCI VS command HCI_OPCODE_VS_SET_RADIO_FE_CFG\n");
+		return ret;
+	}
+
+	rp = (void *)rsp->data;
+	ret = rp->status;
+	net_buf_unref(rsp);
+	return ret;
+}
 
 /* ------------------------------------------------------ */
 /* Start */
@@ -37,6 +154,9 @@ static K_SEM_DEFINE(sem_big_cmplt, 0, 1);
 static K_SEM_DEFINE(sem_big_term, 0, 1);
 
 static uint32_t seq_num;
+
+// static struct bt_conn *default_conn;
+static uint16_t default_conn_handle;
 
 static void iso_connected(struct bt_iso_chan *chan)
 {
@@ -115,6 +235,43 @@ static struct bt_iso_big_create_param big_create_param = {
 	.framing = BT_ISO_FRAMING_UNFRAMED, /* 0 - unframed, 1 - framed */
 };
 
+static void get_tx_power(uint8_t handle_type, uint16_t handle, int8_t *tx_pwr_lvl)
+{
+	struct bt_hci_cp_vs_read_tx_power_level *cp;
+	struct bt_hci_rp_vs_read_tx_power_level *rp;
+	struct net_buf *buf, *rsp = NULL;
+	int err;
+
+	*tx_pwr_lvl = 0xFF;
+	buf = bt_hci_cmd_create(BT_HCI_OP_VS_READ_TX_POWER_LEVEL,
+				sizeof(*cp));
+	if (!buf) {
+		printk("Unable to allocate command buffer\n");
+		return;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = sys_cpu_to_le16(handle);
+	cp->handle_type = handle_type;
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_VS_READ_TX_POWER_LEVEL,
+				   buf, &rsp);
+	if (err) {
+		uint8_t reason = rsp ?
+			((struct bt_hci_rp_vs_read_tx_power_level *)
+			  rsp->data)->status : 0;
+		printk("Read Tx power err: %d reason 0x%02x\n", err, reason);
+		return;
+	}
+
+	rp = (void *)rsp->data;
+	*tx_pwr_lvl = rp->tx_power_level;
+
+	net_buf_unref(rsp);
+}
+
+#define HCI_OPCODE_VS_SET_CONN_TX_PWR BT_OP(BT_OGF_VS, 0x3F0)
+
 void main(void)
 {
 	struct bt_le_ext_adv *adv;
@@ -167,6 +324,50 @@ void main(void)
 		return;
 	}
 
+
+	// int ret;
+
+	// // default_conn = bt_conn_ref(a);
+	// // ret = bt_hci_get_conn_handle(chan->iso, &default_conn_handle);
+
+	// struct bt_hci_cp_vs_write_tx_power_level *cp;
+	// struct bt_hci_rp_vs_write_tx_power_level *rp;
+	// struct net_buf *buf, *rsp = NULL;
+	// // int err;
+
+	// buf = bt_hci_cmd_create(HCI_OPCODE_VS_SET_CONN_TX_PWR,
+	// 			sizeof(*cp));
+	// if (!buf) {
+	// 	printk("Unable to allocate command buffer\n");
+	// 	return;
+	// }
+
+	// cp = net_buf_add(buf, sizeof(*cp));
+	// cp->handle = sys_cpu_to_le16(0);
+	// cp->handle_type = BT_HCI_VS_LL_HANDLE_TYPE_ADV;
+	// cp->tx_power_level = -20;
+
+	// err = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_CONN_TX_PWR,
+	// 			   buf, &rsp);
+	// if (err) {
+	// 	uint8_t reason = rsp ?
+	// 		((struct bt_hci_rp_vs_write_tx_power_level *)
+	// 		  rsp->data)->status : 0;
+	// 	printk("Set Tx power err: %d reason 0x%02x\n", err, reason);
+	// 	return;
+	// }
+
+	// rp = (void *)rsp->data;
+	// printk("Actual Tx Power: %d\n", rp->selected_tx_power);
+
+	// net_buf_unref(rsp);
+
+
+	// int8_t txp_get = 0xFF;
+	// get_tx_power(BT_HCI_VS_LL_HANDLE_TYPE_ADV, 0, &txp_get);
+
+	
+
 	/* Start extended advertising */
 	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
 	if (err) {
@@ -189,48 +390,23 @@ void main(void)
 	}
 	printk("done.\n");
 
+	// err = ble_hci_vsc_set_adv_tx_pwr(TX_POWER);
+	// if (err) {
+	// 	printk("ble_hci_vsc_set_adv_tx_pwr failed (err %d)\n", err);
+	// 	return;
+	// }
 
+	// err = ble_hci_vsc_set_pri_ext_adv_max_tx_pwr(TX_POWER);
+	// if (err) {
+	// 	printk("ble_hci_vsc_set_adv_tx_pwr failed (err %d)\n", err);
+	// 	return;
+	// }
 
-	enum ble_hci_vs_max_tx_power {
-		BLE_HCI_VSC_MAX_TX_PWR_0dBm = 0,
-		BLE_HCI_VSC_MAX_TX_PWR_3dBm = 3,
-	};
-
-	struct ble_hci_vs_cp_set_radio_fe_cfg {
-		int8_t max_tx_power;
-		uint8_t ant_id;
-	} __packed;
-
-	struct ble_hci_vs_rp_status {
-		int8_t status;
-	} __packed;
-
-	int ret;
-	struct ble_hci_vs_cp_set_radio_fe_cfg *cp;
-	struct ble_hci_vs_rp_status *rp;
-	struct net_buf *buf, *rsp = NULL;
-
-	#define HCI_OPCODE_VS_SET_RADIO_FE_CFG BT_OP(BT_OGF_VS, 0x3A3)
-
-	buf = bt_hci_cmd_create(HCI_OPCODE_VS_SET_RADIO_FE_CFG, sizeof(*cp));
-	if (!buf) {
-		printk("Unable to allocate command buffer\n");
-		return -ENOMEM;
-	}
-	cp = net_buf_add(buf, sizeof(*cp));
-	cp->max_tx_power = 0;
-	cp->ant_id = 0;
-
-	ret = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_RADIO_FE_CFG, buf, &rsp);
-	if (ret) {
-		printk("Error for HCI VS command HCI_OPCODE_VS_SET_RADIO_FE_CFG\n");
-		return ret;
-	}
-
-	rp = (void *)rsp->data;
-	ret = rp->status;
-	net_buf_unref(rsp);
-
+	// err = ble_hci_vsc_set_radio_high_pwr_mode(VREQCTRL);
+	// if (err) {
+	// 	printk("ble_hci_vsc_set_radio_high_pwr_mode failed (err %d)\n", err);
+	// 	return;
+	// }
 
 	if(REMOTE) {
 		k_sleep(K_MSEC(SENDER_START_DELAY_MS));
