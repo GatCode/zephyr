@@ -1079,9 +1079,13 @@ uint32_t ull_adv_aux_evt_init(struct ll_adv_aux_set *aux,
 	uint32_t ticks_slot;
 	int err;
 
+#if defined(CONFIG_BT_CTLR_ADV_RESERVE_MAX)
 	time_us = ull_adv_aux_time_get(aux, PDU_AC_PAYLOAD_SIZE_MAX,
 				       PDU_AC_PAYLOAD_SIZE_MAX);
 	ticks_slot = HAL_TICKER_US_TO_TICKS(time_us);
+#else
+	ticks_slot = aux->ull.ticks_slot;
+#endif
 
 	err = ull_sched_adv_aux_sync_free_slot_get(TICKER_USER_ID_THREAD,
 						   (ticks_slot +
