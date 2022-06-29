@@ -91,7 +91,7 @@ static struct bt_iso_chan_ops iso_ops = {
 static struct bt_iso_chan_io_qos iso_tx_qos = {
 	.sdu = DATA_SIZE_BYTE, /* bytes */
 	.rtn = RETRANSMISSION_NUMBER,
-	.phy = BT_GAP_LE_PHY_1M,
+	.phy = BT_GAP_LE_PHY_2M,
 };
 
 static struct bt_iso_chan_qos bis_iso_qos = {
@@ -135,7 +135,7 @@ void main(void)
 	}
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
-			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER | BT_LE_ADV_OPT_NO_2M, \
+			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER, \
 			BT_GAP_ADV_FAST_INT_MIN_2, \
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
@@ -147,8 +147,8 @@ void main(void)
 		return;
 	}
 
-	#define BT_LE_PER_ADV_CUSTOM BT_LE_PER_ADV_PARAM(BT_GAP_PER_ADV_SLOW_INT_MIN, \
-			BT_GAP_PER_ADV_SLOW_INT_MAX, \
+	#define BT_LE_PER_ADV_CUSTOM BT_LE_PER_ADV_PARAM(BT_GAP_ADV_FAST_INT_MIN_2, \
+			BT_GAP_ADV_FAST_INT_MAX_2, \
 			BT_LE_PER_ADV_OPT_USE_TX_POWER)
 
 	/* Set periodic advertising parameters */
