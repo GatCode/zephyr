@@ -8,20 +8,10 @@
 static struct io_coder io_encoder = {0};
 
 /* ------------------------------------------------------ */
-/* D-Cube Defines */
-/* ------------------------------------------------------ */
-#define REMOTE false
-#define SENDER_START_DELAY_MS 25000
-
-/* ------------------------------------------------------ */
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
-
-/* ------------------------------------------------------ */
-/* Defines Sender */
-/* ------------------------------------------------------ */
+#define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)ä
 #define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 10 // 5ms-4s
 #define RETRANSMISSION_NUMBER 2
@@ -58,7 +48,7 @@ struct net_buf *buf;
 
 void gpio_work_handler(struct k_work *work)
 {
-    printk("Sending value %u\n", seq_num);
+    // printk("Sending value %u\n", seq_num);
 	int err = write_8_bit(&io_encoder, seq_num % 256);
 	if(err) {
 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
@@ -199,12 +189,7 @@ void main(void)
 	}
 	printk("done.\n");
 
-	if(REMOTE) {
-		k_sleep(K_MSEC(SENDER_START_DELAY_MS));
-	} else {
-		k_sleep(K_MSEC(5000));
-	}
-
+	/* Prime TX buffer */
 	printk("Initialize sending (fill buffer)\n");
 	for (unsigned int j = 0U; j < BROADCAST_ENQUEUE_COUNT; j++) {
 		iso_sent(&bis_iso_chan);
