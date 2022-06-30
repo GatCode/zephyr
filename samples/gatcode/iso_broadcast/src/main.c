@@ -2,6 +2,7 @@
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
 #include <hal/nrf_rtc.h>
+#include <ble_hci_vsc.h>
 #include <io_coder.h>
 
 static struct io_coder io_encoder = {0};
@@ -114,140 +115,6 @@ static struct bt_iso_big_create_param big_create_param = {
 	.framing = BT_ISO_FRAMING_UNFRAMED, /* 0 - unframed, 1 - framed */
 };
 
-#define HCI_OPCODE_VS_SET_OP_FLAGS BT_OP(BT_OGF_VS, 0x3F3)
-#define HCI_OPCODE_VS_SET_BD_ADDR BT_OP(BT_OGF_VS, 0x3F0)
-#define HCI_OPCODE_VS_SET_ADV_TX_PWR BT_OP(BT_OGF_VS, 0x3F5)
-#define HCI_OPCODE_VS_SET_CONN_TX_PWR BT_OP(BT_OGF_VS, 0x3F6)
-#define HCI_OPCODE_VS_SET_LED_PIN_MAP BT_OP(BT_OGF_VS, 0x001)
-#define HCI_OPCODE_VS_SET_RADIO_FE_CFG BT_OP(BT_OGF_VS, 0x3A3)
-#define HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR BT_OP(BT_OGF_VS, 0x000)
-
-struct ble_hci_vs_cp_set_radio_fe_cfg {
-	int8_t max_tx_power;
-	uint8_t ant_id;
-} __packed;
-
-struct ble_hci_vs_rp_status {
-	int8_t status;
-} __packed;
-
-enum ble_hci_vs_max_tx_power {
-	BLE_HCI_VSC_MAX_TX_PWR_0dBm = 0,
-	BLE_HCI_VSC_MAX_TX_PWR_3dBm = 3,
-};
-
-int ble_hci_vsc_set_radio_high_pwr_mode(bool high_power_mode)
-{
-	int ret;
-	struct ble_hci_vs_cp_set_radio_fe_cfg *cp;
-	struct ble_hci_vs_rp_status *rp;
-	struct net_buf *buf, *rsp = NULL;
-
-	buf = bt_hci_cmd_create(HCI_OPCODE_VS_SET_RADIO_FE_CFG, sizeof(*cp));
-	if (!buf) {
-		printk("Unable to allocate command buffer\n");
-		return -ENOMEM;
-	}
-	cp = net_buf_add(buf, sizeof(*cp));
-	if (high_power_mode) {
-		printk("Enable VREGRADIO.VREQH\n");
-		cp->max_tx_power = BLE_HCI_VSC_MAX_TX_PWR_3dBm;
-	} else {
-		printk("Disable VREGRADIO.VREQH\n");
-		cp->max_tx_power = BLE_HCI_VSC_MAX_TX_PWR_0dBm;
-	}
-	cp->ant_id = 0;
-
-	ret = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_RADIO_FE_CFG, buf, &rsp);
-	if (ret) {
-		printk("Error for HCI VS command HCI_OPCODE_VS_SET_RADIO_FE_CFG\n");
-		return ret;
-	}
-
-	rp = (void *)rsp->data;
-	ret = rp->status;
-	net_buf_unref(rsp);
-	return ret;
-}
-
-enum ble_hci_vs_tx_power {
-	BLE_HCI_VSC_TX_PWR_0dBm = 0,
-	BLE_HCI_VSC_TX_PWR_Neg1dBm = -1,
-	BLE_HCI_VSC_TX_PWR_Neg2dBm = -2,
-	BLE_HCI_VSC_TX_PWR_Neg3dBm = -3,
-	BLE_HCI_VSC_TX_PWR_Neg4dBm = -4,
-	BLE_HCI_VSC_TX_PWR_Neg5dBm = -5,
-	BLE_HCI_VSC_TX_PWR_Neg6dBm = -6,
-	BLE_HCI_VSC_TX_PWR_Neg7dBm = -7,
-	BLE_HCI_VSC_TX_PWR_Neg8dBm = -8,
-	BLE_HCI_VSC_TX_PWR_Neg12dBm = -12,
-	BLE_HCI_VSC_TX_PWR_Neg16dBm = -16,
-	BLE_HCI_VSC_TX_PWR_Neg20dBm = -20,
-	BLE_HCI_VSC_TX_PWR_Neg40dBm = -40,
-	BLE_HCI_VSC_TX_PWR_INVALID = 99,
-	BLE_HCI_VSC_PRI_EXT_ADV_MAX_TX_PWR_DISABLE = 127,
-};
-
-struct ble_hci_vs_cp_set_adv_tx_pwr {
-	int8_t tx_power;
-} __packed;
-
-int ble_hci_vsc_set_adv_tx_pwr(enum ble_hci_vs_tx_power tx_power)
-{
-	int ret;
-	struct ble_hci_vs_cp_set_adv_tx_pwr *cp;
-	struct ble_hci_vs_rp_status *rp;
-	struct net_buf *buf, *rsp = NULL;
-
-	buf = bt_hci_cmd_create(HCI_OPCODE_VS_SET_ADV_TX_PWR, sizeof(*cp));
-	if (!buf) {
-		printk("Unable to allocate command buffer\n");
-		return -ENOMEM;
-	}
-	cp = net_buf_add(buf, sizeof(*cp));
-	cp->tx_power = tx_power;
-
-	ret = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_ADV_TX_PWR, buf, &rsp);
-	if (ret) {
-		printk("Error for HCI VS command HCI_OPCODE_VS_SET_ADV_TX_PWR\n");
-		return ret;
-	}
-	printk("ble_hci_vsc_set_adv_tx_pwr finished\n");
-
-	rp = (void *)rsp->data;
-	ret = rp->status;
-	net_buf_unref(rsp);
-
-	return ret;
-}
-
-int ble_hci_vsc_set_pri_ext_adv_max_tx_pwr(enum ble_hci_vs_tx_power tx_power)
-{
-	int ret;
-	struct ble_hci_vs_cp_set_adv_tx_pwr *cp;
-	struct ble_hci_vs_rp_status *rp;
-	struct net_buf *buf, *rsp = NULL;
-
-	buf = bt_hci_cmd_create(HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR, sizeof(*cp));
-	if (!buf) {
-		printk("Unable to allocate command buffern\n");
-		return -ENOMEM;
-	}
-	cp = net_buf_add(buf, sizeof(*cp));
-	cp->tx_power = tx_power;
-
-	ret = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR, buf, &rsp);
-	if (ret) {
-		printk("Error for HCI VS command HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR\n");
-		return ret;
-	}
-
-	rp = (void *)rsp->data;
-	ret = rp->status;
-	net_buf_unref(rsp);
-	return ret;
-}
-
 void main(void)
 {
 	struct bt_le_ext_adv *adv;
@@ -307,9 +174,15 @@ void main(void)
 		return;
 	}
 
-	ble_hci_vsc_set_radio_high_pwr_mode(false);
-	ble_hci_vsc_set_adv_tx_pwr(BLE_HCI_VSC_TX_PWR_0dBm);
-	ble_hci_vsc_set_pri_ext_adv_max_tx_pwr(BLE_HCI_VSC_TX_PWR_0dBm);
+	/* Set initial TX power */
+	static struct ble_hci_vs_tx_pwr_setting tx_power_setting;
+	tx_power_setting.add_3dBm = true;
+	tx_power_setting.tx_power = 0;
+	err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
+	if (err) {
+		printk("Failed to set tx power (err %d)\n", err);
+		return;
+	}
 
 	/* Create BIG */
 	err = bt_iso_big_create(adv, &big_create_param, &big);
