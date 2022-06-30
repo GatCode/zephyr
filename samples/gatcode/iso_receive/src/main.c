@@ -7,23 +7,15 @@
 #include <zephyr/sys/byteorder.h>
 #include <hal/nrf_rtc.h>
 #include <io_coder.h>
+#include <sync_timer.h>
 
 static struct io_coder io_encoder = {0};
-
-/* ------------------------------------------------------ */
-/* D-Cube Defines */
-/* ------------------------------------------------------ */
-#define SENDER_START_DELAY_MS 25000
 
 /* ------------------------------------------------------ */
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
 #define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
-
-/* ------------------------------------------------------ */
-/* Defines Receiver */
-/* ------------------------------------------------------ */
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 
@@ -45,9 +37,6 @@ static bool         per_adv_lost;
 static bt_addr_le_t per_addr;
 static uint8_t      per_sid;
 static uint16_t     per_interval_ms;
-
-static bool         big_info_printed;
-static bool         big_info_printed_reset;
 
 static K_SEM_DEFINE(sem_per_adv, 0, 1);
 static K_SEM_DEFINE(sem_per_sync, 0, 1);
@@ -87,67 +76,9 @@ static void term_cb(struct bt_le_per_adv_sync *sync,
 	k_sem_give(&sem_per_sync_lost);
 }
 
-static const char *phy2str(uint8_t phy)
-{
-	switch (phy) {
-	case 0: return "No packets";
-	case BT_GAP_LE_PHY_1M: return "LE 1M";
-	case BT_GAP_LE_PHY_2M: return "LE 2M";
-	case BT_GAP_LE_PHY_CODED: return "LE Coded";
-	default: return "Unknown";
-	}
-}
-
 static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 		       const struct bt_iso_biginfo *biginfo)
 {
-	// if(!big_info_printed) { // print ISO_IVAL + BN on GPIO
-	// 	uint8_t info = 0;
-	// 	info |= biginfo->iso_interval;
-	// 	info |= biginfo->burst_number << 5;
-
-	// 	k_sleep(K_MSEC(SENDER_START_DELAY_MS / 4)); // wait on D-Cube
-
-	// 	int err = write_8_bit(&io_encoder, info);
-	// 	if(err) {
-	// 		printk("Error writing 8bit ISO_IVAL + BN to P1.01 - P1.08 (err %d)\n", err);
-	// 	}
-
-	// 	big_info_printed = true;
-	// }
-
-	// if(big_info_printed && !big_info_printed_reset) {
-	// 	uint8_t val = 0;
-
-	// 	k_sleep(K_MSEC(SENDER_START_DELAY_MS / 4)); // wait on D-Cube
-
-	// 	int err = write_8_bit(&io_encoder, val);
-	// 	if(err) {
-	// 		printk("Error resetting 8bit ISO_IVAL + BN to P1.01 - P1.08 (err %d)\n", err);
-	// 	}	
-
-	// 	big_info_printed_reset = true;
-	// }
-
-	char le_addr[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(biginfo->addr, le_addr, sizeof(le_addr));
-
-	// printk("BIG INFO[%u]: [DEVICE]: %s, sid 0x%02x, "
-	//        "num_bis %u, nse %u, interval 0x%04x (%u ms), "
-	//        "bn %u, pto %u, irc %u, max_pdu %u, "
-	//        "sdu_interval %u us, max_sdu %u, phy %s, "
-	//        "%s framing, %sencrypted\n",
-	//        bt_le_per_adv_sync_get_index(sync), le_addr, biginfo->sid,
-	//        biginfo->num_bis, biginfo->sub_evt_count,
-	//        biginfo->iso_interval,
-	//        (biginfo->iso_interval * 5 / 4),
-	//        biginfo->burst_number, biginfo->offset,
-	//        biginfo->rep_count, biginfo->max_pdu, biginfo->sdu_interval,
-	//        biginfo->max_sdu, phy2str(biginfo->phy),
-	//        biginfo->framing ? "with" : "without",
-	//        biginfo->encryption ? "" : "not ");
-
 	k_sem_give(&sem_per_big_info);
 }
 
@@ -207,7 +138,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		prev_seq_num = seq_num;
 
 		uint32_t info_ts = info->ts;
-		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_S_BASE));
+		uint32_t curr = audio_sync_timer_curr_time_get();
 		uint32_t delta = curr - info_ts;
 		
 		k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);

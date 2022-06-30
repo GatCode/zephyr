@@ -7,7 +7,9 @@ project(iso_receive)
 
 target_sources(app PRIVATE
     src/main.c
+    src/sync_timer.c
     ../io_coder/src/io_coder.c
 )
 
+zephyr_library_include_directories(include)
 zephyr_library_include_directories(../io_coder/include)
