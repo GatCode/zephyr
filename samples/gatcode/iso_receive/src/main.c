@@ -2,6 +2,9 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
@@ -20,7 +23,108 @@ static struct io_coder io_encoder = {0};
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 
 /* ------------------------------------------------------ */
-/* Start */
+/* Importatnt Globals */
+/* ------------------------------------------------------ */
+static float pdr = 0.0;
+
+/* ------------------------------------------------------ */
+/* ACL */
+/* ------------------------------------------------------ */
+/* UUIDs - https://www.guidgenerator.com */
+#define BT_UUID_QUALITY_SERVICE BT_UUID_128_ENCODE(0x595d0001, 0xc3b2, 0x40a2, 0xab93, 0x28e30fa26298)
+#define BT_UUID_PDR_CHARACTERISTIC BT_UUID_128_ENCODE(0x2fe883b0, 0x4305, 0x42f8, 0x8efe, 0x51bafee55253)
+
+static void pdr_ccc_cfg_changed(const struct bt_gatt_attr *attr,
+				       uint16_t value)
+{
+	ARG_UNUSED(attr);
+	bool notif_enabled = (value == BT_GATT_CCC_NOTIFY);
+	printk("BAS Notifications %s", notif_enabled ? "enabled" : "disabled\n");
+}
+
+BT_GATT_SERVICE_DEFINE(acl_srv,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_DECLARE_128(BT_UUID_QUALITY_SERVICE)),
+	BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(BT_UUID_PDR_CHARACTERISTIC),
+			       BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, NULL, NULL, NULL),
+	BT_GATT_CCC(pdr_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+);
+
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL,
+		      BT_UUID_16_ENCODE(BT_UUID_HRS_VAL),
+		      BT_UUID_16_ENCODE(BT_UUID_BAS_VAL),
+		      BT_UUID_16_ENCODE(BT_UUID_DIS_VAL))
+};
+
+static void connected(struct bt_conn *conn, uint8_t err)
+{
+	if (err) {
+		printk("Connection failed (err 0x%02x)\n", err);
+	} else {
+		printk("Connected\n");
+	}
+}
+
+static void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	printk("Disconnected (reason 0x%02x)\n", reason);
+}
+
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+	.connected = connected,
+	.disconnected = disconnected,
+};
+
+static void init_acl(void)
+{
+	int err;
+
+	err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err) {
+		printk("ACL advertising failed to start (err %d)\n", err);
+		return;
+	}
+
+	printk("ACL advertising successfully started\n");
+}
+
+static void auth_cancel(struct bt_conn *conn)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	printk("Pairing cancelled: %s\n", addr);
+}
+
+static struct bt_conn_auth_cb auth_cb_acl = {
+	.cancel = auth_cancel,
+};
+
+void acl_work_handler(struct k_work *work)
+{
+	static uint8_t pdr_arr[5];
+	uint32_t mantissa;
+	uint8_t exponent;
+
+	mantissa = (uint32_t)(pdr * 100);
+	exponent = (uint8_t)-2;
+	
+	pdr_arr[0] = 0;
+	sys_put_le24(mantissa, (uint8_t *)&pdr_arr[1]);
+	pdr_arr[4] = exponent;
+
+	bt_gatt_notify(NULL, &acl_srv.attrs[1], &pdr_arr, sizeof(pdr_arr));
+}
+K_WORK_DEFINE(acl_work, acl_work_handler);
+
+void acl_timer_handler(struct k_timer *dummy)
+{
+    k_work_submit(&acl_work);
+}
+K_TIMER_DEFINE(acl_timer, acl_timer_handler, NULL);
+
+/* ------------------------------------------------------ */
+/* ISO */
 /* ------------------------------------------------------ */
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
 #define NAME_LEN            30
@@ -134,7 +238,8 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			printk("\n------------------------- LOST PACKET -------------------------\n");
 			packets_lost++; // Quick and Dirty hack - maybe account for multiple lost packets
 		}
-		printk("PDR: %.2f%%\n", (float)packets_recv * 100 / (packets_recv + packets_lost));
+		pdr = (float)packets_recv * 100 / (packets_recv + packets_lost);
+		printk("PDR: %.2f%%\n", pdr);
 		prev_seq_num = seq_num;
 
 		uint32_t info_ts = info->ts;
@@ -209,6 +314,11 @@ void main(void)
 		printk("Bluetooth init failed (err %d)\n", err);
 		return;
 	}
+
+	printk("Init ACL connection...");
+	init_acl();
+	bt_conn_auth_cb_register(&auth_cb_acl);
+	k_timer_start(&acl_timer, K_MSEC(100), K_MSEC(100));
 
 	printk("Scan callbacks register...");
 	bt_le_scan_cb_register(&scan_callbacks);
