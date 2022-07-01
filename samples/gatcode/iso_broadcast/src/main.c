@@ -147,8 +147,8 @@ void main(void)
 		return;
 	}
 
-	#define BT_LE_PER_ADV_CUSTOM BT_LE_PER_ADV_PARAM(BT_GAP_ADV_FAST_INT_MIN_2, \
-			BT_GAP_ADV_FAST_INT_MAX_2, \
+	#define BT_LE_PER_ADV_CUSTOM BT_LE_PER_ADV_PARAM(BT_GAP_PER_ADV_SLOW_INT_MIN, \
+			BT_GAP_PER_ADV_SLOW_INT_MAX, \
 			BT_LE_PER_ADV_OPT_USE_TX_POWER)
 
 	/* Set periodic advertising parameters */
