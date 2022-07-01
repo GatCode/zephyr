@@ -21,11 +21,18 @@ static struct io_coder io_encoder = {0};
 #define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
+#define LED_ON true
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static float pdr = 0.0;
+
+/* ------------------------------------------------------ */
+/* General */
+/* ------------------------------------------------------ */
+#define LED0_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -62,12 +69,18 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	if (err) {
 		printk("Connection failed (err 0x%02x)\n", err);
 	} else {
+		if (LED_ON) {
+			gpio_pin_set_dt(&led, 1);
+		}
 		printk("Connected\n");
 	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
+	if (LED_ON) {
+		gpio_pin_set_dt(&led, 0);
+	}
 	printk("Disconnected (reason 0x%02x)\n", reason);
 }
 
@@ -126,6 +139,7 @@ K_TIMER_DEFINE(acl_timer, acl_timer_handler, NULL);
 /* ------------------------------------------------------ */
 /* ISO */
 /* ------------------------------------------------------ */
+
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
 #define NAME_LEN            30
 
@@ -304,6 +318,15 @@ void main(void)
 	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
 	if(err) {
 		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
+	}
+
+	if (!device_is_ready(led.port)) {
+		printk("Error setting LED (err %d)\n", err);
+	}
+
+	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+	if (err < 0) {
+		printk("Error setting LED (err %d)\n", err);
 	}
 
 	printk("Starting Synchronized Receiver Demo\n");
