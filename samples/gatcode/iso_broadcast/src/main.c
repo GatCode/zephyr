@@ -30,7 +30,6 @@ static bool data_cb(struct bt_data *data, void *user_data)
 {
 	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
 		memcpy(user_data, data->data, ACL_DATA_LEN);
-		return false;
 	}
 	return true;
 }
@@ -47,7 +46,11 @@ static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type,
 		uint8_t d2 = acl_data[1] >> 4;
 		uint8_t d3 = acl_data[1] & d2;
 
-		pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
+		if (d0 == 0xF) {
+			pdr = 100.0;
+		} else {
+			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
+		}
 
 		printk("PDR: %.2f%%\n", pdr);
 	}

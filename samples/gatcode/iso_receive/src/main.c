@@ -29,6 +29,7 @@ static struct io_coder io_encoder = {0};
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static float pdr = 0.0;
+static uint16_t iso_interval = 0;
 
 /* ------------------------------------------------------ */
 /* ACL (beacon) */
@@ -84,6 +85,10 @@ void acl_update_handler(struct k_work *work)
 	for (uint8_t i = 4; i > 0; i--) {
 		pdr_splitted[i - 1] = integer_pdr % 10;
 		integer_pdr /= 10;
+	}
+
+	if (pdr == 100.0) {
+		pdr_splitted[0] = 0xF;
 	}
 
 	acl_data[0] = pdr_splitted[0] << 4 | pdr_splitted[1];
@@ -160,6 +165,7 @@ static void term_cb(struct bt_le_per_adv_sync *sync,
 static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 		       const struct bt_iso_biginfo *biginfo)
 {
+	iso_interval = biginfo->iso_interval;
 	k_sem_give(&sem_per_big_info);
 }
 
@@ -226,6 +232,13 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
 	}
 }
+
+void recv_pdr_handler(struct k_timer *dummy)
+{
+	packets_recv = 0;
+	packets_lost = 0;
+}
+K_TIMER_DEFINE(recv_pdr, recv_pdr_handler, NULL);
 
 static void iso_connected(struct bt_iso_chan *chan)
 {
@@ -402,6 +415,8 @@ big_sync_create:
 			goto per_sync_lost_check;
 		}
 		printk("BIG sync established.\n");
+
+		k_timer_start(&recv_pdr, K_SECONDS(1), K_SECONDS(1));
 
 		printk("Waiting for BIG sync lost...\n");
 		err = k_sem_take(&sem_big_sync_lost, K_FOREVER);
