@@ -52,6 +52,8 @@
 #include "common/log.h"
 #include "hal/debug.h"
 
+#define PDU_FREE_TIMEOUT K_SECONDS(5)
+
 static int init_reset(void);
 static void pdu_free_sem_give(void);
 
@@ -428,7 +430,7 @@ struct pdu_adv *lll_adv_pdu_alloc_pdu_adv(void)
 		return p;
 	}
 
-	err = k_sem_take(&sem_pdu_free, K_FOREVER);
+	err = k_sem_take(&sem_pdu_free, PDU_FREE_TIMEOUT);
 	LL_ASSERT(!err);
 
 	k_sem_reset(&sem_pdu_free);
@@ -846,7 +848,7 @@ static void *adv_extra_data_allocate(struct lll_adv_pdu *pdu, uint8_t last)
 		return extra_data;
 	}
 
-	err = k_sem_take(&sem_extra_data_free, K_FOREVER);
+	err = k_sem_take(&sem_extra_data_free, PDU_FREE_TIMEOUT);
 	LL_ASSERT(!err);
 
 	extra_data = MFIFO_DEQUEUE(extra_data_free);
@@ -1315,6 +1317,7 @@ static void isr_done(void *param)
 		if (lll_aux) {
 			(void)ull_adv_aux_lll_offset_fill(pdu,
 							  lll_aux->ticks_offset,
+							  lll_aux->us_offset,
 							  start_us);
 		}
 #else /* !CONFIG_BT_CTLR_ADV_EXT */
