@@ -16,9 +16,64 @@ static struct io_coder io_encoder = {0};
 #define TRANSPORT_LATENCY_MS 10 // 5ms-4s
 #define RETRANSMISSION_NUMBER 2
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
+#define ACL_DATA_LEN 4
 
 /* ------------------------------------------------------ */
-/* Start */
+/* Importatnt Globals */
+/* ------------------------------------------------------ */
+static float pdr = 0.0;
+
+/* ------------------------------------------------------ */
+/* ACL (beacon) */
+/* ------------------------------------------------------ */
+static bool data_cb(struct bt_data *data, void *user_data)
+{
+	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
+		memcpy(user_data, data->data, ACL_DATA_LEN);
+		return false;
+	}
+	return true;
+}
+
+static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type, struct net_buf_simple *buf)
+{
+	uint8_t acl_data[ACL_DATA_LEN];
+	(void)memset(acl_data, 0, sizeof(acl_data));
+	bt_data_parse(buf, data_cb, acl_data);
+
+	if (acl_data[0] != 0) { // received ACL data
+		uint8_t d0 = acl_data[0] >> 4;
+		uint8_t d1 = acl_data[0] & d0;
+		uint8_t d2 = acl_data[1] >> 4;
+		uint8_t d3 = acl_data[1] & d2;
+
+		pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
+
+		printk("PDR: %.2f%%\n", pdr);
+	}
+}
+
+void acl_scan_handler(struct k_work *work)
+{
+	int err;
+
+	struct bt_le_scan_param scan_param = {
+		.type       = BT_LE_SCAN_TYPE_ACTIVE,
+		.options    = BT_LE_SCAN_OPT_NONE,
+		.interval   = 0x0010,
+		.window     = 0x0010,
+	};
+
+	err = bt_le_scan_start(&scan_param, acl_scan_cb);
+	if (err) {
+		printk("Starting scanning failed (err %d)\n", err);
+		return;
+	}
+}
+K_WORK_DEFINE(acl_scan, acl_scan_handler);
+
+/* ------------------------------------------------------ */
+/* ISO */
 /* ------------------------------------------------------ */
 NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BROADCAST_ENQUEUE_COUNT * BIS_ISO_CHAN_COUNT,
 			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
@@ -70,7 +125,7 @@ static void iso_sent(struct bt_iso_chan *chan)
 		return;
 	}
 
-	k_work_submit(&gpio_work);
+	// k_work_submit(&gpio_work); // FIXME: ENABLE IF NEEDED
 }
 
 static struct bt_iso_chan_ops iso_ops = {
@@ -124,6 +179,9 @@ void main(void)
 		printk("Bluetooth init failed (err %d)\n", err);
 		return;
 	}
+
+	/* Initialize ACL Scanning */
+	k_work_submit(&acl_scan);
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER, \

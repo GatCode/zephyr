@@ -23,18 +23,12 @@ static struct io_coder io_encoder = {0};
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 #define LED_ON true
-#define ACL_UPDATE_FREQUENCY_MS 100
+#define ACL_UPDATE_FREQUENCY_MS 10
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static float pdr = 0.0;
-
-/* ------------------------------------------------------ */
-/* General */
-/* ------------------------------------------------------ */
-#define LED0_NODE DT_ALIAS(led0)
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
 /* ------------------------------------------------------ */
 /* ACL (beacon) */
@@ -188,7 +182,7 @@ K_WORK_DEFINE(gpio_work, gpio_work_handler);
 
 void recv_packet_handler(struct k_timer *dummy)
 {
-	k_work_submit(&gpio_work);
+	// k_work_submit(&gpio_work); // FIXME: ENABLE IF NEEDED
 }
 K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 
@@ -288,16 +282,6 @@ void main(void)
 	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
 	if(err) {
 		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
-	}
-
-	/* Initialize the LED */
-	if (!device_is_ready(led.port)) {
-		printk("Error setting LED (err %d)\n", err);
-	}
-
-	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
-	if (err < 0) {
-		printk("Error setting LED (err %d)\n", err);
 	}
 
 	/* Initialize the Bluetooth Subsystem */
