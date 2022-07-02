@@ -9,6 +9,7 @@
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
 #include <hal/nrf_rtc.h>
+#include <ble_hci_vsc.h>
 #include <io_coder.h>
 #include <sync_timer.h>
 
@@ -22,6 +23,7 @@ static struct io_coder io_encoder = {0};
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 #define LED_ON true
+#define ACL_UPDATE_FREQUENCY_MS 100
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -35,106 +37,73 @@ static float pdr = 0.0;
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
 /* ------------------------------------------------------ */
-/* ACL */
+/* ACL (beacon) */
 /* ------------------------------------------------------ */
-/* UUIDs - https://www.guidgenerator.com */
-#define BT_UUID_QUALITY_SERVICE BT_UUID_128_ENCODE(0x595d0001, 0xc3b2, 0x40a2, 0xab93, 0x28e30fa26298)
-#define BT_UUID_PDR_CHARACTERISTIC BT_UUID_128_ENCODE(0x2fe883b0, 0x4305, 0x42f8, 0x8efe, 0x51bafee55253)
-
-static void pdr_ccc_cfg_changed(const struct bt_gatt_attr *attr,
-				       uint16_t value)
-{
-	ARG_UNUSED(attr);
-	bool notif_enabled = (value == BT_GATT_CCC_NOTIFY);
-	printk("BAS Notifications %s", notif_enabled ? "enabled" : "disabled\n");
-}
-
-BT_GATT_SERVICE_DEFINE(acl_srv,
-	BT_GATT_PRIMARY_SERVICE(BT_UUID_DECLARE_128(BT_UUID_QUALITY_SERVICE)),
-	BT_GATT_CHARACTERISTIC(BT_UUID_DECLARE_128(BT_UUID_PDR_CHARACTERISTIC),
-			       BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, NULL, NULL, NULL),
-	BT_GATT_CCC(pdr_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-);
+static volatile uint8_t acl_data[] = { 0x00, 0x00, 0x00, 0x00 };
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL,
-		      BT_UUID_16_ENCODE(BT_UUID_HRS_VAL),
-		      BT_UUID_16_ENCODE(BT_UUID_BAS_VAL),
-		      BT_UUID_16_ENCODE(BT_UUID_DIS_VAL))
+	BT_DATA(BT_DATA_MANUFACTURER_DATA, acl_data, 4)
 };
 
-static void connected(struct bt_conn *conn, uint8_t err)
-{
-	if (err) {
-		printk("Connection failed (err 0x%02x)\n", err);
-	} else {
-		if (LED_ON) {
-			gpio_pin_set_dt(&led, 1);
-		}
-		printk("Connected\n");
-	}
-}
-
-static void disconnected(struct bt_conn *conn, uint8_t reason)
-{
-	if (LED_ON) {
-		gpio_pin_set_dt(&led, 0);
-	}
-	printk("Disconnected (reason 0x%02x)\n", reason);
-}
-
-BT_CONN_CB_DEFINE(conn_callbacks) = {
-	.connected = connected,
-	.disconnected = disconnected,
+static const struct bt_data sd[] = {
+	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1)
 };
 
-static void init_acl(void)
+void acl_work_handler(struct k_work *work)
 {
 	int err;
 
-	err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+	err = bt_le_adv_start(BT_LE_ADV_NCONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
 		printk("ACL advertising failed to start (err %d)\n", err);
 		return;
 	}
 
+	static struct ble_hci_vs_tx_pwr_setting tx_power_setting;
+	tx_power_setting.add_3dBm = true;
+	tx_power_setting.tx_power = 0;
+	err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
+	if (err) {
+		printk("Failed to set tx power (err %d)\n", err);
+		return;
+	}
+
 	printk("ACL advertising successfully started\n");
-}
-
-static void auth_cancel(struct bt_conn *conn)
-{
-	char addr[BT_ADDR_LE_STR_LEN];
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-	printk("Pairing cancelled: %s\n", addr);
-}
-
-static struct bt_conn_auth_cb auth_cb_acl = {
-	.cancel = auth_cancel,
-};
-
-void acl_work_handler(struct k_work *work)
-{
-	static uint8_t pdr_arr[5];
-	uint32_t mantissa;
-	uint8_t exponent;
-
-	mantissa = (uint32_t)(pdr * 100);
-	exponent = (uint8_t)-2;
-	
-	pdr_arr[0] = 0;
-	sys_put_le24(mantissa, (uint8_t *)&pdr_arr[1]);
-	pdr_arr[4] = exponent;
-
-	bt_gatt_notify(NULL, &acl_srv.attrs[1], &pdr_arr, sizeof(pdr_arr));
 }
 K_WORK_DEFINE(acl_work, acl_work_handler);
 
-void acl_timer_handler(struct k_timer *dummy)
+void acl_update_handler(struct k_work *work)
 {
-    k_work_submit(&acl_work);
+	uint16_t integer_pdr = pdr * 100.0;
+	uint8_t pdr_splitted[4] = {0, 0, 0, 0};
+	uint8_t acl_data_size = 4;
+
+	if (pdr < 10) {
+		acl_data_size = 3;
+	}
+
+	if (pdr == 0) {
+		acl_data_size = 2;
+	}
+
+	for (uint8_t i = 4; i > 0; i--) {
+		pdr_splitted[i - 1] = integer_pdr % 10;
+		integer_pdr /= 10;
+	}
+
+	acl_data[0] = pdr_splitted[0] << 4 | pdr_splitted[1];
+	acl_data[1] = pdr_splitted[2] << 4 | pdr_splitted[3];
+
+    bt_le_adv_update_data(ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 }
-K_TIMER_DEFINE(acl_timer, acl_timer_handler, NULL);
+K_WORK_DEFINE(acl_update, acl_update_handler);
+
+void acl_packet_handler(struct k_timer *dummy)
+{
+	k_work_submit(&acl_update);
+}
+K_TIMER_DEFINE(acl_packet, acl_packet_handler, NULL);
 
 /* ------------------------------------------------------ */
 /* ISO */
@@ -315,11 +284,13 @@ void main(void)
 	uint32_t sem_timeout;
 	int err;
 
+	/* Initialize the 8 bit GPIO encoder */
 	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
 	if(err) {
 		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
 	}
 
+	/* Initialize the LED */
 	if (!device_is_ready(led.port)) {
 		printk("Error setting LED (err %d)\n", err);
 	}
@@ -329,8 +300,6 @@ void main(void)
 		printk("Error setting LED (err %d)\n", err);
 	}
 
-	printk("Starting Synchronized Receiver Demo\n");
-
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
 	if (err) {
@@ -338,18 +307,15 @@ void main(void)
 		return;
 	}
 
-	printk("Init ACL connection...");
-	init_acl();
-	bt_conn_auth_cb_register(&auth_cb_acl);
-	k_timer_start(&acl_timer, K_MSEC(100), K_MSEC(100));
+	/* Initialize ACL */
+	printk("Init ACL...");
+	k_work_submit(&acl_work);
+	k_timer_start(&acl_packet, K_MSEC(ACL_UPDATE_FREQUENCY_MS), K_MSEC(ACL_UPDATE_FREQUENCY_MS));
 
-	printk("Scan callbacks register...");
+	/* Initialize ISO Receiption */
+	printk("Init ISO receiption...");
 	bt_le_scan_cb_register(&scan_callbacks);
-	printk("success.\n");
-
-	printk("Periodic Advertising callbacks register...");
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
-	printk("Success.\n");
 
 	do {
 		per_adv_lost = false;

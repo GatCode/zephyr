@@ -8,6 +8,7 @@ project(iso_receive)
 target_sources(app PRIVATE
     src/main.c
     src/sync_timer.c
+    src/ble_hci_vsc.c
     ../io_coder/src/io_coder.c
 )
 
