@@ -17,11 +17,13 @@ static struct io_coder io_encoder = {0};
 #define RETRANSMISSION_NUMBER 2
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
 #define ACL_DATA_LEN 4
+#define ACL_SCAN_INTERVAL 0x0050 // (N * 0.625 ms) - 50ms - sample 2x
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static float pdr = 0.0;
+static int8_t rssi = 0;
 
 /* ------------------------------------------------------ */
 /* ACL (beacon) */
@@ -35,7 +37,7 @@ static bool data_cb(struct bt_data *data, void *user_data)
 	return true;
 }
 
-static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type, struct net_buf_simple *buf)
+static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type, struct net_buf_simple *buf)
 {
 	uint8_t acl_data[ACL_DATA_LEN];
 	(void)memset(acl_data, 0, sizeof(acl_data));
@@ -53,7 +55,9 @@ static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type,
 			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
 		}
 
-		printk("PDR: %.2f%%\n", pdr);
+		rssi = rssi_;
+
+		printk("PDR: %.2f%% - RSSI: %d\n", pdr, rssi);
 	}
 }
 
@@ -64,8 +68,8 @@ void acl_scan_handler(struct k_work *work)
 	struct bt_le_scan_param scan_param = {
 		.type       = BT_LE_SCAN_TYPE_PASSIVE,
 		.options    = BT_LE_SCAN_OPT_NONE,
-		.interval   = 0x0008, // 5ms
-		.window     = 0x0008, // 5ms
+		.interval   = ACL_SCAN_INTERVAL,
+		.window     = ACL_SCAN_INTERVAL,
 	};
 
 	err = bt_le_scan_start(&scan_param, acl_scan_cb);
@@ -229,7 +233,7 @@ void main(void)
 	/* Set initial TX power */
 	static struct ble_hci_vs_tx_pwr_setting tx_power_setting;
 	tx_power_setting.add_3dBm = false;
-	tx_power_setting.tx_power = -20;
+	tx_power_setting.tx_power = -40;
 	err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);

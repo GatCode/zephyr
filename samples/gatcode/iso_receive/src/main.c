@@ -23,7 +23,9 @@ static struct io_coder io_encoder = {0};
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 #define LED_ON true
+#define ACL_ADV_INTERVAL 0x00A0 // 0x0020 to 0x4000 (N * 0.625ms) - 100ms
 #define ACL_UPDATE_FREQUENCY_MS 10
+#define PDR_UPDATE_FREQUENCY_MS 1000
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -49,7 +51,7 @@ void acl_work_handler(struct k_work *work)
 {
 	int err;
 
-	#define BT_LE_ADV_NCONN_CUSTOM BT_LE_ADV_PARAM(0, 0x0020, 0x0020, NULL)
+	#define BT_LE_ADV_NCONN_CUSTOM BT_LE_ADV_PARAM(0, ACL_ADV_INTERVAL, ACL_ADV_INTERVAL, NULL)
 
 	err = bt_le_adv_start(BT_LE_ADV_NCONN_CUSTOM, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
@@ -418,7 +420,7 @@ big_sync_create:
 		}
 		printk("BIG sync established.\n");
 
-		k_timer_start(&recv_pdr, K_SECONDS(1), K_SECONDS(1));
+		k_timer_start(&recv_pdr, K_MSEC(PDR_UPDATE_FREQUENCY_MS), K_MSEC(PDR_UPDATE_FREQUENCY_MS));
 
 		printk("Waiting for BIG sync lost...\n");
 		err = k_sem_take(&sem_big_sync_lost, K_FOREVER);
