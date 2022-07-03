@@ -16,18 +16,27 @@ static struct io_coder io_encoder = {0};
 #define TRANSPORT_LATENCY_MS 10 // 5ms-4s
 #define RETRANSMISSION_NUMBER 2
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
+#define STACKSIZE 1024
+#define ACL_PRIORITY 9
 #define ACL_DATA_LEN 4
 #define ACL_SCAN_INTERVAL 0x0050 // (N * 0.625 ms) - 50ms - sample 2x
+#define RANGE_PRIORITY 5
+#define RANGE_CALC_INTERVAL_MS 100
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static float pdr = 0.0;
 static int8_t rssi = 0;
+K_MUTEX_DEFINE(linkback_lock);
+static struct ble_hci_vs_tx_pwr_setting tx_power_setting;
 
 /* ------------------------------------------------------ */
 /* ACL (beacon) */
 /* ------------------------------------------------------ */
+K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
+static struct k_thread thread_acl_data;
+
 static bool data_cb(struct bt_data *data, void *user_data)
 {
 	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
@@ -49,20 +58,25 @@ static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type
 		uint8_t d2 = acl_data[1] >> 4;
 		uint8_t d3 = acl_data[1] & d2;
 
+		k_mutex_lock(&linkback_lock, K_FOREVER);
 		if (d0 == 0xF) {
 			pdr = 100.0;
 		} else {
 			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
 		}
-
 		rssi = rssi_;
+		k_mutex_unlock(&linkback_lock);
 
-		printk("PDR: %.2f%% - RSSI: %d\n", pdr, rssi);
+		// printk("PDR: %.2f%% - RSSI: %d\n", pdr, rssi);
 	}
 }
 
-void acl_scan_handler(struct k_work *work)
+void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 {
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
+
 	int err;
 
 	struct bt_le_scan_param scan_param = {
@@ -78,7 +92,42 @@ void acl_scan_handler(struct k_work *work)
 		return;
 	}
 }
-K_WORK_DEFINE(acl_scan, acl_scan_handler);
+
+/* ------------------------------------------------------ */
+/* Range Extension (Model) */
+/* ------------------------------------------------------ */
+K_THREAD_STACK_DEFINE(thread_range_stack_area, STACKSIZE);
+static struct k_thread thread_range_data;
+
+void range_thread(void *dummy1, void *dummy2, void *dummy3)
+{
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
+
+	while(1) {
+		k_mutex_lock(&linkback_lock, K_FOREVER);
+		printk("--- PDR: %.2f%% - RSSI: %d\n", pdr, rssi);
+		k_mutex_unlock(&linkback_lock);
+
+		tx_power_setting.tx_power = -40;
+
+		if (rssi < -50) {
+			tx_power_setting.add_3dBm = true;
+		} else {
+			tx_power_setting.add_3dBm = false;
+		}
+
+		
+		int err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
+		if (err) {
+			printk("Failed to set tx power (err %d)\n", err);
+			return;
+		}
+
+		k_sleep(K_MSEC(RANGE_CALC_INTERVAL_MS));
+	}
+}
 
 /* ------------------------------------------------------ */
 /* ISO */
@@ -189,7 +238,12 @@ void main(void)
 	}
 
 	/* Initialize ACL Scanning */
-	k_work_submit(&acl_scan);
+	k_thread_create(&thread_acl_data, thread_acl_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+			acl_thread, NULL, NULL, NULL,
+			ACL_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_acl_data, "acl_thread");
+	k_thread_start(&thread_acl_data);
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER, \
@@ -231,14 +285,21 @@ void main(void)
 	}
 
 	/* Set initial TX power */
-	static struct ble_hci_vs_tx_pwr_setting tx_power_setting;
-	tx_power_setting.add_3dBm = false;
-	tx_power_setting.tx_power = -40;
+	tx_power_setting.add_3dBm = true;
+	tx_power_setting.tx_power = 0;
 	err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
 	}
+
+	/* Initialize Range Extension */
+	k_thread_create(&thread_range_data, thread_range_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_range_stack_area),
+			range_thread, NULL, NULL, NULL,
+			RANGE_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_range_data, "range_thread");
+	k_thread_start(&thread_range_data);
 
 	/* Create BIG */
 	err = bt_iso_big_create(adv, &big_create_param, &big);
