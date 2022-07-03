@@ -49,7 +49,9 @@ void acl_work_handler(struct k_work *work)
 {
 	int err;
 
-	err = bt_le_adv_start(BT_LE_ADV_NCONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	#define BT_LE_ADV_NCONN_CUSTOM BT_LE_ADV_PARAM(0, 0x0020, 0x0020, NULL)
+
+	err = bt_le_adv_start(BT_LE_ADV_NCONN_CUSTOM, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
 		printk("ACL advertising failed to start (err %d)\n", err);
 		return;

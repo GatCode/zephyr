@@ -30,6 +30,7 @@ static bool data_cb(struct bt_data *data, void *user_data)
 {
 	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
 		memcpy(user_data, data->data, ACL_DATA_LEN);
+		return false;
 	}
 	return true;
 }
@@ -61,10 +62,10 @@ void acl_scan_handler(struct k_work *work)
 	int err;
 
 	struct bt_le_scan_param scan_param = {
-		.type       = BT_LE_SCAN_TYPE_ACTIVE,
+		.type       = BT_LE_SCAN_TYPE_PASSIVE,
 		.options    = BT_LE_SCAN_OPT_NONE,
-		.interval   = 0x0010,
-		.window     = 0x0010,
+		.interval   = 0x0008, // 5ms
+		.window     = 0x0008, // 5ms
 	};
 
 	err = bt_le_scan_start(&scan_param, acl_scan_cb);
@@ -227,8 +228,8 @@ void main(void)
 
 	/* Set initial TX power */
 	static struct ble_hci_vs_tx_pwr_setting tx_power_setting;
-	tx_power_setting.add_3dBm = true;
-	tx_power_setting.tx_power = 0;
+	tx_power_setting.add_3dBm = false;
+	tx_power_setting.tx_power = -20;
 	err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
