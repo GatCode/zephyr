@@ -225,7 +225,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			printk("\n------------------------- LOST PACKET -------------------------\n");
 			packets_lost++; // Quick and Dirty hack - maybe account for multiple lost packets
 		}
-		pdr = (float)packets_recv * 100 / (packets_recv + packets_lost);
 		printk("PDR: %.2f%%\n", pdr);
 		prev_seq_num = seq_num;
 
@@ -239,6 +238,11 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 void recv_pdr_handler(struct k_timer *dummy)
 {
+	uint32_t iso_ival_ms = iso_interval * 1.25;
+	uint32_t expected_packets = 1000 / iso_ival_ms;
+
+	pdr = (float)packets_recv * 100 / expected_packets;
+
 	packets_recv = 0;
 	packets_lost = 0;
 }

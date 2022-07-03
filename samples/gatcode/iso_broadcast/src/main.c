@@ -13,8 +13,7 @@ static struct io_coder io_encoder = {0};
 #define BIS_ISO_CHAN_COUNT 1
 #define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
-#define TRANSPORT_LATENCY_MS 10 // 5ms-4s
-#define RETRANSMISSION_NUMBER 2
+#define TRANSPORT_LATENCY_MS 20 // 5ms-4s
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
@@ -22,6 +21,9 @@ static struct io_coder io_encoder = {0};
 #define ACL_SCAN_INTERVAL 0x0050 // (N * 0.625 ms) - 50ms - sample 2x
 #define RANGE_PRIORITY 5
 #define RANGE_CALC_INTERVAL_MS 100
+#define WATCHDOG_INTERVAL_MS 1000
+
+#define MAX_RTN 10 // also default rtn
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -30,6 +32,7 @@ static float pdr = 0.0;
 static int8_t rssi = 0;
 K_MUTEX_DEFINE(linkback_lock);
 static struct ble_hci_vs_tx_pwr_setting tx_power_setting;
+uint32_t watchdog_timestamp = 0;
 
 /* ------------------------------------------------------ */
 /* ACL (beacon) */
@@ -67,7 +70,7 @@ static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type
 		rssi = rssi_;
 		k_mutex_unlock(&linkback_lock);
 
-		// printk("PDR: %.2f%% - RSSI: %d\n", pdr, rssi);
+		watchdog_timestamp = k_uptime_get_32();
 	}
 }
 
@@ -93,41 +96,17 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 	}
 }
 
-/* ------------------------------------------------------ */
-/* Range Extension (Model) */
-/* ------------------------------------------------------ */
-K_THREAD_STACK_DEFINE(thread_range_stack_area, STACKSIZE);
-static struct k_thread thread_range_data;
-
-void range_thread(void *dummy1, void *dummy2, void *dummy3)
+void pdr_watchdog_handler(struct k_timer *dummy)
 {
-	ARG_UNUSED(dummy1);
-	ARG_UNUSED(dummy2);
-	ARG_UNUSED(dummy3);
-
-	while(1) {
+	uint32_t curr_ts = k_uptime_get_32();
+	if(curr_ts - watchdog_timestamp > 1000) {
 		k_mutex_lock(&linkback_lock, K_FOREVER);
-		printk("--- PDR: %.2f%% - RSSI: %d\n", pdr, rssi);
+		pdr = 0.0;
+		rssi = 0;
 		k_mutex_unlock(&linkback_lock);
-
-		tx_power_setting.tx_power = -40;
-
-		if (rssi < -50) {
-			tx_power_setting.add_3dBm = true;
-		} else {
-			tx_power_setting.add_3dBm = false;
-		}
-
-		
-		int err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
-		if (err) {
-			printk("Failed to set tx power (err %d)\n", err);
-			return;
-		}
-
-		k_sleep(K_MSEC(RANGE_CALC_INTERVAL_MS));
 	}
 }
+K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
 /* ------------------------------------------------------ */
 /* ISO */
@@ -193,7 +172,7 @@ static struct bt_iso_chan_ops iso_ops = {
 
 static struct bt_iso_chan_io_qos iso_tx_qos = {
 	.sdu = DATA_SIZE_BYTE, /* bytes */
-	.rtn = RETRANSMISSION_NUMBER,
+	.rtn = MAX_RTN,
 	.phy = BT_GAP_LE_PHY_2M,
 };
 
@@ -216,6 +195,52 @@ static struct bt_iso_big_create_param big_create_param = {
 	.packing = BT_ISO_PACKING_SEQUENTIAL, /* 0 - sequential, 1 - interleaved */
 	.framing = BT_ISO_FRAMING_UNFRAMED, /* 0 - unframed, 1 - framed */
 };
+
+/* ------------------------------------------------------ */
+/* Range Extension (Model) */
+/* ------------------------------------------------------ */
+K_THREAD_STACK_DEFINE(thread_range_stack_area, STACKSIZE);
+static struct k_thread thread_range_data;
+
+void range_thread(void *dummy1, void *dummy2, void *dummy3)
+{
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
+
+	while(1) {
+		k_mutex_lock(&linkback_lock, K_FOREVER);
+
+		if (rssi > -20) {
+			// tx_power_setting.add_3dBm = true;
+			bis[0]->qos->tx->rtn = 2;
+		} else if (rssi > -30) {
+			// tx_power_setting.add_3dBm = true;
+			bis[0]->qos->tx->rtn = 4;
+		} else if (rssi > -40) {
+			// tx_power_setting.add_3dBm = true;
+			bis[0]->qos->tx->rtn = 6;
+		} else if (rssi > -50) {
+			// tx_power_setting.add_3dBm = true;
+			bis[0]->qos->tx->rtn = 8;
+		} else {
+			bis[0]->qos->tx->rtn = 10;
+			// tx_power_setting.add_3dBm = false;
+		}
+
+		printk("PDR: %.2f%% - RSSI: %d - RTN: %u\n", pdr, rssi, bis[0]->qos->tx->rtn);
+
+		k_mutex_unlock(&linkback_lock);
+		
+		// int err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
+		// if (err) {
+		// 	printk("Failed to set tx power (err %d)\n", err);
+		// 	return;
+		// }
+
+		k_sleep(K_MSEC(RANGE_CALC_INTERVAL_MS));
+	}
+}
 
 void main(void)
 {
@@ -251,6 +276,8 @@ void main(void)
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
 
+	k_timer_start(&pdr_watchdog, K_MSEC(WATCHDOG_INTERVAL_MS), K_MSEC(WATCHDOG_INTERVAL_MS));
+
 	/* Create a non-connectable non-scannable advertising set */
 	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CUSTOM, NULL, &adv);
 	if (err) {
@@ -285,8 +312,8 @@ void main(void)
 	}
 
 	/* Set initial TX power */
-	tx_power_setting.add_3dBm = true;
-	tx_power_setting.tx_power = 0;
+	tx_power_setting.add_3dBm = false;
+	tx_power_setting.tx_power = -40;
 	err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
