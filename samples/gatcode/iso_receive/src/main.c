@@ -59,10 +59,7 @@ void acl_work_handler(struct k_work *work)
 		return;
 	}
 
-	static struct ble_hci_vs_tx_pwr_setting tx_power_setting;
-	tx_power_setting.add_3dBm = true;
-	tx_power_setting.tx_power = 0;
-	err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
+	err = ble_hci_vsc_set_tx_pwr(13); // maximum tx power
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;

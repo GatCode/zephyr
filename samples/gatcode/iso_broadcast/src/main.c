@@ -24,6 +24,9 @@ static struct io_coder io_encoder = {0};
 #define WATCHDOG_INTERVAL_MS 1000
 
 #define MAX_RTN 10 // also default rtn
+#define MAX_TXP 13 // also default tx power (+3dBm)
+
+#define ENABLE_RANGE_EXTENSION_ALGORITHM true
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -31,7 +34,7 @@ static struct io_coder io_encoder = {0};
 static float pdr = 0.0;
 static int8_t rssi = 0;
 K_MUTEX_DEFINE(linkback_lock);
-static struct ble_hci_vs_tx_pwr_setting tx_power_setting;
+uint8_t tx_pwr_setting = 0;
 uint32_t watchdog_timestamp = 0;
 
 /* ------------------------------------------------------ */
@@ -102,7 +105,7 @@ void pdr_watchdog_handler(struct k_timer *dummy)
 	if(curr_ts - watchdog_timestamp > 1000) {
 		k_mutex_lock(&linkback_lock, K_FOREVER);
 		pdr = 0.0;
-		rssi = 0;
+		rssi = -127;
 		k_mutex_unlock(&linkback_lock);
 	}
 }
@@ -209,34 +212,39 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 	ARG_UNUSED(dummy3);
 
 	while(1) {
-		k_mutex_lock(&linkback_lock, K_FOREVER);
+		if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
+			uint8_t new_tx_pwr_setting = 0;
 
-		if (rssi > -20) {
-			// tx_power_setting.add_3dBm = true;
-			bis[0]->qos->tx->rtn = 2;
-		} else if (rssi > -30) {
-			// tx_power_setting.add_3dBm = true;
-			bis[0]->qos->tx->rtn = 4;
-		} else if (rssi > -40) {
-			// tx_power_setting.add_3dBm = true;
-			bis[0]->qos->tx->rtn = 6;
-		} else if (rssi > -50) {
-			// tx_power_setting.add_3dBm = true;
-			bis[0]->qos->tx->rtn = 8;
-		} else {
-			bis[0]->qos->tx->rtn = 10;
-			// tx_power_setting.add_3dBm = false;
+			if (rssi > -20) {
+				new_tx_pwr_setting = 0;
+				bis[0]->qos->tx->rtn = 2;
+			} else if (rssi > -30) {
+				new_tx_pwr_setting = 8;
+				bis[0]->qos->tx->rtn = 4;
+			} else if (rssi > -40) {
+				new_tx_pwr_setting = 12;
+				bis[0]->qos->tx->rtn = 6;
+			} else if (rssi > -50) {
+				new_tx_pwr_setting = 13;
+				bis[0]->qos->tx->rtn = 8;
+			} else {
+				new_tx_pwr_setting = 13;
+				bis[0]->qos->tx->rtn = 10;
+			}
+
+			if(tx_pwr_setting != new_tx_pwr_setting) {
+				uint8_t err = ble_hci_vsc_set_tx_pwr(new_tx_pwr_setting);
+				if (err) {
+					printk("Failed to set tx power (err %d)\n", err);
+					return;
+				}
+				tx_pwr_setting = new_tx_pwr_setting;
+			}
 		}
-
-		printk("PDR: %.2f%% - RSSI: %d - RTN: %u\n", pdr, rssi, bis[0]->qos->tx->rtn);
-
-		k_mutex_unlock(&linkback_lock);
 		
-		// int err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
-		// if (err) {
-		// 	printk("Failed to set tx power (err %d)\n", err);
-		// 	return;
-		// }
+		k_mutex_lock(&linkback_lock, K_FOREVER);
+		printk("PDR: %.2f%% - RSSI: %d - RTN: %u\n", pdr, rssi, bis[0]->qos->tx->rtn);
+		k_mutex_unlock(&linkback_lock);
 
 		k_sleep(K_MSEC(RANGE_CALC_INTERVAL_MS));
 	}
@@ -312,9 +320,8 @@ void main(void)
 	}
 
 	/* Set initial TX power */
-	tx_power_setting.add_3dBm = false;
-	tx_power_setting.tx_power = -40;
-	err = ble_hci_vsc_set_tx_pwr(tx_power_setting);
+	init_ble_hci_vsc_tx_pwr();
+	err = ble_hci_vsc_set_tx_pwr(MAX_TXP);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
@@ -322,9 +329,9 @@ void main(void)
 
 	/* Initialize Range Extension */
 	k_thread_create(&thread_range_data, thread_range_stack_area,
-			K_THREAD_STACK_SIZEOF(thread_range_stack_area),
-			range_thread, NULL, NULL, NULL,
-			RANGE_PRIORITY, 0, K_FOREVER);
+		K_THREAD_STACK_SIZEOF(thread_range_stack_area),
+		range_thread, NULL, NULL, NULL,
+		RANGE_PRIORITY, 0, K_FOREVER);
 	k_thread_name_set(&thread_range_data, "range_thread");
 	k_thread_start(&thread_range_data);
 

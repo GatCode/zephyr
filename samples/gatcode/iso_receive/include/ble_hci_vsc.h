@@ -67,6 +67,11 @@ enum ble_hci_vs_led_function_mode {
 };
 
 /**
+ * @brief Initializes the available_vs_tx_pwr_settings options.
+ */
+void init_ble_hci_vsc_tx_pwr();
+
+/**
  * @brief Enable VREGRADIO.VREQH in NET core for getting +3dBm TX power
  *        Note, this will add +3 dBm for the primary advertisement channels
  *        as well even ble_hci_vsc_set_pri_ext_adv_max_tx_pwr() has been used
@@ -99,14 +104,10 @@ int ble_hci_vsc_set_pri_ext_adv_max_tx_pwr(enum ble_hci_vs_tx_power tx_power);
 
 /**
  * @brief Set the maximum transmit power
- * @param tx_power_setting 	TX power setting - add_3dBm will add additional 3dBm
- * 							on top of the tx power value set by tx_power inside
- * 							the tx_power_setting parameter. Please respect the
- * 							supported power settings in ble_hci_vs_tx_power.
- *                 			Please check ble_hci_vs_tx_pwr_setting for possible settings.
+ * @param pwr_setting_index 	TX power setting index - see available_vs_tx_pwr_settings.
  *
  * @return 0 for success, error otherwise.
  */
-int ble_hci_vsc_set_tx_pwr(struct ble_hci_vs_tx_pwr_setting tx_power_setting);
+int ble_hci_vsc_set_tx_pwr(uint8_t pwr_setting_index);
 
 #endif /* _BLE_HCI_VSC_H_ */
