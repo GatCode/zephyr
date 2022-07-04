@@ -197,20 +197,23 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		seq_num = sys_get_le32(count_arr);
 		printk(" | Packet ID: %u ", seq_num);
 
-		// struct bt_iso_info iso_chan_info;
-		// bt_iso_chan_get_info(chan, &iso_chan_info);
+		struct bt_iso_info iso_chan_info;
+		bt_iso_chan_get_info(chan, &iso_chan_info);
 
 		packets_recv++;
 		if(prev_seq_num + 1 != seq_num) {
 			printk("\n------------------------- LOST PACKET -------------------------\n");
 			packets_lost++; // Quick and Dirty hack - maybe account for multiple lost packets
 		}
-		printk("PDR: %.2f%% - NSE: %u\n", (float)packets_recv * 100 / (packets_recv + packets_lost), nse);
+		// printk("PDR: %.2f%% - NSE: %u\n", (float)packets_recv * 100 / (packets_recv + packets_lost), nse);
 		prev_seq_num = seq_num;
 
 		uint32_t info_ts = info->ts;
 		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
-		uint32_t delta = curr - info_ts + (16 * 1198) - (nse * 1198);
+		uint32_t delta = curr - info_ts + (18 * 1198) - (2 * iso_chan_info.sync_receiver.irc * 1198);
+
+		printk("PDR: %.2f%% - NSE: %u - delta: %u\n", (float)packets_recv * 100 / (packets_recv + packets_lost), nse, (18 * 1198) - (2 * iso_chan_info.sync_receiver.irc * 1198));
+
 		
 		k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
 	}
