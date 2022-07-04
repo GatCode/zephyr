@@ -45,6 +45,7 @@ static bool         per_adv_lost;
 static bt_addr_le_t per_addr;
 static uint8_t      per_sid;
 static uint16_t     per_interval_ms;
+static uint16_t		nse;
 
 static bool         big_info_printed;
 static bool         big_info_printed_reset;
@@ -148,6 +149,7 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 	       biginfo->framing ? "with" : "without",
 	       biginfo->encryption ? "" : "not ");
 
+	nse = biginfo->sub_evt_count;
 	k_sem_give(&sem_per_big_info);
 }
 
@@ -203,12 +205,12 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			printk("\n------------------------- LOST PACKET -------------------------\n");
 			packets_lost++; // Quick and Dirty hack - maybe account for multiple lost packets
 		}
-		printk("PDR: %.2f%%\n", (float)packets_recv * 100 / (packets_recv + packets_lost));
+		printk("PDR: %.2f%% - NSE: %u\n", (float)packets_recv * 100 / (packets_recv + packets_lost), nse);
 		prev_seq_num = seq_num;
 
 		uint32_t info_ts = info->ts;
 		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
-		uint32_t delta = curr - info_ts;
+		uint32_t delta = curr - info_ts + nse * 1198;
 		
 		k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
 	}
