@@ -210,7 +210,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 		uint32_t info_ts = info->ts;
 		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
-		uint32_t delta = curr - info_ts + nse * 1198;
+		uint32_t delta = curr - info_ts + (16 * 1198) - (nse * 1198);
 		
 		k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
 	}
