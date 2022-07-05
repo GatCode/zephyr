@@ -1,24 +1,33 @@
-#include <zephyr/device.h>
-#include <zephyr/devicetree.h>
-#include <zephyr/drivers/gpio.h>
+// #include <zephyr/device.h>
+// #include <zephyr/devicetree.h>
+// #include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/hci.h>
-#include <zephyr/bluetooth/uuid.h>
+// #include <zephyr/bluetooth/hci.h>
+// #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
-#include <zephyr/bluetooth/conn.h>
+// #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
-#include <hal/nrf_rtc.h>
+// #include <hal/nrf_rtc.h>
 #include <nrfx_clock.h>
-#include <ble_hci_vsc.h>
-#include <io_coder.h>
-#include <sync_timer.h>
+// #include <ble_hci_vsc.h>
+// #include <io_coder.h>
+// #include <sync_timer.h>
 #include <stdlib.h>
 
-static struct io_coder io_encoder = {0};
 
-#define LED0_NODE DT_ALIAS(led0)
- static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+// #include <stdbool.h>
+// #include <string.h>
+// #include <zephyr/sys/util.h>
+// #include <zephyr/net/buf.h>
+// #include <zephyr/bluetooth/gap.h>
+// #include <zephyr/bluetooth/addr.h>
+// #include <zephyr/bluetooth/crypto.h>
+
+// static struct io_coder io_encoder = {0};
+
+// #define LED0_NODE DT_ALIAS(led0)
+//  static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
 /* ------------------------------------------------------ */
 /* Defines */
@@ -28,8 +37,6 @@ static struct io_coder io_encoder = {0};
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 #define FIFO_SIZE 100
-#define STACKSIZE 1024
-#define ACL_PRIORITY 9
 #define LED_ON true
 
 /* ------------------------------------------------------ */
@@ -41,9 +48,6 @@ static uint16_t iso_interval = 0;
 /* ------------------------------------------------------ */
 /* ACL */
 /* ------------------------------------------------------ */
-K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
-static struct k_thread thread_acl_data;
-
 static struct bt_gatt_indicate_params acl_ind_params;
 static uint8_t simulate_htm;
 static uint8_t indicating;
@@ -109,18 +113,18 @@ static void acl_connected(struct bt_conn *conn, uint8_t err)
 		printk("ACL Connection failed (err 0x%02x)\n", err);
 	} else {
 		printk("ACL Connected\n");
-		if (LED_ON) {
- 			gpio_pin_set_dt(&led, 1);
- 		}
+		// if (LED_ON) {
+ 		// 	gpio_pin_set_dt(&led, 1);
+ 		// }
 	}
 }
 
 static void acl_disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("ACL Disconnected (reason 0x%02x)\n", reason);
-	if (LED_ON) {
-		gpio_pin_set_dt(&led, 0);
-	}
+	// if (LED_ON) {
+	// 	gpio_pin_set_dt(&led, 0);
+	// }
 }
 
 BT_CONN_CB_DEFINE(acl_conn_callbacks) = {
@@ -138,21 +142,6 @@ static void auth_cancel_acl(struct bt_conn *conn)
 static struct bt_conn_auth_cb auth_cb_acl = {
 	.cancel = auth_cancel_acl,
 };
-
-void acl_thread(void *dummy1, void *dummy2, void *dummy3)
-{
-	ARG_UNUSED(dummy1);
-	ARG_UNUSED(dummy2);
-	ARG_UNUSED(dummy3);
-
-	int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
-	if (err) {
-		printk("Advertising failed to start (err %d)\n", err);
-		return;
-	}
-
-	bt_conn_auth_cb_register(&auth_cb_acl);
-}
 
 /* ------------------------------------------------------ */
 /* ISO */
@@ -226,20 +215,20 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
 
-void gpio_work_handler(struct k_work *work)
-{
-    int err = write_8_bit(&io_encoder, seq_num % 256);
-	if(err) {
-		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-	}
-}
-K_WORK_DEFINE(gpio_work, gpio_work_handler);
+// void gpio_work_handler(struct k_work *work)
+// {
+//     int err = write_8_bit(&io_encoder, seq_num % 256);
+// 	if(err) {
+// 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+// 	}
+// }
+// K_WORK_DEFINE(gpio_work, gpio_work_handler);
 
-void recv_packet_handler(struct k_timer *dummy)
-{
-	k_work_submit(&gpio_work);
-}
-K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
+// void recv_packet_handler(struct k_timer *dummy)
+// {
+// 	k_work_submit(&gpio_work);
+// }
+// K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 
 static bool pdr_timer_started = false;
 static bool received_packet = true;
@@ -265,7 +254,7 @@ float RollingmAvg(uint8_t newValue)
         }
                 
         //return the average
-        return (float)maverage_current_sum / (float)maverage_sample_length;
+        return (float)maverage_current_sum * 100.0 / (float)maverage_sample_length;
 }
 
 void recv_pdr_handler(struct k_timer *dummy)
@@ -278,6 +267,7 @@ void recv_pdr_handler(struct k_timer *dummy)
 
 	pdr = RollingmAvg(value);
 
+	// pdr_indicate();
 	k_work_submit(&acl_work_indicate);
 
 	received_packet = false; // reset
@@ -394,21 +384,21 @@ void main(void)
 	uint32_t sem_timeout;
 	int err;
 
-	/* Initialize the 8 bit GPIO encoder */
-	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
-	if(err) {
-		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
-	}
+	// /* Initialize the 8 bit GPIO encoder */
+	// err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
+	// if(err) {
+	// 	printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
+	// }
 
-	/* Initialize the LED */
-	if (!device_is_ready(led.port)) {
- 		printk("Error setting LED (err %d)\n", err);
- 	}
+	// /* Initialize the LED */
+	// if (!device_is_ready(led.port)) {
+ 	// 	printk("Error setting LED (err %d)\n", err);
+ 	// }
 
- 	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
- 	if (err < 0) {
- 		printk("Error setting LED (err %d)\n", err);
- 	}
+ 	// err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+ 	// if (err < 0) {
+ 	// 	printk("Error setting LED (err %d)\n", err);
+ 	// }
 
 	/* Initialize NRFX Clock */
 	err = hfclock_config_and_start();
@@ -425,12 +415,12 @@ void main(void)
 	}
 
 	/* Start ACL */
-	k_thread_create(&thread_acl_data, thread_acl_stack_area,
-			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
-			acl_thread, NULL, NULL, NULL,
-			ACL_PRIORITY, 0, K_FOREVER);
-	k_thread_name_set(&thread_acl_data, "acl_thread");
-	k_thread_start(&thread_acl_data);
+	err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err) {
+		printk("Advertising failed to start (err %d)\n", err);
+		return;
+	}
+	bt_conn_auth_cb_register(&auth_cb_acl);
 
 	/* Start ISO */
 	printk("Init ISO receiption...");
