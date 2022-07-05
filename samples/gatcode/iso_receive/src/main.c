@@ -9,6 +9,7 @@
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
 #include <hal/nrf_rtc.h>
+#include <nrfx_clock.h>
 #include <ble_hci_vsc.h>
 #include <io_coder.h>
 #include <sync_timer.h>
@@ -29,7 +30,6 @@ static struct io_coder io_encoder = {0};
 #define FIFO_SIZE 100
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
-#define ISO_PRIORITY 10
 #define LED_ON true
 
 /* ------------------------------------------------------ */
@@ -160,7 +160,7 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
 #define NAME_LEN            30
 
-#define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_ACTIVE, \
+#define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, \
 					   BT_LE_SCAN_OPT_NONE, \
 					   BT_GAP_SCAN_FAST_INTERVAL, \
 					   BT_GAP_SCAN_FAST_WINDOW)
@@ -180,9 +180,6 @@ static K_SEM_DEFINE(sem_per_big_info, 0, 1);
 static K_SEM_DEFINE(sem_big_sync, 0, 1);
 static K_SEM_DEFINE(sem_big_sync_lost, 0, 1);
 
-K_THREAD_STACK_DEFINE(thread_iso_stack_area, STACKSIZE);
-static struct k_thread thread_iso_data;
-
 static void scan_recv(const struct bt_le_scan_recv_info *info,
 		      struct net_buf_simple *buf)
 {
@@ -192,7 +189,6 @@ static void scan_recv(const struct bt_le_scan_recv_info *info,
 		per_sid = info->sid;
 		per_interval_ms = BT_CONN_INTERVAL_TO_MS(info->interval);
 		bt_addr_le_copy(&per_addr, info->addr);
-
 		k_sem_give(&sem_per_adv);
 	}
 }
@@ -368,18 +364,75 @@ static struct bt_iso_big_sync_param big_sync_param = {
 	.sync_timeout = BT_ISO_SYNC_TIMEOUT_MAX, /* in 10 ms units */
 };
 
-void iso_thread(void *dummy1, void *dummy2, void *dummy3)
+/* ------------------------------------------------------ */
+/* NRFX Clock */
+/* ------------------------------------------------------ */
+static int hfclock_config_and_start(void)
 {
-	ARG_UNUSED(dummy1);
-	ARG_UNUSED(dummy2);
-	ARG_UNUSED(dummy3);
+	int ret;
 
+	/* Use this to turn on 128 MHz clock for cpu_app */
+	ret = nrfx_clock_divider_set(NRF_CLOCK_DOMAIN_HFCLK, NRF_CLOCK_HFCLK_DIV_1);
+
+	ret -= NRFX_ERROR_BASE_NUM;
+	if (ret) {
+		return ret;
+	}
+
+	nrfx_clock_hfclk_start();
+	while (!nrfx_clock_hfclk_is_running()) {
+	}
+
+	return 0;
+}
+
+void main(void)
+{
 	struct bt_le_per_adv_sync_param sync_create_param;
 	struct bt_le_per_adv_sync *sync;
 	struct bt_iso_big *big;
 	uint32_t sem_timeout;
 	int err;
 
+	/* Initialize the 8 bit GPIO encoder */
+	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
+	if(err) {
+		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
+	}
+
+	/* Initialize the LED */
+	if (!device_is_ready(led.port)) {
+ 		printk("Error setting LED (err %d)\n", err);
+ 	}
+
+ 	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+ 	if (err < 0) {
+ 		printk("Error setting LED (err %d)\n", err);
+ 	}
+
+	/* Initialize NRFX Clock */
+	err = hfclock_config_and_start();
+	if (err) {
+		printk("NRFX Clock init failed (err %d)\n", err);
+		return;
+	}
+
+	/* Initialize the Bluetooth Subsystem */
+	err = bt_enable(NULL);
+	if (err) {
+		printk("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+
+	/* Start ACL */
+	k_thread_create(&thread_acl_data, thread_acl_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+			acl_thread, NULL, NULL, NULL,
+			ACL_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_acl_data, "acl_thread");
+	k_thread_start(&thread_acl_data);
+
+	/* Start ISO */
 	printk("Init ISO receiption...");
 	bt_le_scan_cb_register(&scan_callbacks);
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
@@ -503,48 +556,4 @@ per_sync_lost_check:
 		}
 		printk("Periodic sync lost.\n");
 	} while (true);
-}
-
-void main(void)
-{
-	int err;
-
-	/* Initialize the 8 bit GPIO encoder */
-	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
-	if(err) {
-		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
-	}
-
-	/* Initialize the LED */
-	if (!device_is_ready(led.port)) {
- 		printk("Error setting LED (err %d)\n", err);
- 	}
-
- 	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
- 	if (err < 0) {
- 		printk("Error setting LED (err %d)\n", err);
- 	}
-
-	/* Initialize the Bluetooth Subsystem */
-	err = bt_enable(NULL);
-	if (err) {
-		printk("Bluetooth init failed (err %d)\n", err);
-		return;
-	}
-
-	/* Start ACL Thread */
-	k_thread_create(&thread_acl_data, thread_acl_stack_area,
-			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
-			acl_thread, NULL, NULL, NULL,
-			ACL_PRIORITY, 0, K_FOREVER);
-	k_thread_name_set(&thread_acl_data, "acl_thread");
-	k_thread_start(&thread_acl_data);
-
-	/* Start ISO Thread */
-	k_thread_create(&thread_iso_data, thread_iso_stack_area,
-			K_THREAD_STACK_SIZEOF(thread_iso_stack_area),
-			iso_thread, NULL, NULL, NULL,
-			ISO_PRIORITY, 0, K_FOREVER);
-	k_thread_name_set(&thread_iso_data, "iso_thread");
-	k_thread_start(&thread_iso_data);
 }
