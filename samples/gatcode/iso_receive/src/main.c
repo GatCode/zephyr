@@ -12,8 +12,12 @@
 #include <ble_hci_vsc.h>
 #include <io_coder.h>
 #include <sync_timer.h>
+#include <stdlib.h>
 
 static struct io_coder io_encoder = {0};
+
+#define LED0_NODE DT_ALIAS(led0)
+ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
 /* ------------------------------------------------------ */
 /* Defines */
@@ -22,10 +26,10 @@ static struct io_coder io_encoder = {0};
 #define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
+#define STACKSIZE 1024
+#define ACL_PRIORITY 9
+#define ISO_PRIORITY 10
 #define LED_ON true
-#define ACL_ADV_INTERVAL 0x00A0 // 0x0020 to 0x4000 (N * 0.625ms) - 100ms
-#define ACL_UPDATE_FREQUENCY_MS 10
-#define PDR_UPDATE_FREQUENCY_MS 1000
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -34,81 +38,124 @@ static float pdr = 0.0;
 static uint16_t iso_interval = 0;
 
 /* ------------------------------------------------------ */
-/* ACL (beacon) */
+/* ACL */
 /* ------------------------------------------------------ */
-static volatile uint8_t acl_data[] = { 0x00, 0x00, 0x00, 0x00 };
+K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
+static struct k_thread thread_acl_data;
+
+static struct bt_gatt_indicate_params acl_ind_params;
+static uint8_t simulate_htm;
+static uint8_t indicating;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA(BT_DATA_MANUFACTURER_DATA, acl_data, 4)
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_HTS_VAL)),
 };
 
-static const struct bt_data sd[] = {
-	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME, sizeof(CONFIG_BT_DEVICE_NAME) - 1)
-};
-
-void acl_work_handler(struct k_work *work)
+static void htmc_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
-	int err;
+	simulate_htm = (value == BT_GATT_CCC_INDICATE) ? 1 : 0;
+}
 
-	#define BT_LE_ADV_NCONN_CUSTOM BT_LE_ADV_PARAM(0, ACL_ADV_INTERVAL, ACL_ADV_INTERVAL, NULL)
+BT_GATT_SERVICE_DEFINE(pdr_svc,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_HTS),
+	BT_GATT_CHARACTERISTIC(BT_UUID_HTS_MEASUREMENT, BT_GATT_CHRC_INDICATE, BT_GATT_PERM_NONE, NULL, NULL, NULL),
+	BT_GATT_CCC(htmc_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+);
 
-	err = bt_le_adv_start(BT_LE_ADV_NCONN_CUSTOM, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+static void indicate_cb(struct bt_conn *conn,
+			struct bt_gatt_indicate_params *params, uint8_t err)
+{
+	printk("PDR Indication %s\n", err != 0U ? "fail" : "success");
+}
+
+static void indicate_destroy(struct bt_gatt_indicate_params *params)
+{
+	printk("PDR Indication complete\n");
+	indicating = 0U;
+}
+
+static void pdr_indicate()
+{
+	uint32_t mantissa = (uint32_t)(pdr * 100);
+	uint8_t exponent = (uint8_t)-2;
+	static uint8_t data[5];
+
+	data[0] = 0;
+	sys_put_le24(mantissa, (uint8_t *)&data[1]);
+	data[4] = exponent;
+
+	acl_ind_params.attr = &pdr_svc.attrs[2];
+	acl_ind_params.func = indicate_cb;
+	acl_ind_params.destroy = indicate_destroy;
+	acl_ind_params.data = &data;
+	acl_ind_params.len = sizeof(data);
+
+	if (bt_gatt_indicate(NULL, &acl_ind_params) == 0) {
+		indicating = 1U;
+	}
+}
+
+void acl_indicate_work_handler(struct k_work *work)
+{
+	pdr_indicate();
+}
+K_WORK_DEFINE(acl_work_indicate, acl_indicate_work_handler);
+
+static void acl_connected(struct bt_conn *conn, uint8_t err)
+{
 	if (err) {
-		printk("ACL advertising failed to start (err %d)\n", err);
+		printk("ACL Connection failed (err 0x%02x)\n", err);
+	} else {
+		printk("ACL Connected\n");
+		if (LED_ON) {
+ 			gpio_pin_set_dt(&led, 1);
+ 		}
+	}
+}
+
+static void acl_disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	printk("ACL Disconnected (reason 0x%02x)\n", reason);
+	if (LED_ON) {
+		gpio_pin_set_dt(&led, 0);
+	}
+}
+
+BT_CONN_CB_DEFINE(acl_conn_callbacks) = {
+	.connected = acl_connected,
+	.disconnected = acl_disconnected,
+};
+
+static void auth_cancel_acl(struct bt_conn *conn)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	printk("Pairing cancelled: %s\n", addr);
+}
+
+static struct bt_conn_auth_cb auth_cb_acl = {
+	.cancel = auth_cancel_acl,
+};
+
+void acl_thread(void *dummy1, void *dummy2, void *dummy3)
+{
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
+
+	int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err) {
+		printk("Advertising failed to start (err %d)\n", err);
 		return;
 	}
 
-	err = ble_hci_vsc_set_tx_pwr(13); // maximum tx power
-	if (err) {
-		printk("Failed to set tx power (err %d)\n", err);
-		return;
-	}
-
-	printk("ACL advertising successfully started\n");
+	bt_conn_auth_cb_register(&auth_cb_acl);
 }
-K_WORK_DEFINE(acl_work, acl_work_handler);
-
-void acl_update_handler(struct k_work *work)
-{
-	uint16_t integer_pdr = pdr * 100.0;
-	uint8_t pdr_splitted[4] = {0, 0, 0, 0};
-	uint8_t acl_data_size = 4;
-
-	if (pdr < 10) {
-		acl_data_size = 3;
-	}
-
-	if (pdr == 0) {
-		acl_data_size = 2;
-	}
-
-	for (uint8_t i = 4; i > 0; i--) {
-		pdr_splitted[i - 1] = integer_pdr % 10;
-		integer_pdr /= 10;
-	}
-
-	if (pdr == 100.0) {
-		pdr_splitted[0] = 0xF;
-	}
-
-	acl_data[0] = pdr_splitted[0] << 4 | pdr_splitted[1];
-	acl_data[1] = pdr_splitted[2] << 4 | pdr_splitted[3];
-
-    bt_le_adv_update_data(ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
-}
-K_WORK_DEFINE(acl_update, acl_update_handler);
-
-void acl_packet_handler(struct k_timer *dummy)
-{
-	k_work_submit(&acl_update);
-}
-K_TIMER_DEFINE(acl_packet, acl_packet_handler, NULL);
 
 /* ------------------------------------------------------ */
 /* ISO */
 /* ------------------------------------------------------ */
-
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
 #define NAME_LEN            30
 
@@ -131,6 +178,9 @@ static K_SEM_DEFINE(sem_per_sync_lost, 0, 1);
 static K_SEM_DEFINE(sem_per_big_info, 0, 1);
 static K_SEM_DEFINE(sem_big_sync, 0, 1);
 static K_SEM_DEFINE(sem_big_sync_lost, 0, 1);
+
+K_THREAD_STACK_DEFINE(thread_iso_stack_area, STACKSIZE);
+static struct k_thread thread_iso_data;
 
 static void scan_recv(const struct bt_le_scan_recv_info *info,
 		      struct net_buf_simple *buf)
@@ -177,6 +227,7 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 };
 
 static uint32_t seq_num = 0;
+static uint32_t prev_seq_num = 0;
 
 void gpio_work_handler(struct k_work *work)
 {
@@ -189,13 +240,27 @@ K_WORK_DEFINE(gpio_work, gpio_work_handler);
 
 void recv_packet_handler(struct k_timer *dummy)
 {
-	// k_work_submit(&gpio_work); // FIXME: ENABLE IF NEEDED
+	k_work_submit(&gpio_work);
 }
 K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 
-static uint32_t prev_seq_num = 0;
-static uint32_t packets_recv = 0;
-static uint32_t packets_lost = 0;
+static bool pdr_timer_started = false;
+static bool received_packet = true;
+
+void recv_pdr_handler(struct k_timer *dummy)
+{
+	if(received_packet) {
+		// add 1 to moving window
+	} else {
+		// add 0 to moving window 
+		pdr += 0.1;
+	}
+
+	k_work_submit(&acl_work_indicate);
+
+	received_packet = false; // reset
+}
+K_TIMER_DEFINE(recv_pdr, recv_pdr_handler, NULL);
 
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
@@ -212,38 +277,27 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			printk("%x", data);
 		}
 		seq_num = sys_get_le32(count_arr);
-		printk(" | Packet ID: %u ", seq_num);
+		printk(" | Packet ID: %u\n", seq_num);
 
-		// struct bt_iso_info iso_chan_info;
-		// bt_iso_chan_get_info(chan, &iso_chan_info);
-
-		packets_recv++;
-		if(prev_seq_num + 1 != seq_num) {
-			printk("\n------------------------- LOST PACKET -------------------------\n");
-			packets_lost++; // Quick and Dirty hack - maybe account for multiple lost packets
+		if(!pdr_timer_started) {
+			uint32_t iso_ival_ms = iso_interval * 1.25;
+			k_timer_start(&recv_pdr, K_MSEC(iso_ival_ms), K_MSEC(iso_ival_ms));
+			pdr_timer_started = true;
 		}
-		printk("PDR: %.2f%%\n", pdr);
+
+		received_packet = true;
+		if(prev_seq_num + 1 != seq_num) {
+			received_packet = false;
+			printk("\n------------------------- LOST PACKET -------------------------\n");
+		}
 		prev_seq_num = seq_num;
 
-		uint32_t info_ts = info->ts;
-		uint32_t curr = audio_sync_timer_curr_time_get();
-		uint32_t delta = curr - info_ts;
-		
-		k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
+		// uint32_t info_ts = info->ts;
+		// uint32_t curr = audio_sync_timer_curr_time_get();
+		// uint32_t delta = curr - info_ts;
+		// k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
 	}
 }
-
-void recv_pdr_handler(struct k_timer *dummy)
-{
-	uint32_t iso_ival_ms = iso_interval * 1.25;
-	uint32_t expected_packets = 1000 / iso_ival_ms;
-
-	pdr = (float)packets_recv * 100 / expected_packets;
-
-	packets_recv = 0;
-	packets_lost = 0;
-}
-K_TIMER_DEFINE(recv_pdr, recv_pdr_handler, NULL);
 
 static void iso_connected(struct bt_iso_chan *chan)
 {
@@ -288,33 +342,18 @@ static struct bt_iso_big_sync_param big_sync_param = {
 	.sync_timeout = BT_ISO_SYNC_TIMEOUT_MAX, /* in 10 ms units */
 };
 
-void main(void)
+void iso_thread(void *dummy1, void *dummy2, void *dummy3)
 {
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
+
 	struct bt_le_per_adv_sync_param sync_create_param;
 	struct bt_le_per_adv_sync *sync;
 	struct bt_iso_big *big;
 	uint32_t sem_timeout;
 	int err;
 
-	/* Initialize the 8 bit GPIO encoder */
-	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
-	if(err) {
-		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
-	}
-
-	/* Initialize the Bluetooth Subsystem */
-	err = bt_enable(NULL);
-	if (err) {
-		printk("Bluetooth init failed (err %d)\n", err);
-		return;
-	}
-
-	/* Initialize ACL */
-	printk("Init ACL...");
-	k_work_submit(&acl_work);
-	k_timer_start(&acl_packet, K_MSEC(ACL_UPDATE_FREQUENCY_MS), K_MSEC(ACL_UPDATE_FREQUENCY_MS));
-
-	/* Initialize ISO Receiption */
 	printk("Init ISO receiption...");
 	bt_le_scan_cb_register(&scan_callbacks);
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
@@ -421,8 +460,6 @@ big_sync_create:
 		}
 		printk("BIG sync established.\n");
 
-		k_timer_start(&recv_pdr, K_MSEC(PDR_UPDATE_FREQUENCY_MS), K_MSEC(PDR_UPDATE_FREQUENCY_MS));
-
 		printk("Waiting for BIG sync lost...\n");
 		err = k_sem_take(&sem_big_sync_lost, K_FOREVER);
 		if (err) {
@@ -440,4 +477,48 @@ per_sync_lost_check:
 		}
 		printk("Periodic sync lost.\n");
 	} while (true);
+}
+
+void main(void)
+{
+	int err;
+
+	/* Initialize the 8 bit GPIO encoder */
+	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
+	if(err) {
+		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
+	}
+
+	/* Initialize the LED */
+	if (!device_is_ready(led.port)) {
+ 		printk("Error setting LED (err %d)\n", err);
+ 	}
+
+ 	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+ 	if (err < 0) {
+ 		printk("Error setting LED (err %d)\n", err);
+ 	}
+
+	/* Initialize the Bluetooth Subsystem */
+	err = bt_enable(NULL);
+	if (err) {
+		printk("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+
+	/* Start ACL Thread */
+	k_thread_create(&thread_acl_data, thread_acl_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+			acl_thread, NULL, NULL, NULL,
+			ACL_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_acl_data, "acl_thread");
+	k_thread_start(&thread_acl_data);
+
+	/* Start ISO Thread */
+	k_thread_create(&thread_iso_data, thread_iso_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_iso_stack_area),
+			iso_thread, NULL, NULL, NULL,
+			ISO_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_iso_data, "iso_thread");
+	k_thread_start(&thread_iso_data);
 }
