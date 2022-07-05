@@ -26,6 +26,7 @@ static struct io_coder io_encoder = {0};
 #define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
+#define FIFO_SIZE 100
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
 #define ISO_PRIORITY 10
@@ -247,14 +248,39 @@ K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 static bool pdr_timer_started = false;
 static bool received_packet = true;
 
+// moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
+uint8_t maverage_values[FIFO_SIZE] = {0}; // all are zero as a start
+uint8_t maverage_current_position  = 0;
+uint64_t maverage_current_sum = 0;
+uint8_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
+
+float RollingmAvg(uint8_t newValue)
+{
+         //Subtract the oldest number from the prev sum, add the new number
+        maverage_current_sum = maverage_current_sum - maverage_values[maverage_current_position] + newValue;
+
+        //Assign the newValue to the position in the array
+        maverage_values[maverage_current_position] = newValue;
+
+        maverage_current_position++;
+        
+        if (maverage_current_position >= maverage_sample_length) { // Don't go beyond the size of the array...
+            maverage_current_position = 0;
+        }
+                
+        //return the average
+        return (float)maverage_current_sum / (float)maverage_sample_length;
+}
+
 void recv_pdr_handler(struct k_timer *dummy)
 {
+	uint8_t value = 0;
+
 	if(received_packet) {
-		// add 1 to moving window
-	} else {
-		// add 0 to moving window 
-		pdr += 0.1;
+		value = 1;
 	}
+
+	pdr = RollingmAvg(value);
 
 	k_work_submit(&acl_work_indicate);
 
