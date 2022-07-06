@@ -37,76 +37,76 @@ uint32_t watchdog_timestamp = 0;
 /* ------------------------------------------------------ */
 /* ACL (beacon) */
 /* ------------------------------------------------------ */
-// K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
-// static struct k_thread thread_acl_data;
+K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
+static struct k_thread thread_acl_data;
 
-// static bool data_cb(struct bt_data *data, void *user_data)
-// {
-// 	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
-// 		memcpy(user_data, data->data, ACL_DATA_LEN);
-// 		return false;
-// 	}
-// 	return true;
-// }
+static bool data_cb(struct bt_data *data, void *user_data)
+{
+	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
+		memcpy(user_data, data->data, ACL_DATA_LEN);
+		return false;
+	}
+	return true;
+}
 
-// static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type, struct net_buf_simple *buf)
-// {
-// 	uint8_t acl_data[ACL_DATA_LEN];
-// 	(void)memset(acl_data, 0, sizeof(acl_data));
-// 	bt_data_parse(buf, data_cb, acl_data);
+static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type, struct net_buf_simple *buf)
+{
+	uint8_t acl_data[ACL_DATA_LEN];
+	(void)memset(acl_data, 0, sizeof(acl_data));
+	bt_data_parse(buf, data_cb, acl_data);
 
-// 	if (acl_data[0] != 0) { // received ACL data
-// 		uint8_t d0 = acl_data[0] >> 4;
-// 		uint8_t d1 = acl_data[0] & d0;
-// 		uint8_t d2 = acl_data[1] >> 4;
-// 		uint8_t d3 = acl_data[1] & d2;
+	if (acl_data[0] != 0) { // received ACL data
+		uint8_t d0 = acl_data[0] >> 4;
+		uint8_t d1 = acl_data[0] & d0;
+		uint8_t d2 = acl_data[1] >> 4;
+		uint8_t d3 = acl_data[1] & d2;
 
-// 		k_mutex_lock(&linkback_lock, K_FOREVER);
-// 		if (d0 == 0xF) {
-// 			pdr = 100.0;
-// 		} else {
-// 			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
-// 		}
-// 		rssi = rssi_;
-// 		k_mutex_unlock(&linkback_lock);
+		k_mutex_lock(&linkback_lock, K_FOREVER);
+		if (d0 == 0xF) {
+			pdr = 100.0;
+		} else {
+			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
+		}
+		rssi = rssi_;
+		k_mutex_unlock(&linkback_lock);
 
-// 		watchdog_timestamp = k_uptime_get_32();
-// 	}
-// }
+		watchdog_timestamp = k_uptime_get_32();
+	}
+}
 
-// void acl_thread(void *dummy1, void *dummy2, void *dummy3)
-// {
-// 	ARG_UNUSED(dummy1);
-// 	ARG_UNUSED(dummy2);
-// 	ARG_UNUSED(dummy3);
+void acl_thread(void *dummy1, void *dummy2, void *dummy3)
+{
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
 
-// 	int err;
+	int err;
 
-// 	struct bt_le_scan_param scan_param = {
-// 		.type       = BT_LE_SCAN_TYPE_PASSIVE,
-// 		.options    = BT_LE_SCAN_OPT_NONE,
-// 		.interval   = ACL_SCAN_INTERVAL,
-// 		.window     = ACL_SCAN_INTERVAL,
-// 	};
+	struct bt_le_scan_param scan_param = {
+		.type       = BT_LE_SCAN_TYPE_PASSIVE,
+		.options    = BT_LE_SCAN_OPT_NONE,
+		.interval   = ACL_SCAN_INTERVAL,
+		.window     = ACL_SCAN_INTERVAL,
+	};
 
-// 	err = bt_le_scan_start(&scan_param, acl_scan_cb);
-// 	if (err) {
-// 		printk("Starting scanning failed (err %d)\n", err);
-// 		return;
-// 	}
-// }
+	err = bt_le_scan_start(&scan_param, acl_scan_cb);
+	if (err) {
+		printk("Starting scanning failed (err %d)\n", err);
+		return;
+	}
+}
 
-// void pdr_watchdog_handler(struct k_timer *dummy)
-// {
-// 	uint32_t curr_ts = k_uptime_get_32();
-// 	if(curr_ts - watchdog_timestamp > 1000) {
-// 		k_mutex_lock(&linkback_lock, K_FOREVER);
-// 		pdr = 0.0;
-// 		rssi = -127;
-// 		k_mutex_unlock(&linkback_lock);
-// 	}
-// }
-// K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
+void pdr_watchdog_handler(struct k_timer *dummy)
+{
+	uint32_t curr_ts = k_uptime_get_32();
+	if(curr_ts - watchdog_timestamp > 1000) {
+		k_mutex_lock(&linkback_lock, K_FOREVER);
+		pdr = 0.0;
+		rssi = -127;
+		k_mutex_unlock(&linkback_lock);
+	}
+}
+K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
 /* ------------------------------------------------------ */
 /* ISO */
@@ -251,12 +251,12 @@ void main(void)
 	}
 
 	/* Initialize ACL Scanning */
-	// k_thread_create(&thread_acl_data, thread_acl_stack_area,
-	// 		K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
-	// 		acl_thread, NULL, NULL, NULL,
-	// 		ACL_PRIORITY, 0, K_FOREVER);
-	// k_thread_name_set(&thread_acl_data, "acl_thread");
-	// k_thread_start(&thread_acl_data);
+	k_thread_create(&thread_acl_data, thread_acl_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+			acl_thread, NULL, NULL, NULL,
+			ACL_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_acl_data, "acl_thread");
+	k_thread_start(&thread_acl_data);
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER, \
@@ -264,7 +264,7 @@ void main(void)
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
 
-	// k_timer_start(&pdr_watchdog, K_MSEC(WATCHDOG_INTERVAL_MS), K_MSEC(WATCHDOG_INTERVAL_MS));
+	k_timer_start(&pdr_watchdog, K_MSEC(WATCHDOG_INTERVAL_MS), K_MSEC(WATCHDOG_INTERVAL_MS));
 
 	/* Create a non-connectable non-scannable advertising set */
 	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CUSTOM, NULL, &adv);
