@@ -224,6 +224,10 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 
 static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
+static float prev_pdr = 0;
+
+static bool pdr_timer_started = false;
+static bool received_packet = true;
 
 // moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
 static uint8_t maverage_values[MOVING_WINDOW_SIZE] = {0}; // all are zero as a start
@@ -249,11 +253,32 @@ static float RollingmAvg(uint8_t newValue)
         return (float)maverage_current_sum * 100.0 / (float)maverage_sample_length;
 }
 
-static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
-		struct net_buf *buf)
+void recv_pdr_handler(struct k_timer *dummy)
 {
 	uint8_t value = 0;
 
+	if(received_packet) {
+		value = 1;
+	}
+
+	pdr = RollingmAvg(value);
+	printk("PDR:  %.2f%%\n", pdr);
+
+	if (abs(pdr - prev_pdr) > 10) {
+		k_work_submit(&acl_work_indicate);
+		prev_pdr = pdr;
+	}
+
+	// pdr_indicate();
+	// k_work_submit(&acl_work_indicate);
+
+	received_packet = false; // reset
+}
+K_TIMER_DEFINE(recv_pdr, recv_pdr_handler, NULL);
+
+static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
+		struct net_buf *buf)
+{
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 
@@ -268,17 +293,19 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		seq_num = sys_get_le32(count_arr);
 		// printk(" | Packet ID: %u\n", seq_num);
 
-		value = 1;
+		if(!pdr_timer_started) {
+			uint32_t iso_ival_ms = iso_interval * 1.25;
+			k_timer_start(&recv_pdr, K_MSEC(iso_ival_ms), K_MSEC(iso_ival_ms));
+			pdr_timer_started = true;
+		}
+
+		received_packet = true;
 		if(prev_seq_num + 1 != seq_num) {
-			value = 0;
-			printk("\n------------------------- LOST PACKET -------------------------\n");
+			received_packet = false;
+			// printk("\n------------------------- LOST PACKET -------------------------\n");
 		}
 		prev_seq_num = seq_num;
 	}
-
-	pdr = RollingmAvg(value);
-	printk("PDR:  %.2f%%\n", pdr);
-	k_work_submit(&acl_work_indicate);
 }
 
 static void iso_connected(struct bt_iso_chan *chan)
