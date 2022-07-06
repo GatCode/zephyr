@@ -7,6 +7,7 @@
 #include <zephyr/bluetooth/gatt.h>
 // #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/iso.h>
+#include <zephyr/usb/usb_device.h>
 #include <zephyr/sys/byteorder.h>
 // #include <hal/nrf_rtc.h>
 #include <nrfx_clock.h>
@@ -14,6 +15,7 @@
 // #include <io_coder.h>
 // #include <sync_timer.h>
 #include <stdlib.h>
+
 
 
 // #include <stdbool.h>
@@ -405,6 +407,12 @@ void main(void)
 	if (err) {
 		printk("NRFX Clock init failed (err %d)\n", err);
 		return;
+	}
+
+	/* Initialize USB Output (Thingy:53) */
+	err = usb_enable(NULL);
+	if (err) {
+		printk("Failed to initialize USB device\n");
 	}
 
 	/* Initialize the Bluetooth Subsystem */
