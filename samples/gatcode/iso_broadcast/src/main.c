@@ -3,9 +3,6 @@
 #include <zephyr/sys/byteorder.h>
 #include <hal/nrf_rtc.h>
 #include <ble_hci_vsc.h>
-#include <io_coder.h>
-
-static struct io_coder io_encoder = {0};
 
 /* ------------------------------------------------------ */
 /* Defines */
@@ -13,7 +10,7 @@ static struct io_coder io_encoder = {0};
 #define BIS_ISO_CHAN_COUNT 1
 #define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
-#define TRANSPORT_LATENCY_MS 20 // 5ms-4s
+#define TRANSPORT_LATENCY_MS 10 // 5ms-4s
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
@@ -23,7 +20,7 @@ static struct io_coder io_encoder = {0};
 #define RANGE_CALC_INTERVAL_MS 100
 #define WATCHDOG_INTERVAL_MS 1000
 
-#define MAX_RTN 10 // also default rtn
+#define MAX_RTN 8 // also default rtn
 #define MAX_TXP 13 // also default tx power (+3dBm)
 
 #define ENABLE_RANGE_EXTENSION_ALGORITHM true
@@ -40,76 +37,76 @@ uint32_t watchdog_timestamp = 0;
 /* ------------------------------------------------------ */
 /* ACL (beacon) */
 /* ------------------------------------------------------ */
-K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
-static struct k_thread thread_acl_data;
+// K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
+// static struct k_thread thread_acl_data;
 
-static bool data_cb(struct bt_data *data, void *user_data)
-{
-	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
-		memcpy(user_data, data->data, ACL_DATA_LEN);
-		return false;
-	}
-	return true;
-}
+// static bool data_cb(struct bt_data *data, void *user_data)
+// {
+// 	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
+// 		memcpy(user_data, data->data, ACL_DATA_LEN);
+// 		return false;
+// 	}
+// 	return true;
+// }
 
-static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type, struct net_buf_simple *buf)
-{
-	uint8_t acl_data[ACL_DATA_LEN];
-	(void)memset(acl_data, 0, sizeof(acl_data));
-	bt_data_parse(buf, data_cb, acl_data);
+// static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type, struct net_buf_simple *buf)
+// {
+// 	uint8_t acl_data[ACL_DATA_LEN];
+// 	(void)memset(acl_data, 0, sizeof(acl_data));
+// 	bt_data_parse(buf, data_cb, acl_data);
 
-	if (acl_data[0] != 0) { // received ACL data
-		uint8_t d0 = acl_data[0] >> 4;
-		uint8_t d1 = acl_data[0] & d0;
-		uint8_t d2 = acl_data[1] >> 4;
-		uint8_t d3 = acl_data[1] & d2;
+// 	if (acl_data[0] != 0) { // received ACL data
+// 		uint8_t d0 = acl_data[0] >> 4;
+// 		uint8_t d1 = acl_data[0] & d0;
+// 		uint8_t d2 = acl_data[1] >> 4;
+// 		uint8_t d3 = acl_data[1] & d2;
 
-		k_mutex_lock(&linkback_lock, K_FOREVER);
-		if (d0 == 0xF) {
-			pdr = 100.0;
-		} else {
-			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
-		}
-		rssi = rssi_;
-		k_mutex_unlock(&linkback_lock);
+// 		k_mutex_lock(&linkback_lock, K_FOREVER);
+// 		if (d0 == 0xF) {
+// 			pdr = 100.0;
+// 		} else {
+// 			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
+// 		}
+// 		rssi = rssi_;
+// 		k_mutex_unlock(&linkback_lock);
 
-		watchdog_timestamp = k_uptime_get_32();
-	}
-}
+// 		watchdog_timestamp = k_uptime_get_32();
+// 	}
+// }
 
-void acl_thread(void *dummy1, void *dummy2, void *dummy3)
-{
-	ARG_UNUSED(dummy1);
-	ARG_UNUSED(dummy2);
-	ARG_UNUSED(dummy3);
+// void acl_thread(void *dummy1, void *dummy2, void *dummy3)
+// {
+// 	ARG_UNUSED(dummy1);
+// 	ARG_UNUSED(dummy2);
+// 	ARG_UNUSED(dummy3);
 
-	int err;
+// 	int err;
 
-	struct bt_le_scan_param scan_param = {
-		.type       = BT_LE_SCAN_TYPE_PASSIVE,
-		.options    = BT_LE_SCAN_OPT_NONE,
-		.interval   = ACL_SCAN_INTERVAL,
-		.window     = ACL_SCAN_INTERVAL,
-	};
+// 	struct bt_le_scan_param scan_param = {
+// 		.type       = BT_LE_SCAN_TYPE_PASSIVE,
+// 		.options    = BT_LE_SCAN_OPT_NONE,
+// 		.interval   = ACL_SCAN_INTERVAL,
+// 		.window     = ACL_SCAN_INTERVAL,
+// 	};
 
-	err = bt_le_scan_start(&scan_param, acl_scan_cb);
-	if (err) {
-		printk("Starting scanning failed (err %d)\n", err);
-		return;
-	}
-}
+// 	err = bt_le_scan_start(&scan_param, acl_scan_cb);
+// 	if (err) {
+// 		printk("Starting scanning failed (err %d)\n", err);
+// 		return;
+// 	}
+// }
 
-void pdr_watchdog_handler(struct k_timer *dummy)
-{
-	uint32_t curr_ts = k_uptime_get_32();
-	if(curr_ts - watchdog_timestamp > 1000) {
-		k_mutex_lock(&linkback_lock, K_FOREVER);
-		pdr = 0.0;
-		rssi = -127;
-		k_mutex_unlock(&linkback_lock);
-	}
-}
-K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
+// void pdr_watchdog_handler(struct k_timer *dummy)
+// {
+// 	uint32_t curr_ts = k_uptime_get_32();
+// 	if(curr_ts - watchdog_timestamp > 1000) {
+// 		k_mutex_lock(&linkback_lock, K_FOREVER);
+// 		pdr = 0.0;
+// 		rssi = -127;
+// 		k_mutex_unlock(&linkback_lock);
+// 	}
+// }
+// K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
 /* ------------------------------------------------------ */
 /* ISO */
@@ -140,16 +137,6 @@ static struct bt_iso_chan bis_iso_chan;
 uint8_t iso_data[DATA_SIZE_BYTE] = { 0 };
 struct net_buf *buf;
 
-void gpio_work_handler(struct k_work *work)
-{
-    // printk("Sending value %u\n", seq_num);
-	int err = write_8_bit(&io_encoder, seq_num % 256);
-	if(err) {
-		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-	}
-}
-K_WORK_DEFINE(gpio_work, gpio_work_handler);
-
 static void iso_sent(struct bt_iso_chan *chan)
 {
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
@@ -157,14 +144,12 @@ static void iso_sent(struct bt_iso_chan *chan)
 	sys_put_le32(++seq_num, iso_data);
 	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
 
-	int ret = bt_iso_chan_send(&bis_iso_chan, buf);
+	int ret = bt_iso_chan_send(&bis_iso_chan, buf, seq_num, BT_ISO_TIMESTAMP_NONE);
 	if (ret < 0) {
 		printk("Unable to broadcast data: %d", ret);
 		net_buf_unref(buf);
 		return;
 	}
-
-	// k_work_submit(&gpio_work); // FIXME: ENABLE IF NEEDED
 }
 
 static struct bt_iso_chan_ops iso_ops = {
@@ -212,35 +197,35 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 	ARG_UNUSED(dummy3);
 
 	while(1) {
-		if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
-			uint8_t new_tx_pwr_setting = 0;
+		// if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
+		// 	uint8_t new_tx_pwr_setting = 0;
 
-			if (rssi > -20) {
-				new_tx_pwr_setting = 0;
-				bis[0]->qos->tx->rtn = 2;
-			} else if (rssi > -30) {
-				new_tx_pwr_setting = 8;
-				bis[0]->qos->tx->rtn = 4;
-			} else if (rssi > -40) {
-				new_tx_pwr_setting = 12;
-				bis[0]->qos->tx->rtn = 6;
-			} else if (rssi > -50) {
-				new_tx_pwr_setting = 13;
-				bis[0]->qos->tx->rtn = 8;
-			} else {
-				new_tx_pwr_setting = 13;
-				bis[0]->qos->tx->rtn = 10;
-			}
+		// 	if (rssi > -20) {
+		// 		new_tx_pwr_setting = 0;
+		// 		bis[0]->qos->tx->rtn = 2;
+		// 	} else if (rssi > -30) {
+		// 		new_tx_pwr_setting = 8;
+		// 		bis[0]->qos->tx->rtn = 4;
+		// 	} else if (rssi > -40) {
+		// 		new_tx_pwr_setting = 12;
+		// 		bis[0]->qos->tx->rtn = 6;
+		// 	} else if (rssi > -50) {
+		// 		new_tx_pwr_setting = 13;
+		// 		bis[0]->qos->tx->rtn = 8;
+		// 	} else {
+		// 		new_tx_pwr_setting = 13;
+		// 		bis[0]->qos->tx->rtn = 10;
+		// 	}
 
-			if(tx_pwr_setting != new_tx_pwr_setting) {
-				uint8_t err = ble_hci_vsc_set_tx_pwr(new_tx_pwr_setting);
-				if (err) {
-					printk("Failed to set tx power (err %d)\n", err);
-					return;
-				}
-				tx_pwr_setting = new_tx_pwr_setting;
-			}
-		}
+		// 	if(tx_pwr_setting != new_tx_pwr_setting) {
+		// 		uint8_t err = ble_hci_vsc_set_tx_pwr(new_tx_pwr_setting);
+		// 		if (err) {
+		// 			printk("Failed to set tx power (err %d)\n", err);
+		// 			return;
+		// 		}
+		// 		tx_pwr_setting = new_tx_pwr_setting;
+		// 	}
+		// }
 		
 		k_mutex_lock(&linkback_lock, K_FOREVER);
 		printk("PDR: %.2f%% - RSSI: %d - RTN: %u\n", pdr, rssi, bis[0]->qos->tx->rtn);
@@ -256,11 +241,6 @@ void main(void)
 	struct bt_iso_big *big;
 	int err;
 
-	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
-	if(err) {
-		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
-	}
-
 	printk("Starting ISO Broadcast Demo\n");
 
 	/* Initialize the Bluetooth Subsystem */
@@ -271,12 +251,12 @@ void main(void)
 	}
 
 	/* Initialize ACL Scanning */
-	k_thread_create(&thread_acl_data, thread_acl_stack_area,
-			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
-			acl_thread, NULL, NULL, NULL,
-			ACL_PRIORITY, 0, K_FOREVER);
-	k_thread_name_set(&thread_acl_data, "acl_thread");
-	k_thread_start(&thread_acl_data);
+	// k_thread_create(&thread_acl_data, thread_acl_stack_area,
+	// 		K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+	// 		acl_thread, NULL, NULL, NULL,
+	// 		ACL_PRIORITY, 0, K_FOREVER);
+	// k_thread_name_set(&thread_acl_data, "acl_thread");
+	// k_thread_start(&thread_acl_data);
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER, \
@@ -284,7 +264,7 @@ void main(void)
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
 
-	k_timer_start(&pdr_watchdog, K_MSEC(WATCHDOG_INTERVAL_MS), K_MSEC(WATCHDOG_INTERVAL_MS));
+	// k_timer_start(&pdr_watchdog, K_MSEC(WATCHDOG_INTERVAL_MS), K_MSEC(WATCHDOG_INTERVAL_MS));
 
 	/* Create a non-connectable non-scannable advertising set */
 	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CUSTOM, NULL, &adv);
@@ -320,12 +300,12 @@ void main(void)
 	}
 
 	/* Set initial TX power */
-	init_ble_hci_vsc_tx_pwr();
-	err = ble_hci_vsc_set_tx_pwr(MAX_TXP);
-	if (err) {
-		printk("Failed to set tx power (err %d)\n", err);
-		return;
-	}
+	// init_ble_hci_vsc_tx_pwr();
+	// err = ble_hci_vsc_set_tx_pwr(MAX_TXP);
+	// if (err) {
+	// 	printk("Failed to set tx power (err %d)\n", err);
+	// 	return;
+	// }
 
 	/* Initialize Range Extension */
 	k_thread_create(&thread_range_data, thread_range_stack_area,

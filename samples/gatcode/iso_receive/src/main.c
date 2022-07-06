@@ -9,12 +9,7 @@
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
 #include <hal/nrf_rtc.h>
-#include <ble_hci_vsc.h>
-#include <io_coder.h>
-#include <sync_timer.h>
 #include <stdlib.h>
-
-static struct io_coder io_encoder = {0};
 
 #define LED0_NODE DT_ALIAS(led0)
  static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
@@ -26,7 +21,7 @@ static struct io_coder io_encoder = {0};
 #define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
-#define FIFO_SIZE 100
+#define MOVING_WINDOW_SIZE 20
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
 #define ISO_PRIORITY 10
@@ -230,31 +225,13 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
 
-void gpio_work_handler(struct k_work *work)
-{
-    int err = write_8_bit(&io_encoder, seq_num % 256);
-	if(err) {
-		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-	}
-}
-K_WORK_DEFINE(gpio_work, gpio_work_handler);
-
-void recv_packet_handler(struct k_timer *dummy)
-{
-	k_work_submit(&gpio_work);
-}
-K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
-
-static bool pdr_timer_started = false;
-static bool received_packet = true;
-
 // moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
-uint8_t maverage_values[FIFO_SIZE] = {0}; // all are zero as a start
-uint8_t maverage_current_position  = 0;
-uint64_t maverage_current_sum = 0;
-uint8_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
+static uint8_t maverage_values[MOVING_WINDOW_SIZE] = {0}; // all are zero as a start
+static uint8_t maverage_current_position  = 0;
+static uint64_t maverage_current_sum = 0;
+static uint8_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
 
-float RollingmAvg(uint8_t newValue)
+static float RollingmAvg(uint8_t newValue)
 {
          //Subtract the oldest number from the prev sum, add the new number
         maverage_current_sum = maverage_current_sum - maverage_values[maverage_current_position] + newValue;
@@ -269,60 +246,39 @@ float RollingmAvg(uint8_t newValue)
         }
                 
         //return the average
-        return (float)maverage_current_sum / (float)maverage_sample_length;
+        return (float)maverage_current_sum * 100.0 / (float)maverage_sample_length;
 }
-
-void recv_pdr_handler(struct k_timer *dummy)
-{
-	uint8_t value = 0;
-
-	if(received_packet) {
-		value = 1;
-	}
-
-	pdr = RollingmAvg(value);
-
-	k_work_submit(&acl_work_indicate);
-
-	received_packet = false; // reset
-}
-K_TIMER_DEFINE(recv_pdr, recv_pdr_handler, NULL);
 
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
+	uint8_t value = 0;
+
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 
-		printk("Data: ");
+		// printk("Data: ");
 		for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
 			if(i < 4) {
 				count_arr[i] = buf->data[i];
 			}
-			uint8_t data = buf->data[i];
-			printk("%x", data);
+			// uint8_t data = buf->data[i];
+			// printk("%x", data);
 		}
 		seq_num = sys_get_le32(count_arr);
-		printk(" | Packet ID: %u\n", seq_num);
+		// printk(" | Packet ID: %u\n", seq_num);
 
-		if(!pdr_timer_started) {
-			uint32_t iso_ival_ms = iso_interval * 1.25;
-			k_timer_start(&recv_pdr, K_MSEC(iso_ival_ms), K_MSEC(iso_ival_ms));
-			pdr_timer_started = true;
-		}
-
-		received_packet = true;
+		value = 1;
 		if(prev_seq_num + 1 != seq_num) {
-			received_packet = false;
+			value = 0;
 			printk("\n------------------------- LOST PACKET -------------------------\n");
 		}
 		prev_seq_num = seq_num;
-
-		// uint32_t info_ts = info->ts;
-		// uint32_t curr = audio_sync_timer_curr_time_get();
-		// uint32_t delta = curr - info_ts;
-		// k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
 	}
+
+	pdr = RollingmAvg(value);
+	printk("PDR:  %.2f%%\n", pdr);
+	k_work_submit(&acl_work_indicate);
 }
 
 static void iso_connected(struct bt_iso_chan *chan)
@@ -509,15 +465,9 @@ void main(void)
 {
 	int err;
 
-	/* Initialize the 8 bit GPIO encoder */
-	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
-	if(err) {
-		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
-	}
-
 	/* Initialize the LED */
 	if (!device_is_ready(led.port)) {
- 		printk("Error setting LED (err %d)\n", err);
+ 		printk("Error setting LED\n");
  	}
 
  	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
