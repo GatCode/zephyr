@@ -282,16 +282,16 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 
-		// printk("Data: ");
+		printk("Data: ");
 		for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
 			if(i < 4) {
 				count_arr[i] = buf->data[i];
 			}
-			// uint8_t data = buf->data[i];
-			// printk("%x", data);
+			uint8_t data = buf->data[i];
+			printk("%x", data);
 		}
 		seq_num = sys_get_le32(count_arr);
-		// printk(" | Packet ID: %u\n", seq_num);
+		printk(" | Packet ID: %u\n", seq_num);
 
 		if(!pdr_timer_started) {
 			uint32_t iso_ival_ms = iso_interval * 1.25;

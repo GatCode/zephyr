@@ -1,4 +1,8 @@
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
 #include <hal/nrf_rtc.h>
@@ -9,13 +13,12 @@
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
 #define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
-#define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
-#define TRANSPORT_LATENCY_MS 10 // 5ms-4s
+#define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
+#define TRANSPORT_LATENCY_MS 20 // 5ms-4s
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
 #define ACL_DATA_LEN 4
-#define ACL_SCAN_INTERVAL 0x0050 // (N * 0.625 ms) - 50ms - sample 2x
 #define RANGE_PRIORITY 5
 #define RANGE_CALC_INTERVAL_MS 100
 #define WATCHDOG_INTERVAL_MS 1000
@@ -37,8 +40,23 @@ uint32_t watchdog_timestamp = 0;
 /* ------------------------------------------------------ */
 /* ACL (beacon) */
 /* ------------------------------------------------------ */
-// K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
-// static struct k_thread thread_acl_data;
+K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
+static struct k_thread thread_acl_data;
+
+// static K_SEM_DEFINE(sem_bis_established, 0, 1);
+// err = k_sem_take(&sem_bis_established, K_FOREVER);
+// if (err) {
+// 	printk("failed (err %d)\n", err);
+// 	return;
+// }
+// k_sem_give(&sem_bis_established);
+
+static struct bt_conn *default_conn;
+static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
+static struct bt_gatt_discover_params discover_params;
+static struct bt_gatt_subscribe_params subscribe_params;
+
+static int scan_start(void);
 
 // static bool data_cb(struct bt_data *data, void *user_data)
 // {
@@ -49,52 +67,108 @@ uint32_t watchdog_timestamp = 0;
 // 	return true;
 // }
 
-// static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type, struct net_buf_simple *buf)
-// {
-// 	uint8_t acl_data[ACL_DATA_LEN];
-// 	(void)memset(acl_data, 0, sizeof(acl_data));
-// 	bt_data_parse(buf, data_cb, acl_data);
+static bool eir_found(struct bt_data *data, void *user_data)
+{
+	bt_addr_le_t *addr = user_data;
+	int i;
 
-// 	if (acl_data[0] != 0) { // received ACL data
-// 		uint8_t d0 = acl_data[0] >> 4;
-// 		uint8_t d1 = acl_data[0] & d0;
-// 		uint8_t d2 = acl_data[1] >> 4;
-// 		uint8_t d3 = acl_data[1] & d2;
+	printk("[AD]: %u data_len %u\n", data->type, data->data_len);
 
-// 		k_mutex_lock(&linkback_lock, K_FOREVER);
-// 		if (d0 == 0xF) {
-// 			pdr = 100.0;
-// 		} else {
-// 			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
-// 		}
-// 		rssi = rssi_;
-// 		k_mutex_unlock(&linkback_lock);
+	switch (data->type) {
+	case BT_DATA_UUID16_SOME:
+	case BT_DATA_UUID16_ALL:
+		if (data->data_len % sizeof(uint16_t) != 0U) {
+			printk("AD malformed\n");
+			return true;
+		}
 
-// 		watchdog_timestamp = k_uptime_get_32();
-// 	}
-// }
+		for (i = 0; i < data->data_len; i += sizeof(uint16_t)) {
+			struct bt_uuid *uuid;
+			uint16_t u16;
+			int err;
 
-// void acl_thread(void *dummy1, void *dummy2, void *dummy3)
-// {
-// 	ARG_UNUSED(dummy1);
-// 	ARG_UNUSED(dummy2);
-// 	ARG_UNUSED(dummy3);
+			// memcpy(&u16, &data->data[i], sizeof(u16));
+			// uuid = BT_UUID_DECLARE_16(sys_le16_to_cpu(u16));
+			// if (bt_uuid_cmp(uuid, BT_UUID_HTS)) {
+			// 	continue;
+			// }
 
-// 	int err;
+			// err = bt_le_scan_stop();
+			// if (err) {
+			// 	printk("Stop LE scan failed (err %d)\n", err);
+			// 	continue;
+			// }
 
-// 	struct bt_le_scan_param scan_param = {
-// 		.type       = BT_LE_SCAN_TYPE_PASSIVE,
-// 		.options    = BT_LE_SCAN_OPT_NONE,
-// 		.interval   = ACL_SCAN_INTERVAL,
-// 		.window     = ACL_SCAN_INTERVAL,
-// 	};
+			// err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN,
+			// 			BT_LE_CONN_PARAM_DEFAULT,
+			// 			&default_conn);
+			// if (err) {
+			// 	printk("Create connection failed (err %d)\n", err);
+			// }
 
-// 	err = bt_le_scan_start(&scan_param, acl_scan_cb);
-// 	if (err) {
-// 		printk("Starting scanning failed (err %d)\n", err);
-// 		return;
-// 	}
-// }
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type, struct net_buf_simple *buf)
+{
+	if (adv_type == BT_HCI_ADV_IND || adv_type == BT_HCI_ADV_DIRECT_IND) {
+		bt_data_parse(buf, eir_found, (void *)addr);
+	}
+
+	// uint8_t acl_data[ACL_DATA_LEN];
+	// (void)memset(acl_data, 0, sizeof(acl_data));
+	// bt_data_parse(buf, data_cb, acl_data);
+
+	// if (acl_data[0] != 0) { // received ACL data
+	// 	uint8_t d0 = acl_data[0] >> 4;
+	// 	uint8_t d1 = acl_data[0] & d0;
+	// 	uint8_t d2 = acl_data[1] >> 4;
+	// 	uint8_t d3 = acl_data[1] & d2;
+
+	// 	k_mutex_lock(&linkback_lock, K_FOREVER);
+	// 	if (d0 == 0xF) {
+	// 		pdr = 100.0;
+	// 	} else {
+	// 		pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
+	// 	}
+	// 	rssi = rssi_;
+	// 	k_mutex_unlock(&linkback_lock);
+
+	// 	watchdog_timestamp = k_uptime_get_32();
+	// }
+}
+
+static int scan_start()
+{
+	/* Use active scanning and disable duplicate filtering to handle any
+	 * devices that might update their advertising data at runtime.
+	 */
+	struct bt_le_scan_param scan_param = {
+		.type       = BT_LE_SCAN_TYPE_PASSIVE,
+		.options    = BT_LE_SCAN_OPT_NONE,
+		.interval   = BT_GAP_SCAN_FAST_INTERVAL,
+		.window     = BT_GAP_SCAN_FAST_WINDOW,
+	};
+
+	return bt_le_scan_start(&scan_param, acl_scan_cb);
+}
+
+void acl_thread(void *dummy1, void *dummy2, void *dummy3)
+{
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
+
+	int err = scan_start();
+	if (err) {
+		printk("Starting scanning failed (err %d)\n", err);
+		return;
+	}
+}
 
 // void pdr_watchdog_handler(struct k_timer *dummy)
 // {
@@ -251,12 +325,12 @@ void main(void)
 	}
 
 	/* Initialize ACL Scanning */
-	// k_thread_create(&thread_acl_data, thread_acl_stack_area,
-	// 		K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
-	// 		acl_thread, NULL, NULL, NULL,
-	// 		ACL_PRIORITY, 0, K_FOREVER);
-	// k_thread_name_set(&thread_acl_data, "acl_thread");
-	// k_thread_start(&thread_acl_data);
+	k_thread_create(&thread_acl_data, thread_acl_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+			acl_thread, NULL, NULL, NULL,
+			ACL_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_acl_data, "acl_thread");
+	k_thread_start(&thread_acl_data);
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER, \
