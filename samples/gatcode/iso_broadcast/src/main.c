@@ -4,6 +4,13 @@
 #include <hal/nrf_rtc.h>
 #include <ble_hci_vsc.h>
 
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/services/bas.h>
+
 /* ------------------------------------------------------ */
 /* Defines */
 /* ------------------------------------------------------ */
@@ -40,39 +47,87 @@ uint32_t watchdog_timestamp = 0;
 K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
 static struct k_thread thread_acl_data;
 
-static bool data_cb(struct bt_data *data, void *user_data)
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL,
+		      BT_UUID_16_ENCODE(BT_UUID_HTS_VAL),
+		      BT_UUID_16_ENCODE(BT_UUID_DIS_VAL),
+		      BT_UUID_16_ENCODE(BT_UUID_BAS_VAL)),
+};
+
+static void connected(struct bt_conn *conn, uint8_t err)
 {
-	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
-		memcpy(user_data, data->data, ACL_DATA_LEN);
-		return false;
-	}
-	return true;
-}
-
-static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type, struct net_buf_simple *buf)
-{
-	uint8_t acl_data[ACL_DATA_LEN];
-	(void)memset(acl_data, 0, sizeof(acl_data));
-	bt_data_parse(buf, data_cb, acl_data);
-
-	if (acl_data[0] != 0) { // received ACL data
-		uint8_t d0 = acl_data[0] >> 4;
-		uint8_t d1 = acl_data[0] & d0;
-		uint8_t d2 = acl_data[1] >> 4;
-		uint8_t d3 = acl_data[1] & d2;
-
-		k_mutex_lock(&linkback_lock, K_FOREVER);
-		if (d0 == 0xF) {
-			pdr = 100.0;
-		} else {
-			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
-		}
-		rssi = rssi_;
-		k_mutex_unlock(&linkback_lock);
-
-		watchdog_timestamp = k_uptime_get_32();
+	if (err) {
+		printk("Connection failed (err 0x%02x)\n", err);
+	} else {
+		printk("Connected\n");
 	}
 }
+
+static void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	printk("Disconnected (reason 0x%02x)\n", reason);
+}
+
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+	.connected = connected,
+	.disconnected = disconnected,
+};
+
+static void htmc_ccc_cfg_changed(const struct bt_gatt_attr *attr,
+				 uint16_t value)
+{
+	printk("CCC Changed - value: %u\n", value);
+}
+
+BT_GATT_SERVICE_DEFINE(hts_svc,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_HTS),
+	BT_GATT_CHARACTERISTIC(BT_UUID_HTS_MEASUREMENT, BT_GATT_CHRC_INDICATE,
+			       BT_GATT_PERM_NONE, NULL, NULL, NULL),
+	// BT_GATT_ATTRIBUTE(BT_UUID_GATT_CHRC, BT_GATT_PERM_WRITE, NULL, bt_attr_write_cb, NULL, NULL),
+	BT_GATT_CCC(htmc_ccc_cfg_changed, BT_GATT_PERM_WRITE),
+	/* more optional Characteristics */
+);
+
+
+
+
+
+
+
+// static bool data_cb(struct bt_data *data, void *user_data)
+// {
+// 	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
+// 		memcpy(user_data, data->data, ACL_DATA_LEN);
+// 		return false;
+// 	}
+// 	return true;
+// }
+
+// static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type, struct net_buf_simple *buf)
+// {
+// 	uint8_t acl_data[ACL_DATA_LEN];
+// 	(void)memset(acl_data, 0, sizeof(acl_data));
+// 	bt_data_parse(buf, data_cb, acl_data);
+
+// 	if (acl_data[0] != 0) { // received ACL data
+// 		uint8_t d0 = acl_data[0] >> 4;
+// 		uint8_t d1 = acl_data[0] & d0;
+// 		uint8_t d2 = acl_data[1] >> 4;
+// 		uint8_t d3 = acl_data[1] & d2;
+
+// 		k_mutex_lock(&linkback_lock, K_FOREVER);
+// 		if (d0 == 0xF) {
+// 			pdr = 100.0;
+// 		} else {
+// 			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
+// 		}
+// 		rssi = rssi_;
+// 		k_mutex_unlock(&linkback_lock);
+
+// 		watchdog_timestamp = k_uptime_get_32();
+// 	}
+// }
 
 void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 {
@@ -80,31 +135,39 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 	ARG_UNUSED(dummy2);
 	ARG_UNUSED(dummy3);
 
-	int err;
+	// int err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+	// if (err) {
+	// 	printk("Advertising failed to start (err %d)\n", err);
+	// 	return;
+	// }
 
-	struct bt_le_scan_param scan_param = {
-		.type       = BT_LE_SCAN_TYPE_PASSIVE,
-		.options    = BT_LE_SCAN_OPT_NONE,
-		.interval   = ACL_SCAN_INTERVAL,
-		.window     = ACL_SCAN_INTERVAL,
-	};
+	// printk("Advertising successfully started\n");
 
-	err = bt_le_scan_start(&scan_param, acl_scan_cb);
-	if (err) {
-		printk("Starting scanning failed (err %d)\n", err);
-		return;
-	}
+	// int err;
+
+	// struct bt_le_scan_param scan_param = {
+	// 	.type       = BT_LE_SCAN_TYPE_PASSIVE,
+	// 	.options    = BT_LE_SCAN_OPT_NONE,
+	// 	.interval   = ACL_SCAN_INTERVAL,
+	// 	.window     = ACL_SCAN_INTERVAL,
+	// };
+
+	// err = bt_le_scan_start(&scan_param, acl_scan_cb);
+	// if (err) {
+	// 	printk("Starting scanning failed (err %d)\n", err);
+	// 	return;
+	// }
 }
 
 void pdr_watchdog_handler(struct k_timer *dummy)
 {
-	uint32_t curr_ts = k_uptime_get_32();
-	if(curr_ts - watchdog_timestamp > 1000) {
-		k_mutex_lock(&linkback_lock, K_FOREVER);
-		pdr = 0.0;
-		rssi = -127;
-		k_mutex_unlock(&linkback_lock);
-	}
+	// uint32_t curr_ts = k_uptime_get_32();
+	// if(curr_ts - watchdog_timestamp > 1000) {
+	// 	k_mutex_lock(&linkback_lock, K_FOREVER);
+	// 	pdr = 0.0;
+	// 	rssi = -127;
+	// 	k_mutex_unlock(&linkback_lock);
+	// }
 }
 K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
@@ -251,12 +314,20 @@ void main(void)
 	}
 
 	/* Initialize ACL Scanning */
-	k_thread_create(&thread_acl_data, thread_acl_stack_area,
-			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
-			acl_thread, NULL, NULL, NULL,
-			ACL_PRIORITY, 0, K_FOREVER);
-	k_thread_name_set(&thread_acl_data, "acl_thread");
-	k_thread_start(&thread_acl_data);
+	// k_thread_create(&thread_acl_data, thread_acl_stack_area,
+	// 		K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+	// 		acl_thread, NULL, NULL, NULL,
+	// 		ACL_PRIORITY, 0, K_FOREVER);
+	// k_thread_name_set(&thread_acl_data, "acl_thread");
+	// k_thread_start(&thread_acl_data);
+
+	err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err) {
+		printk("Advertising failed to start (err %d)\n", err);
+		return;
+	}
+
+	// printk("Advertising successfully started\n");
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER, \
@@ -264,7 +335,7 @@ void main(void)
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
 
-	k_timer_start(&pdr_watchdog, K_MSEC(WATCHDOG_INTERVAL_MS), K_MSEC(WATCHDOG_INTERVAL_MS));
+	// k_timer_start(&pdr_watchdog, K_MSEC(WATCHDOG_INTERVAL_MS), K_MSEC(WATCHDOG_INTERVAL_MS));
 
 	/* Create a non-connectable non-scannable advertising set */
 	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CUSTOM, NULL, &adv);
