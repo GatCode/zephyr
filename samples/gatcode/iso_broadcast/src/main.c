@@ -31,6 +31,7 @@ static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define MAX_RTN 0 // also default rtn
 #define MAX_TXP 0 // also default tx power (+3dBm)
 
+#define PDR_WATCHDOG_FREQ_MS 1000
 #define ENABLE_RANGE_EXTENSION_ALGORITHM false
 
 #define LED_ON true
@@ -47,6 +48,7 @@ uint8_t tx_pwr_setting = 0;
 static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params discover_params;
 static struct bt_gatt_subscribe_params subscribe_params;
+static uint32_t last_recv_packet_ts = 0;
 
 #define DEVICE_NAME_ACL "nRF5340"
 #define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
@@ -175,6 +177,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 	pdr = value_recv;
 	// printk("PDR: %.2f%%\n", pdr);
 	k_sem_give(&sem_pdr_recv);
+	last_recv_packet_ts = k_uptime_get_32();
 
 	if (LED_ON) {
 		gpio_pin_set_dt(&led2, 1);
@@ -361,6 +364,16 @@ static struct bt_iso_big_create_param big_create_param = {
 K_THREAD_STACK_DEFINE(thread_range_stack_area, STACKSIZE);
 static struct k_thread thread_range_data;
 
+void pdr_watchdog_handler(struct k_timer *dummy)
+{
+	uint32_t curr = k_uptime_get_32();
+	if (curr - last_recv_packet_ts > 1000000) { // > 1s
+		pdr = 0.0; // reset - no packets arrived in the last second
+		k_sem_give(&sem_pdr_recv);
+	}
+}
+K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
+
 void range_thread(void *dummy1, void *dummy2, void *dummy3)
 {
 	ARG_UNUSED(dummy1);
@@ -442,6 +455,9 @@ void main(void)
 			BT_GAP_ADV_FAST_INT_MIN_2, \
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
+
+	/* Start PDR Watchdog timer */
+	k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS), K_MSEC(PDR_WATCHDOG_FREQ_MS));
 
 	/* Create a non-connectable non-scannable advertising set */
 	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CUSTOM, NULL, &adv);

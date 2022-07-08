@@ -34,6 +34,8 @@ static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define PDR_WATCHDOG_FREQ_MS 1000
 #define INDICATE_IF_PDR_CHANGED_BY 10 // send indication if changes > define
 
+#define MAX_TXP 13 // set ACL TX power to max (+3dBm)
+
 #define LED_ON true
 
 /* ------------------------------------------------------ */
@@ -117,6 +119,14 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 	ARG_UNUSED(dummy1);
 	ARG_UNUSED(dummy2);
 	ARG_UNUSED(dummy3);
+
+	/* Set MAX TX power */
+	init_ble_hci_vsc_tx_pwr();
+	int err = ble_hci_vsc_set_tx_pwr(MAX_TXP);
+	if (err) {
+		printk("Failed to set tx power (err %d)\n", err);
+		return;
+	}
 
 	bt_conn_cb_register(&conn_callbacks);
 	k_work_submit(&adv_work);
@@ -252,6 +262,7 @@ void pdr_watchdog_handler(struct k_timer *dummy)
 	// printk("curr: %u, last_recv_packet_ts: %u, diff: %u\n", curr, last_recv_packet_ts, curr - last_recv_packet_ts);
 	if (curr - last_recv_packet_ts > 1000000) { // > 1s
 		pdr = 0.0;
+		acl_indicate(pdr);
 		printk("PDR: %.2f%%\n", pdr);
 	}
 }
