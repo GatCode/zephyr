@@ -39,7 +39,8 @@ static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
-static float pdr = 0.0;
+static double pdr = 0.0;
+static double prev_pdr = 0.0;
 uint8_t tx_pwr_setting = 0;
 
 /* ------------------------------------------------------ */
@@ -175,7 +176,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 	value_recv = (double)mantissa * pow(10, exponent);
 
 	pdr = value_recv;
-	// printk("PDR: %.2f%%\n", pdr);
+	printk("PDR: %.2f%%\n", value_recv);
 	k_sem_give(&sem_pdr_recv);
 	last_recv_packet_ts = k_uptime_get_32();
 
@@ -292,6 +293,8 @@ static K_SEM_DEFINE(sem_big_cmplt, 0, 1);
 static K_SEM_DEFINE(sem_big_term, 0, 1);
 
 static uint32_t seq_num;
+static struct bt_le_ext_adv *adv;
+static struct bt_iso_big *big;
 
 static void iso_connected(struct bt_iso_chan *chan)
 {
@@ -301,8 +304,7 @@ static void iso_connected(struct bt_iso_chan *chan)
 
 static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 {
-	printk("ISO Channel %p disconnected with reason 0x%02x\n",
-	       chan, reason);
+	// printk("ISO Channel %p disconnected with reason 0x%02x\n", chan, reason);
 	k_sem_give(&sem_big_term);
 }
 
@@ -320,7 +322,7 @@ static void iso_sent(struct bt_iso_chan *chan)
 
 	int ret = bt_iso_chan_send(&bis_iso_chan, buf);
 	if (ret < 0) {
-		printk("Unable to broadcast data: %d", ret);
+		// printk("Unable to broadcast data: %d", ret);
 		net_buf_unref(buf);
 		return;
 	}
@@ -367,7 +369,7 @@ static struct k_thread thread_range_data;
 void pdr_watchdog_handler(struct k_timer *dummy)
 {
 	uint32_t curr = k_uptime_get_32();
-	if (curr - last_recv_packet_ts > 1000000) { // > 1s
+	if (curr - last_recv_packet_ts > 1000) { // > 1s
 		pdr = 0.0; // reset - no packets arrived in the last second
 		k_sem_give(&sem_pdr_recv);
 	}
@@ -389,44 +391,67 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			return;
 		}
 
-		if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
+		if(ENABLE_RANGE_EXTENSION_ALGORITHM && (prev_pdr < pdr || pdr == 0.0)) {
 			uint8_t new_tx_pwr_setting = 0;
 
 			if (pdr < 50) {
 				new_tx_pwr_setting = 13;
 				bis[0]->qos->tx->rtn = 8;
-			} else if (pdr < 60) {
-				new_tx_pwr_setting = 12;
-				bis[0]->qos->tx->rtn = 8;
-			} else if (pdr < 70) {
-				new_tx_pwr_setting = 12;
-				bis[0]->qos->tx->rtn = 6;
-			} else if (pdr < 80) {
-				new_tx_pwr_setting = 12;
-				bis[0]->qos->tx->rtn = 4;
-			} else {
-				new_tx_pwr_setting = 12;
+			} 
+			// else if (pdr < 60) {
+			// 	new_tx_pwr_setting = 12;
+			// 	bis[0]->qos->tx->rtn = 8;
+			// } else if (pdr < 70) {
+			// 	new_tx_pwr_setting = 10;
+			// 	bis[0]->qos->tx->rtn = 6;
+			// } else if (pdr < 80) {
+			// 	new_tx_pwr_setting = 5;
+			// 	bis[0]->qos->tx->rtn = 4;
+			// } 
+			else {
+				new_tx_pwr_setting = 0;
 				bis[0]->qos->tx->rtn = 2;
 			}
 
 			if(tx_pwr_setting != new_tx_pwr_setting) {
+				err = bt_iso_big_terminate(big);
+				if (err) {
+					return;
+				}
+
+				err = k_sem_take(&sem_big_term, K_FOREVER);
+				if (err) {
+					return;
+				}
+
 				int err = ble_hci_vsc_set_tx_pwr(new_tx_pwr_setting);
 				if (err) {
 					printk("Failed to set tx power (err %d)\n", err);
 					return;
 				}
+
+				err = bt_iso_big_create(adv, &big_create_param, &big);
+				if (err) {
+					return;
+				}
+
+				err = k_sem_take(&sem_big_cmplt, K_FOREVER);
+				if (err) {
+					return;
+				}
+
+				iso_sent(&bis_iso_chan);
 				tx_pwr_setting = new_tx_pwr_setting;
 			}
 		}
 		
 		printk("PDR: %.2f%% - RTN: %u - TXP: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting);
+		prev_pdr = pdr;
 	}
 }
 
 void main(void)
 {
-	struct bt_le_ext_adv *adv;
-	struct bt_iso_big *big;
 	int err;
 
 	/* Initialize the LED */

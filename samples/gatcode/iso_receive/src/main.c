@@ -161,7 +161,7 @@ void acl_indicate(double pdr)
 /* ------------------------------------------------------ */
 /* ISO */
 /* ------------------------------------------------------ */
-#define TIMEOUT_SYNC_CREATE K_SECONDS(10)
+#define TIMEOUT_SYNC_CREATE K_SECONDS(20)
 #define NAME_LEN            30
 
 #define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, \
