@@ -7,8 +7,6 @@ project(iso_broadcast)
 target_sources(app PRIVATE
     src/main.c
     src/ble_hci_vsc.c
-    ../io_coder/src/io_coder.c
 )
 
 zephyr_library_include_directories(include)
-zephyr_library_include_directories(../io_coder/include)

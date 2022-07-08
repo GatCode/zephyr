@@ -1,18 +1,17 @@
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/iso.h>
-#include <zephyr/sys/byteorder.h>
-#include <hal/nrf_rtc.h>
-#include <nrfx_clock.h>
-#include <ble_hci_vsc.h>
-#include <io_coder.h>
-
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
-#include <zephyr/bluetooth/services/bas.h>
+#include <zephyr/bluetooth/iso.h>
+#include <zephyr/sys/byteorder.h>
+#include <ble_hci_vsc.h>
 
-static struct io_coder io_encoder = {0};
+#define LED0_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
 /* ------------------------------------------------------ */
 /* Defines */
@@ -22,123 +21,42 @@ static struct io_coder io_encoder = {0};
 #define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 20 // 5ms-4s
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
+
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
-#define ACL_DATA_LEN 4
-#define ACL_SCAN_INTERVAL 0x0050 // (N * 0.625 ms) - 50ms - sample 2x
 #define RANGE_PRIORITY 5
-#define RANGE_CALC_INTERVAL_MS 100
-#define WATCHDOG_INTERVAL_MS 1000
 
-#define MAX_RTN 10 // also default rtn
+#define MAX_RTN 8 // also default rtn
 #define MAX_TXP 13 // also default tx power (+3dBm)
 
 #define ENABLE_RANGE_EXTENSION_ALGORITHM true
+
+#define LED_ON true
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static float pdr = 0.0;
 static int8_t rssi = 0;
-K_MUTEX_DEFINE(linkback_lock);
 uint8_t tx_pwr_setting = 0;
-uint32_t watchdog_timestamp = 0;
 
 /* ------------------------------------------------------ */
-/* ACL (beacon) */
-// /* ------------------------------------------------------ */
-// K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
-// static struct k_thread thread_acl_data;
-
-// static void on_connected_cb(struct bt_conn *conn, uint8_t err)
-// {
-// 	if (err) {
-// 		printk("Connection failed (err 0x%02x)\n", err);
-// 	} else {
-// 		printk("Connected\n");
-// 	}
-// }
-
-// static void on_disconnected_cb(struct bt_conn *conn, uint8_t reason)
-// {
-// 	printk("Disconnected (reason 0x%02x)\n", reason);
-// }
-
-// static struct bt_conn_cb conn_callbacks = {
-// 	.connected = on_connected_cb,
-// 	.disconnected = on_disconnected_cb,
-// };
-
-// #define BT_LE_ADV_FAST_CONN                                                                        \
-// 	BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, BT_GAP_ADV_FAST_INT_MIN_1,                      \
-// 			BT_GAP_ADV_FAST_INT_MAX_1, NULL)
-
-// #define CONFIG_BLE_DEVICE_NAME_BASE "NRF5340_AUDIO"
-// #define DEVICE_NAME_PEER_L CONFIG_BLE_DEVICE_NAME_BASE "_H_L"
-// #define DEVICE_NAME_PEER_L_LEN (sizeof(DEVICE_NAME_PEER_L) - 1)
-
-// /* Advertising data for peer connection */
-// static const struct bt_data ad_peer_l[] = {
-// 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-// 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME_PEER_L, DEVICE_NAME_PEER_L_LEN),
-// };
-
-// void work_adv_start(struct k_work *item)
-// {
-// 	int ret;
-
-// 	ret = bt_le_adv_start(BT_LE_ADV_FAST_CONN, ad_peer_l, ARRAY_SIZE(ad_peer_l), NULL, 0);
-
-// 	if (ret) {
-// 		printk("Advertising failed to start (ret %d)\n", ret);
-// 	}
-// }
-// K_WORK_DEFINE(adv_work, work_adv_start);
-
-// void acl_thread(void *dummy1, void *dummy2, void *dummy3)
-// {
-// 	ARG_UNUSED(dummy1);
-// 	ARG_UNUSED(dummy2);
-// 	ARG_UNUSED(dummy3);
-
-// 	bt_conn_cb_register(&conn_callbacks);
-// 	k_work_submit(&adv_work);
-// }
-
-
-
-// void pdr_watchdog_handler(struct k_timer *dummy)
-// {
-// 	uint32_t curr_ts = k_uptime_get_32();
-// 	if(curr_ts - watchdog_timestamp > 1000) {
-// 		k_mutex_lock(&linkback_lock, K_FOREVER);
-// 		pdr = 0.0;
-// 		rssi = -127;
-// 		k_mutex_unlock(&linkback_lock);
-// 	}
-// }
-// K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
-
-
+/* ACL */
+/* ------------------------------------------------------ */
 static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params discover_params;
 static struct bt_gatt_subscribe_params subscribe_params;
 
-
-
-#define CONFIG_BLE_DEVICE_NAME_BASE "NRF5340_AUDIO"
-#define DEVICE_NAME_PEER_L CONFIG_BLE_DEVICE_NAME_BASE "_H_L"
-#define DEVICE_NAME_PEER_L_LEN (sizeof(DEVICE_NAME_PEER_L) - 1)
+#define DEVICE_NAME_ACL "nRF5340"
+#define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
 
 #define CONFIG_BLE_ACL_CONN_INTERVAL 100
 #define CONFIG_BLE_ACL_SLAVE_LATENCY 0
 #define CONFIG_BLE_ACL_SUP_TIMEOUT 400
 
-#define BT_LE_CONN_PARAM_MULTI                                                                     \
-	BT_LE_CONN_PARAM(CONFIG_BLE_ACL_CONN_INTERVAL, CONFIG_BLE_ACL_CONN_INTERVAL,               \
-			 CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
-
-static K_SEM_DEFINE(sem_acl_connected, 0, 1);
+#define BT_LE_CONN_PARAM_MULTI \
+		BT_LE_CONN_PARAM(CONFIG_BLE_ACL_CONN_INTERVAL, CONFIG_BLE_ACL_CONN_INTERVAL, \
+		CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
 
 static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 			const bt_addr_le_t *addr)
@@ -149,20 +67,16 @@ static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 
 	bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
 
-	if ((data_len == DEVICE_NAME_PEER_L_LEN) &&
-	    (strncmp(DEVICE_NAME_PEER_L, data, DEVICE_NAME_PEER_L_LEN) == 0)) {
+	if ((data_len == DEVICE_NAME_ACL_LEN) &&
+	    (strncmp(DEVICE_NAME_ACL, data, DEVICE_NAME_ACL_LEN) == 0)) {
 		bt_le_scan_stop();
 
 		ret = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, BT_LE_CONN_PARAM_MULTI,
 					&conn);
 		if (ret) {
-			printk("Could not init connection\n");
+			printk("Could not init ACL connection\n");
 			return ret;
-		} else {
-			k_sem_give(&sem_acl_connected);
 		}
-
-		// ret = ble_acl_gateway_conn_peer_set(0, &conn); // TODO: check err
 
 		return 0;
 	}
@@ -170,8 +84,6 @@ static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 	return -ENOENT;
 }
 
-/** @brief  BLE parse advertisement package.
- */
 static void ad_parse(struct net_buf_simple *p_ad, const bt_addr_le_t *addr)
 {
 	while (p_ad->len > 1) {
@@ -210,19 +122,16 @@ static void on_device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 
 void work_scan_start(struct k_work *item)
 {
-	int ret;
-
-	ret = bt_le_scan_start(BT_LE_SCAN_PASSIVE, on_device_found);
+	int ret = bt_le_scan_start(BT_LE_SCAN_PASSIVE, on_device_found);
 	if (ret) {
-		printk("Scanning failed to start (ret %d)\n", ret);
+		printk("ACL scanning failed to start (ret %d)\n", ret);
 		return;
 	}
 
-	printk("Scanning successfully started\n");
+	printk("ACL scanning successfully started\n");
 }
 
 K_WORK_DEFINE(start_scan_work, work_scan_start);
-
 
 static double pow(double x, double y)
 {
@@ -246,7 +155,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
 			   const void *data, uint16_t length)
 {
-	double temperature;
+	double value_recv;
 	uint32_t mantissa;
 	int8_t exponent;
 
@@ -256,12 +165,11 @@ static uint8_t notify_func(struct bt_conn *conn,
 		return BT_GATT_ITER_STOP;
 	}
 
-	/* temperature value display */
 	mantissa = sys_get_le24(&((uint8_t *)data)[1]);
 	exponent = ((uint8_t *)data)[4];
-	temperature = (double)mantissa * pow(10, exponent);
+	value_recv = (double)mantissa * pow(10, exponent);
 
-	printf("Temperature %gC.\n", temperature);
+	printk("PDR: %.2f%%\n", value_recv);
 
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -320,16 +228,17 @@ static uint8_t discover_func(struct bt_conn *conn,
 	return BT_GATT_ITER_STOP;
 }
 
-
 static void connected(struct bt_conn *conn, uint8_t conn_err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
-	int err;
-
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	printk("CONNECTED!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+	printk("ACL connected - %s\n", addr);
+	if (LED_ON) {
+		gpio_pin_set_dt(&led, 1);
+	}
 
+	/* Start Service Discovery */
 	memcpy(&uuid, BT_UUID_HTS, sizeof(uuid));
 	discover_params.uuid = &uuid.uuid;
 	discover_params.func = discover_func;
@@ -337,9 +246,9 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 	discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
 	discover_params.type = BT_GATT_DISCOVER_PRIMARY;
 
-	err = bt_gatt_discover(conn, &discover_params);
+	int err = bt_gatt_discover(conn, &discover_params);
 	if (err) {
-		printk("Discover failed(err %d)\n", err);
+		printk("ACL discovery failed(err %d)\n", err);
 		return;
 	}
 }
@@ -347,11 +256,12 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
-	int err;
-
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	printk("Disconnected: %s (reason 0x%02x)\n", addr, reason);
+	printk("ACL disconnected: %s (reason 0x%02x)\n", addr, reason);
+	if (LED_ON) {
+		gpio_pin_set_dt(&led, 0);
+	}
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -388,16 +298,6 @@ static struct bt_iso_chan bis_iso_chan;
 uint8_t iso_data[DATA_SIZE_BYTE] = { 0 };
 struct net_buf *buf;
 
-void gpio_work_handler(struct k_work *work)
-{
-    // printk("Sending value %u\n", seq_num);
-	int err = write_8_bit(&io_encoder, seq_num % 256);
-	if(err) {
-		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-	}
-}
-K_WORK_DEFINE(gpio_work, gpio_work_handler);
-
 static void iso_sent(struct bt_iso_chan *chan)
 {
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
@@ -411,8 +311,6 @@ static void iso_sent(struct bt_iso_chan *chan)
 		net_buf_unref(buf);
 		return;
 	}
-
-	// k_work_submit(&gpio_work); // FIXME: ENABLE IF NEEDED
 }
 
 static struct bt_iso_chan_ops iso_ops = {
@@ -490,34 +388,9 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			}
 		}
 		
-		k_mutex_lock(&linkback_lock, K_FOREVER);
 		printk("PDR: %.2f%% - RSSI: %d - RTN: %u\n", pdr, rssi, bis[0]->qos->tx->rtn);
-		k_mutex_unlock(&linkback_lock);
-
-		k_sleep(K_MSEC(RANGE_CALC_INTERVAL_MS));
+		k_sleep(K_MSEC(1000)); // FIXME: PROPER ADAPTATION NEEDED!
 	}
-}
-
-/* ------------------------------------------------------ */
-/* NRFX Clock */
-/* ------------------------------------------------------ */
-static int hfclock_config_and_start(void)
-{
-	int ret;
-
-	/* Use this to turn on 128 MHz clock for cpu_app */
-	ret = nrfx_clock_divider_set(NRF_CLOCK_DOMAIN_HFCLK, NRF_CLOCK_HFCLK_DIV_1);
-
-	ret -= NRFX_ERROR_BASE_NUM;
-	if (ret) {
-		return ret;
-	}
-
-	nrfx_clock_hfclk_start();
-	while (!nrfx_clock_hfclk_is_running()) {
-	}
-
-	return 0;
 }
 
 void main(void)
@@ -526,18 +399,15 @@ void main(void)
 	struct bt_iso_big *big;
 	int err;
 
-	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
-	if(err) {
-		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
-	}
+	/* Initialize the LED */
+	if (!device_is_ready(led.port)) {
+ 		printk("Error setting LED\n");
+ 	}
 
-	err = hfclock_config_and_start();
-	if (err) {
-		printk("NRFX Clock init failed (err %d)\n", err);
-		return;
-	}
-
-	printk("Starting ISO Broadcast Demo\n");
+ 	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+ 	if (err < 0) {
+ 		printk("Error setting LED (err %d)\n", err);
+ 	}
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
@@ -546,14 +416,7 @@ void main(void)
 		return;
 	}
 
-	/* Initialize ACL Scanning */
-	// k_thread_create(&thread_acl_data, thread_acl_stack_area,
-	// 		K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
-	// 		acl_thread, NULL, NULL, NULL,
-	// 		ACL_PRIORITY, 0, K_FOREVER);
-	// k_thread_name_set(&thread_acl_data, "acl_thread");
-	// k_thread_start(&thread_acl_data);
-
+	/* Start ACL Scanning */
 	k_work_submit(&start_scan_work);
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
@@ -561,8 +424,6 @@ void main(void)
 			BT_GAP_ADV_FAST_INT_MIN_2, \
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
-
-	// k_timer_start(&pdr_watchdog, K_MSEC(WATCHDOG_INTERVAL_MS), K_MSEC(WATCHDOG_INTERVAL_MS));
 
 	/* Create a non-connectable non-scannable advertising set */
 	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CUSTOM, NULL, &adv);
