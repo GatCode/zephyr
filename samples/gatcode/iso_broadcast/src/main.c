@@ -11,7 +11,9 @@
 #include <ble_hci_vsc.h>
 
 #define LED0_NODE DT_ALIAS(led0)
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+#define LED1_NODE DT_ALIAS(led1)
+static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 
 /* ------------------------------------------------------ */
 /* Defines */
@@ -174,6 +176,10 @@ static uint8_t notify_func(struct bt_conn *conn,
 	// printk("PDR: %.2f%%\n", pdr);
 	k_sem_give(&sem_pdr_recv);
 
+	if (LED_ON) {
+		gpio_pin_set_dt(&led2, 1);
+	}
+
 	return BT_GATT_ITER_CONTINUE;
 }
 
@@ -238,7 +244,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 	printk("ACL connected - %s\n", addr);
 	if (LED_ON) {
-		gpio_pin_set_dt(&led, 1);
+		gpio_pin_set_dt(&led1, 1);
 	}
 
 	/* Start Service Discovery */
@@ -263,7 +269,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	printk("ACL disconnected: %s (reason 0x%02x)\n", addr, reason);
 	if (LED_ON) {
-		gpio_pin_set_dt(&led, 0);
+		gpio_pin_set_dt(&led1, 0);
+		gpio_pin_set_dt(&led2, 0);
 	}
 }
 
@@ -410,11 +417,12 @@ void main(void)
 	int err;
 
 	/* Initialize the LED */
-	if (!device_is_ready(led.port)) {
+	if (!device_is_ready(led1.port) || !device_is_ready(led2.port)) {
  		printk("Error setting LED\n");
  	}
 
- 	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+ 	err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led2, GPIO_OUTPUT_INACTIVE);
  	if (err < 0) {
  		printk("Error setting LED (err %d)\n", err);
  	}

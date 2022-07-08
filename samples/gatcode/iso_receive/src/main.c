@@ -14,7 +14,9 @@
 #include <stdlib.h>
 
 #define LED0_NODE DT_ALIAS(led0)
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+#define LED1_NODE DT_ALIAS(led1)
+static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 
 /* ------------------------------------------------------ */
 /* Defines */
@@ -50,6 +52,8 @@ static struct k_thread thread_acl_data;
 		BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, BT_GAP_ADV_FAST_INT_MIN_1, \
 		BT_GAP_ADV_FAST_INT_MAX_1, NULL)
 
+static struct bt_gatt_indicate_params ind_params;
+
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME_ACL, DEVICE_NAME_ACL_LEN),
@@ -75,7 +79,7 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 	} else {
 		printk("ACL Connected\n");
 		if (LED_ON) {
-			gpio_pin_set_dt(&led, 1);
+			gpio_pin_set_dt(&led1, 1);
 		}
 	}
 }
@@ -84,7 +88,8 @@ static void acl_disconnected_cb(struct bt_conn *conn, uint8_t reason)
 {
 	printk("ACL Disconnected (reason 0x%02x)\n", reason);
 	if (LED_ON) {
-		gpio_pin_set_dt(&led, 0);
+		gpio_pin_set_dt(&led1, 0);
+		gpio_pin_set_dt(&led2, 0);
 	}
 }
 
@@ -111,6 +116,29 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 
 	bt_conn_cb_register(&conn_callbacks);
 	k_work_submit(&adv_work);
+}
+
+void acl_indicate(double pdr)
+{
+	static uint8_t htm[5];
+	uint32_t mantissa;
+	uint8_t exponent;
+
+	mantissa = (uint32_t)(pdr * 100);
+	exponent = (uint8_t)-2;
+
+	htm[0] = 0;
+	sys_put_le24(mantissa, (uint8_t *)&htm[1]);
+	htm[4] = exponent;
+
+	ind_params.attr = &hts_svc.attrs[2];
+	ind_params.data = &htm;
+	ind_params.len = sizeof(htm);
+	(void)bt_gatt_indicate(NULL, &ind_params);
+
+	if (LED_ON) {
+		gpio_pin_set_dt(&led2, 1);
+	}
 }
 
 /* ------------------------------------------------------ */
@@ -244,9 +272,6 @@ float RollingmAvg(uint8_t newValue)
 // }
 // K_TIMER_DEFINE(recv_pdr, recv_pdr_handler, NULL);
 
-
-static struct bt_gatt_indicate_params ind_params;
-
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
@@ -278,26 +303,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		prev_seq_num = seq_num;
 
 		if (seq_num % 10 == 0) {
-			static uint8_t htm[5];
-			static double value_recv = 20U;
-			uint32_t mantissa;
-			uint8_t exponent;
-			
-			value_recv = seq_num;
-
-			printk("PDR: %.2f%%\n", value_recv);
-
-			mantissa = (uint32_t)(value_recv * 100);
-			exponent = (uint8_t)-2;
-
-			htm[0] = 0;
-			sys_put_le24(mantissa, (uint8_t *)&htm[1]);
-			htm[4] = exponent;
-
-			ind_params.attr = &hts_svc.attrs[2];
-			ind_params.data = &htm;
-			ind_params.len = sizeof(htm);
-			(void)bt_gatt_indicate(NULL, &ind_params);
+			acl_indicate(seq_num + 0.43);
 		}
 
 		// uint32_t info_ts = info->ts;
@@ -359,11 +365,12 @@ void main(void)
 	int err;
 
 	/* Initialize the LED */
-	if (!device_is_ready(led.port)) {
+	if (!device_is_ready(led1.port) || !device_is_ready(led2.port)) {
  		printk("Error setting LED\n");
  	}
 
- 	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
+ 	err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led2, GPIO_OUTPUT_INACTIVE);
  	if (err < 0) {
  		printk("Error setting LED (err %d)\n", err);
  	}
