@@ -16,6 +16,11 @@
 // #include <sync_timer.h>
 #include <stdlib.h>
 
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
+
 
 
 // #include <stdbool.h>
@@ -50,100 +55,205 @@ static uint16_t iso_interval = 0;
 /* ------------------------------------------------------ */
 /* ACL */
 /* ------------------------------------------------------ */
-static struct bt_gatt_indicate_params acl_ind_params;
-static uint8_t simulate_htm;
-static uint8_t indicating;
+// #define CONFIG_BLE_DEVICE_NAME_BASE "NRF5340_AUDIO"
+// #define DEVICE_NAME_PEER_L CONFIG_BLE_DEVICE_NAME_BASE "_H_L"
+// #define DEVICE_NAME_PEER_L_LEN (sizeof(DEVICE_NAME_PEER_L) - 1)
 
-static const struct bt_data ad[] = {
-	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_HTS_VAL)),
-};
+// #define CONFIG_BLE_ACL_CONN_INTERVAL 100
+// #define CONFIG_BLE_ACL_SLAVE_LATENCY 0
+// #define CONFIG_BLE_ACL_SUP_TIMEOUT 400
 
-static void htmc_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value)
-{
-	simulate_htm = (value == BT_GATT_CCC_INDICATE) ? 1 : 0;
-}
+// #define BT_LE_CONN_PARAM_MULTI                                                                     \
+// 	BT_LE_CONN_PARAM(CONFIG_BLE_ACL_CONN_INTERVAL, CONFIG_BLE_ACL_CONN_INTERVAL,               \
+// 			 CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
 
-BT_GATT_SERVICE_DEFINE(pdr_svc,
-	BT_GATT_PRIMARY_SERVICE(BT_UUID_HTS),
-	BT_GATT_CHARACTERISTIC(BT_UUID_HTS_MEASUREMENT, BT_GATT_CHRC_INDICATE, BT_GATT_PERM_NONE, NULL, NULL, NULL),
-	BT_GATT_CCC(htmc_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-);
+// static K_SEM_DEFINE(sem_acl_connected, 0, 1);
 
-static void indicate_cb(struct bt_conn *conn,
-			struct bt_gatt_indicate_params *params, uint8_t err)
-{
-	printk("PDR Indication %s\n", err != 0U ? "fail" : "success");
-}
+// static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
+// 			const bt_addr_le_t *addr)
+// {
+// 	int ret;
+// 	struct bt_conn *conn;
+// 	char addr_str[BT_ADDR_LE_STR_LEN];
 
-static void indicate_destroy(struct bt_gatt_indicate_params *params)
-{
-	printk("PDR Indication complete\n");
-	indicating = 0U;
-}
+// 	bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
 
-static void pdr_indicate()
-{
-	uint32_t mantissa = (uint32_t)(pdr * 100);
-	uint8_t exponent = (uint8_t)-2;
-	static uint8_t data[5];
+// 	if ((data_len == DEVICE_NAME_PEER_L_LEN) &&
+// 	    (strncmp(DEVICE_NAME_PEER_L, data, DEVICE_NAME_PEER_L_LEN) == 0)) {
+// 		bt_le_scan_stop();
 
-	data[0] = 0;
-	sys_put_le24(mantissa, (uint8_t *)&data[1]);
-	data[4] = exponent;
+// 		ret = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, BT_LE_CONN_PARAM_MULTI,
+// 					&conn);
+// 		if (ret) {
+// 			printk("Could not init connection\n");
+// 			return ret;
+// 		} else {
+// 			k_sem_give(&sem_acl_connected);
+// 		}
 
-	acl_ind_params.attr = &pdr_svc.attrs[2];
-	acl_ind_params.func = indicate_cb;
-	acl_ind_params.destroy = indicate_destroy;
-	acl_ind_params.data = &data;
-	acl_ind_params.len = sizeof(data);
+// 		// ret = ble_acl_gateway_conn_peer_set(0, &conn); // TODO: check err
 
-	if (bt_gatt_indicate(NULL, &acl_ind_params) == 0) {
-		indicating = 1U;
-	}
-}
+// 		return 0;
+// 	}
 
-void acl_indicate_work_handler(struct k_work *work)
-{
-	pdr_indicate();
-}
-K_WORK_DEFINE(acl_work_indicate, acl_indicate_work_handler);
+// 	return -ENOENT;
+// }
 
-static void acl_connected(struct bt_conn *conn, uint8_t err)
+// /** @brief  BLE parse advertisement package.
+//  */
+// static void ad_parse(struct net_buf_simple *p_ad, const bt_addr_le_t *addr)
+// {
+// 	while (p_ad->len > 1) {
+// 		uint8_t len = net_buf_simple_pull_u8(p_ad);
+// 		uint8_t type;
+
+// 		/* Check for early termination */
+// 		if (len == 0) {
+// 			return;
+// 		}
+
+// 		if (len > p_ad->len) {
+// 			printk("AD malformed\n");
+// 			return;
+// 		}
+
+// 		type = net_buf_simple_pull_u8(p_ad);
+
+// 		if (device_found(type, p_ad->data, len - 1, addr) == 0) {
+// 			return;
+// 		}
+
+// 		(void)net_buf_simple_pull(p_ad, len - 1);
+// 	}
+// }
+
+// static void on_device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
+// 			    struct net_buf_simple *p_ad)
+// {
+// 	/* We're only interested in general connectable events */
+// 	if (type == BT_HCI_ADV_IND) {
+// 		/* Note: May lead to connection creation */
+// 		ad_parse(p_ad, addr);
+// 	}
+// }
+
+// void work_scan_start(struct k_work *item)
+// {
+// 	int ret;
+
+// 	ret = bt_le_scan_start(BT_LE_SCAN_PASSIVE, on_device_found);
+// 	if (ret) {
+// 		printk("Scanning failed to start (ret %d)\n", ret);
+// 		return;
+// 	}
+
+// 	printk("Scanning successfully started\n");
+// }
+
+// K_WORK_DEFINE(start_scan_work, work_scan_start);
+
+
+
+
+
+
+#define STACKSIZE 1024
+#define ACL_PRIORITY 9
+#define ACL_DATA_LEN 4
+#define ACL_SCAN_INTERVAL 0x0050 // (N * 0.625 ms) - 50ms - sample 2x
+#define RANGE_PRIORITY 5
+#define RANGE_CALC_INTERVAL_MS 100
+#define WATCHDOG_INTERVAL_MS 1000
+
+K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
+static struct k_thread thread_acl_data;
+
+static void on_connected_cb(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
-		printk("ACL Connection failed (err 0x%02x)\n", err);
+		printk("Connection failed (err 0x%02x)\n", err);
 	} else {
-		printk("ACL Connected\n");
-		// if (LED_ON) {
- 		// 	gpio_pin_set_dt(&led, 1);
- 		// }
+		printk("Connected\n");
 	}
 }
 
-static void acl_disconnected(struct bt_conn *conn, uint8_t reason)
+static void on_disconnected_cb(struct bt_conn *conn, uint8_t reason)
 {
-	printk("ACL Disconnected (reason 0x%02x)\n", reason);
-	// if (LED_ON) {
-	// 	gpio_pin_set_dt(&led, 0);
-	// }
+	printk("Disconnected (reason 0x%02x)\n", reason);
 }
 
-BT_CONN_CB_DEFINE(acl_conn_callbacks) = {
-	.connected = acl_connected,
-	.disconnected = acl_disconnected,
+static struct bt_conn_cb conn_callbacks = {
+	.connected = on_connected_cb,
+	.disconnected = on_disconnected_cb,
 };
 
-static void auth_cancel_acl(struct bt_conn *conn)
+#define BT_LE_ADV_FAST_CONN                                                                        \
+	BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, BT_GAP_ADV_FAST_INT_MIN_1,                      \
+			BT_GAP_ADV_FAST_INT_MAX_1, NULL)
+
+#define CONFIG_BLE_DEVICE_NAME_BASE "NRF5340_AUDIO"
+#define DEVICE_NAME_PEER_L CONFIG_BLE_DEVICE_NAME_BASE "_H_L"
+#define DEVICE_NAME_PEER_L_LEN (sizeof(DEVICE_NAME_PEER_L) - 1)
+
+/* Advertising data for peer connection */
+static const struct bt_data ad_peer_l[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME_PEER_L, DEVICE_NAME_PEER_L_LEN),
+};
+
+// static ssize_t write_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+// 			const void *buf, uint16_t len, uint16_t offset,
+// 			uint8_t flags)
+// {
+// 	uint8_t *value = attr->user_data;
+
+// 	printk("write_cb - value: %u\n", *value);
+
+// 	// if (offset + len > sizeof(ct)) {
+// 	// 	return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+// 	// }
+
+// 	// memcpy(value + offset, buf, len);
+// 	// ct_update = 1U;
+
+// 	return len;
+// }
+
+static void htmc_ccc_cfg_changed(const struct bt_gatt_attr *attr,
+				 uint16_t value)
 {
-	char addr[BT_ADDR_LE_STR_LEN];
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-	printk("Pairing cancelled: %s\n", addr);
+	// simulate_htm = (value == BT_GATT_CCC_INDICATE) ? 1 : 0;
 }
 
-static struct bt_conn_auth_cb auth_cb_acl = {
-	.cancel = auth_cancel_acl,
-};
+BT_GATT_SERVICE_DEFINE(hts_svc,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_HTS),
+	BT_GATT_CHARACTERISTIC(BT_UUID_HTS_MEASUREMENT, BT_GATT_CHRC_INDICATE,
+			       BT_GATT_PERM_NONE, NULL, NULL, NULL),
+	BT_GATT_CCC(htmc_ccc_cfg_changed,
+		    BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	/* more optional Characteristics */
+);
+void work_adv_start(struct k_work *item)
+{
+	int ret;
+
+	ret = bt_le_adv_start(BT_LE_ADV_FAST_CONN, ad_peer_l, ARRAY_SIZE(ad_peer_l), NULL, 0);
+
+	if (ret) {
+		printk("Advertising failed to start (ret %d)\n", ret);
+	}
+}
+K_WORK_DEFINE(adv_work, work_adv_start);
+
+void acl_thread(void *dummy1, void *dummy2, void *dummy3)
+{
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
+
+	bt_conn_cb_register(&conn_callbacks);
+	k_work_submit(&adv_work);
+}
 
 /* ------------------------------------------------------ */
 /* ISO */
@@ -259,22 +369,25 @@ float RollingmAvg(uint8_t newValue)
         return (float)maverage_current_sum * 100.0 / (float)maverage_sample_length;
 }
 
-void recv_pdr_handler(struct k_timer *dummy)
-{
-	uint8_t value = 0;
+// void recv_pdr_handler(struct k_timer *dummy)
+// {
+// 	uint8_t value = 0;
 
-	if(received_packet) {
-		value = 1;
-	}
+// 	if(received_packet) {
+// 		value = 1;
+// 	}
 
-	pdr = RollingmAvg(value);
+// 	pdr = RollingmAvg(value);
 
-	// pdr_indicate();
-	k_work_submit(&acl_work_indicate);
+// 	// pdr_indicate();
+// 	k_work_submit(&acl_work_indicate);
 
-	received_packet = false; // reset
-}
-K_TIMER_DEFINE(recv_pdr, recv_pdr_handler, NULL);
+// 	received_packet = false; // reset
+// }
+// K_TIMER_DEFINE(recv_pdr, recv_pdr_handler, NULL);
+
+
+static struct bt_gatt_indicate_params ind_params;
 
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
@@ -293,11 +406,11 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		seq_num = sys_get_le32(count_arr);
 		printk(" | Packet ID: %u\n", seq_num);
 
-		if(!pdr_timer_started) {
-			uint32_t iso_ival_ms = iso_interval * 1.25;
-			k_timer_start(&recv_pdr, K_MSEC(iso_ival_ms), K_MSEC(iso_ival_ms));
-			pdr_timer_started = true;
-		}
+		// if(!pdr_timer_started) {
+		// 	uint32_t iso_ival_ms = iso_interval * 1.25;
+		// 	k_timer_start(&recv_pdr, K_MSEC(iso_ival_ms), K_MSEC(iso_ival_ms));
+		// 	pdr_timer_started = true;
+		// }
 
 		received_packet = true;
 		if(prev_seq_num + 1 != seq_num) {
@@ -305,6 +418,32 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			printk("\n------------------------- LOST PACKET -------------------------\n");
 		}
 		prev_seq_num = seq_num;
+
+		if (seq_num % 10 == 0) {
+			static uint8_t htm[5];
+			static double temperature = 20U;
+			uint32_t mantissa;
+			uint8_t exponent;
+			
+			temperature = seq_num;
+
+			printf("temperature is %gC\n", temperature);
+
+			mantissa = (uint32_t)(temperature * 100);
+			exponent = (uint8_t)-2;
+
+			htm[0] = 0; /* temperature in celsius */
+			sys_put_le24(mantissa, (uint8_t *)&htm[1]);
+			htm[4] = exponent;
+
+			ind_params.attr = &hts_svc.attrs[2];
+			// ind_params.func = indicate_cb;
+			// ind_params.destroy = indicate_destroy;
+			ind_params.data = &htm;
+			ind_params.len = sizeof(htm);
+
+			(void)bt_gatt_indicate(NULL, &ind_params);
+		}
 
 		// uint32_t info_ts = info->ts;
 		// uint32_t curr = audio_sync_timer_curr_time_get();
@@ -422,13 +561,29 @@ void main(void)
 		return;
 	}
 
+	k_thread_create(&thread_acl_data, thread_acl_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+			acl_thread, NULL, NULL, NULL,
+			ACL_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_acl_data, "acl_thread");
+	k_thread_start(&thread_acl_data);
+
+	// scan_start();
+	// k_work_submit(&start_scan_work);
+
+	// err = k_sem_take(&sem_acl_connected, K_FOREVER);
+	// if (err) {
+	// 	printk("failed (err %d)\n", err);
+	// 	return;
+	// }
+
 	/* Start ACL */
-	err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
-	if (err) {
-		printk("Advertising failed to start (err %d)\n", err);
-		return;
-	}
-	bt_conn_auth_cb_register(&auth_cb_acl);
+	// err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+	// if (err) {
+	// 	printk("Advertising failed to start (err %d)\n", err);
+	// 	return;
+	// }
+	// bt_conn_auth_cb_register(&auth_cb_acl);
 
 	/* Start ISO */
 	printk("Init ISO receiption...");

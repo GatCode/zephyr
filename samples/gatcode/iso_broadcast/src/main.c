@@ -2,8 +2,15 @@
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
 #include <hal/nrf_rtc.h>
+#include <nrfx_clock.h>
 #include <ble_hci_vsc.h>
 #include <io_coder.h>
+
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/services/bas.h>
 
 static struct io_coder io_encoder = {0};
 
@@ -39,77 +46,318 @@ uint32_t watchdog_timestamp = 0;
 
 /* ------------------------------------------------------ */
 /* ACL (beacon) */
-/* ------------------------------------------------------ */
-K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
-static struct k_thread thread_acl_data;
+// /* ------------------------------------------------------ */
+// K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
+// static struct k_thread thread_acl_data;
 
-static bool data_cb(struct bt_data *data, void *user_data)
+// static void on_connected_cb(struct bt_conn *conn, uint8_t err)
+// {
+// 	if (err) {
+// 		printk("Connection failed (err 0x%02x)\n", err);
+// 	} else {
+// 		printk("Connected\n");
+// 	}
+// }
+
+// static void on_disconnected_cb(struct bt_conn *conn, uint8_t reason)
+// {
+// 	printk("Disconnected (reason 0x%02x)\n", reason);
+// }
+
+// static struct bt_conn_cb conn_callbacks = {
+// 	.connected = on_connected_cb,
+// 	.disconnected = on_disconnected_cb,
+// };
+
+// #define BT_LE_ADV_FAST_CONN                                                                        \
+// 	BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, BT_GAP_ADV_FAST_INT_MIN_1,                      \
+// 			BT_GAP_ADV_FAST_INT_MAX_1, NULL)
+
+// #define CONFIG_BLE_DEVICE_NAME_BASE "NRF5340_AUDIO"
+// #define DEVICE_NAME_PEER_L CONFIG_BLE_DEVICE_NAME_BASE "_H_L"
+// #define DEVICE_NAME_PEER_L_LEN (sizeof(DEVICE_NAME_PEER_L) - 1)
+
+// /* Advertising data for peer connection */
+// static const struct bt_data ad_peer_l[] = {
+// 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+// 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME_PEER_L, DEVICE_NAME_PEER_L_LEN),
+// };
+
+// void work_adv_start(struct k_work *item)
+// {
+// 	int ret;
+
+// 	ret = bt_le_adv_start(BT_LE_ADV_FAST_CONN, ad_peer_l, ARRAY_SIZE(ad_peer_l), NULL, 0);
+
+// 	if (ret) {
+// 		printk("Advertising failed to start (ret %d)\n", ret);
+// 	}
+// }
+// K_WORK_DEFINE(adv_work, work_adv_start);
+
+// void acl_thread(void *dummy1, void *dummy2, void *dummy3)
+// {
+// 	ARG_UNUSED(dummy1);
+// 	ARG_UNUSED(dummy2);
+// 	ARG_UNUSED(dummy3);
+
+// 	bt_conn_cb_register(&conn_callbacks);
+// 	k_work_submit(&adv_work);
+// }
+
+
+
+// void pdr_watchdog_handler(struct k_timer *dummy)
+// {
+// 	uint32_t curr_ts = k_uptime_get_32();
+// 	if(curr_ts - watchdog_timestamp > 1000) {
+// 		k_mutex_lock(&linkback_lock, K_FOREVER);
+// 		pdr = 0.0;
+// 		rssi = -127;
+// 		k_mutex_unlock(&linkback_lock);
+// 	}
+// }
+// K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
+
+
+static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
+static struct bt_gatt_discover_params discover_params;
+static struct bt_gatt_subscribe_params subscribe_params;
+
+
+
+#define CONFIG_BLE_DEVICE_NAME_BASE "NRF5340_AUDIO"
+#define DEVICE_NAME_PEER_L CONFIG_BLE_DEVICE_NAME_BASE "_H_L"
+#define DEVICE_NAME_PEER_L_LEN (sizeof(DEVICE_NAME_PEER_L) - 1)
+
+#define CONFIG_BLE_ACL_CONN_INTERVAL 100
+#define CONFIG_BLE_ACL_SLAVE_LATENCY 0
+#define CONFIG_BLE_ACL_SUP_TIMEOUT 400
+
+#define BT_LE_CONN_PARAM_MULTI                                                                     \
+	BT_LE_CONN_PARAM(CONFIG_BLE_ACL_CONN_INTERVAL, CONFIG_BLE_ACL_CONN_INTERVAL,               \
+			 CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
+
+static K_SEM_DEFINE(sem_acl_connected, 0, 1);
+
+static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
+			const bt_addr_le_t *addr)
 {
-	if (data->type == BT_DATA_MANUFACTURER_DATA && data->data_len == ACL_DATA_LEN) {
-		memcpy(user_data, data->data, ACL_DATA_LEN);
-		return false;
-	}
-	return true;
-}
+	int ret;
+	struct bt_conn *conn;
+	char addr_str[BT_ADDR_LE_STR_LEN];
 
-static void acl_scan_cb(const bt_addr_le_t *addr, int8_t rssi_, uint8_t adv_type, struct net_buf_simple *buf)
-{
-	uint8_t acl_data[ACL_DATA_LEN];
-	(void)memset(acl_data, 0, sizeof(acl_data));
-	bt_data_parse(buf, data_cb, acl_data);
+	bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
 
-	if (acl_data[0] != 0) { // received ACL data
-		uint8_t d0 = acl_data[0] >> 4;
-		uint8_t d1 = acl_data[0] & d0;
-		uint8_t d2 = acl_data[1] >> 4;
-		uint8_t d3 = acl_data[1] & d2;
+	if ((data_len == DEVICE_NAME_PEER_L_LEN) &&
+	    (strncmp(DEVICE_NAME_PEER_L, data, DEVICE_NAME_PEER_L_LEN) == 0)) {
+		bt_le_scan_stop();
 
-		k_mutex_lock(&linkback_lock, K_FOREVER);
-		if (d0 == 0xF) {
-			pdr = 100.0;
+		ret = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, BT_LE_CONN_PARAM_MULTI,
+					&conn);
+		if (ret) {
+			printk("Could not init connection\n");
+			return ret;
 		} else {
-			pdr = d0 * 10 + d1 + (float)d2 / 10.0 + (float)d3 / 100.0;
+			k_sem_give(&sem_acl_connected);
 		}
-		rssi = rssi_;
-		k_mutex_unlock(&linkback_lock);
 
-		watchdog_timestamp = k_uptime_get_32();
+		// ret = ble_acl_gateway_conn_peer_set(0, &conn); // TODO: check err
+
+		return 0;
+	}
+
+	return -ENOENT;
+}
+
+/** @brief  BLE parse advertisement package.
+ */
+static void ad_parse(struct net_buf_simple *p_ad, const bt_addr_le_t *addr)
+{
+	while (p_ad->len > 1) {
+		uint8_t len = net_buf_simple_pull_u8(p_ad);
+		uint8_t type;
+
+		/* Check for early termination */
+		if (len == 0) {
+			return;
+		}
+
+		if (len > p_ad->len) {
+			printk("AD malformed\n");
+			return;
+		}
+
+		type = net_buf_simple_pull_u8(p_ad);
+
+		if (device_found(type, p_ad->data, len - 1, addr) == 0) {
+			return;
+		}
+
+		(void)net_buf_simple_pull(p_ad, len - 1);
 	}
 }
 
-void acl_thread(void *dummy1, void *dummy2, void *dummy3)
+static void on_device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
+			    struct net_buf_simple *p_ad)
 {
-	ARG_UNUSED(dummy1);
-	ARG_UNUSED(dummy2);
-	ARG_UNUSED(dummy3);
+	/* We're only interested in general connectable events */
+	if (type == BT_HCI_ADV_IND) {
+		/* Note: May lead to connection creation */
+		ad_parse(p_ad, addr);
+	}
+}
 
+void work_scan_start(struct k_work *item)
+{
+	int ret;
+
+	ret = bt_le_scan_start(BT_LE_SCAN_PASSIVE, on_device_found);
+	if (ret) {
+		printk("Scanning failed to start (ret %d)\n", ret);
+		return;
+	}
+
+	printk("Scanning successfully started\n");
+}
+
+K_WORK_DEFINE(start_scan_work, work_scan_start);
+
+
+static double pow(double x, double y)
+{
+	double result = 1;
+
+	if (y < 0) {
+		y = -y;
+		while (y--) {
+			result /= x;
+		}
+	} else {
+		while (y--) {
+			result *= x;
+		}
+	}
+
+	return result;
+}
+
+static uint8_t notify_func(struct bt_conn *conn,
+			   struct bt_gatt_subscribe_params *params,
+			   const void *data, uint16_t length)
+{
+	double temperature;
+	uint32_t mantissa;
+	int8_t exponent;
+
+	if (!data) {
+		printk("[UNSUBSCRIBED]\n");
+		params->value_handle = 0U;
+		return BT_GATT_ITER_STOP;
+	}
+
+	/* temperature value display */
+	mantissa = sys_get_le24(&((uint8_t *)data)[1]);
+	exponent = ((uint8_t *)data)[4];
+	temperature = (double)mantissa * pow(10, exponent);
+
+	printf("Temperature %gC.\n", temperature);
+
+	return BT_GATT_ITER_CONTINUE;
+}
+
+static uint8_t discover_func(struct bt_conn *conn,
+			     const struct bt_gatt_attr *attr,
+			     struct bt_gatt_discover_params *params)
+{
 	int err;
 
-	struct bt_le_scan_param scan_param = {
-		.type       = BT_LE_SCAN_TYPE_PASSIVE,
-		.options    = BT_LE_SCAN_OPT_NONE,
-		.interval   = ACL_SCAN_INTERVAL,
-		.window     = ACL_SCAN_INTERVAL,
-	};
+	if (!attr) {
+		printk("Discover complete\n");
+		(void)memset(params, 0, sizeof(*params));
+		return BT_GATT_ITER_STOP;
+	}
 
-	err = bt_le_scan_start(&scan_param, acl_scan_cb);
+	printk("[ATTRIBUTE] handle %u\n", attr->handle);
+
+	if (!bt_uuid_cmp(discover_params.uuid, BT_UUID_HTS)) {
+		memcpy(&uuid, BT_UUID_HTS_MEASUREMENT, sizeof(uuid));
+		discover_params.uuid = &uuid.uuid;
+		discover_params.start_handle = attr->handle + 1;
+		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+
+		err = bt_gatt_discover(conn, &discover_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else if (!bt_uuid_cmp(discover_params.uuid,
+				BT_UUID_HTS_MEASUREMENT)) {
+		memcpy(&uuid, BT_UUID_GATT_CCC, sizeof(uuid));
+		discover_params.uuid = &uuid.uuid;
+		discover_params.start_handle = attr->handle + 2;
+		discover_params.type = BT_GATT_DISCOVER_DESCRIPTOR;
+		subscribe_params.value_handle = bt_gatt_attr_value_handle(attr);
+
+		err = bt_gatt_discover(conn, &discover_params);
+		if (err) {
+			printk("Discover failed (err %d)\n", err);
+		}
+	} else {
+		subscribe_params.notify = notify_func;
+		subscribe_params.value = BT_GATT_CCC_INDICATE;
+		subscribe_params.ccc_handle = attr->handle;
+
+		err = bt_gatt_subscribe(conn, &subscribe_params);
+		if (err && err != -EALREADY) {
+			printk("Subscribe failed (err %d)\n", err);
+		} else {
+			printk("[SUBSCRIBED]\n");
+		}
+
+		return BT_GATT_ITER_STOP;
+	}
+
+	return BT_GATT_ITER_STOP;
+}
+
+
+static void connected(struct bt_conn *conn, uint8_t conn_err)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	int err;
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	printk("CONNECTED!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+
+	memcpy(&uuid, BT_UUID_HTS, sizeof(uuid));
+	discover_params.uuid = &uuid.uuid;
+	discover_params.func = discover_func;
+	discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+	discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+	discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+
+	err = bt_gatt_discover(conn, &discover_params);
 	if (err) {
-		printk("Starting scanning failed (err %d)\n", err);
+		printk("Discover failed(err %d)\n", err);
 		return;
 	}
 }
 
-void pdr_watchdog_handler(struct k_timer *dummy)
+static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
-	uint32_t curr_ts = k_uptime_get_32();
-	if(curr_ts - watchdog_timestamp > 1000) {
-		k_mutex_lock(&linkback_lock, K_FOREVER);
-		pdr = 0.0;
-		rssi = -127;
-		k_mutex_unlock(&linkback_lock);
-	}
+	char addr[BT_ADDR_LE_STR_LEN];
+	int err;
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	printk("Disconnected: %s (reason 0x%02x)\n", addr, reason);
 }
-K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
+
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+	.connected = connected,
+	.disconnected = disconnected,
+};
 
 /* ------------------------------------------------------ */
 /* ISO */
@@ -250,6 +498,28 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 	}
 }
 
+/* ------------------------------------------------------ */
+/* NRFX Clock */
+/* ------------------------------------------------------ */
+static int hfclock_config_and_start(void)
+{
+	int ret;
+
+	/* Use this to turn on 128 MHz clock for cpu_app */
+	ret = nrfx_clock_divider_set(NRF_CLOCK_DOMAIN_HFCLK, NRF_CLOCK_HFCLK_DIV_1);
+
+	ret -= NRFX_ERROR_BASE_NUM;
+	if (ret) {
+		return ret;
+	}
+
+	nrfx_clock_hfclk_start();
+	while (!nrfx_clock_hfclk_is_running()) {
+	}
+
+	return 0;
+}
+
 void main(void)
 {
 	struct bt_le_ext_adv *adv;
@@ -259,6 +529,12 @@ void main(void)
 	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
 	if(err) {
 		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
+	}
+
+	err = hfclock_config_and_start();
+	if (err) {
+		printk("NRFX Clock init failed (err %d)\n", err);
+		return;
 	}
 
 	printk("Starting ISO Broadcast Demo\n");
@@ -271,12 +547,14 @@ void main(void)
 	}
 
 	/* Initialize ACL Scanning */
-	k_thread_create(&thread_acl_data, thread_acl_stack_area,
-			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
-			acl_thread, NULL, NULL, NULL,
-			ACL_PRIORITY, 0, K_FOREVER);
-	k_thread_name_set(&thread_acl_data, "acl_thread");
-	k_thread_start(&thread_acl_data);
+	// k_thread_create(&thread_acl_data, thread_acl_stack_area,
+	// 		K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+	// 		acl_thread, NULL, NULL, NULL,
+	// 		ACL_PRIORITY, 0, K_FOREVER);
+	// k_thread_name_set(&thread_acl_data, "acl_thread");
+	// k_thread_start(&thread_acl_data);
+
+	k_work_submit(&start_scan_work);
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER, \
@@ -284,7 +562,7 @@ void main(void)
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
 
-	k_timer_start(&pdr_watchdog, K_MSEC(WATCHDOG_INTERVAL_MS), K_MSEC(WATCHDOG_INTERVAL_MS));
+	// k_timer_start(&pdr_watchdog, K_MSEC(WATCHDOG_INTERVAL_MS), K_MSEC(WATCHDOG_INTERVAL_MS));
 
 	/* Create a non-connectable non-scannable advertising set */
 	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CUSTOM, NULL, &adv);
