@@ -37,7 +37,6 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static float pdr = 0.0;
-static int8_t rssi = 0;
 uint8_t tx_pwr_setting = 0;
 
 /* ------------------------------------------------------ */
@@ -57,6 +56,8 @@ static struct bt_gatt_subscribe_params subscribe_params;
 #define BT_LE_CONN_PARAM_MULTI \
 		BT_LE_CONN_PARAM(CONFIG_BLE_ACL_CONN_INTERVAL, CONFIG_BLE_ACL_CONN_INTERVAL, \
 		CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
+
+static K_SEM_DEFINE(sem_pdr_recv, 0, 1);
 
 static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 			const bt_addr_le_t *addr)
@@ -169,7 +170,9 @@ static uint8_t notify_func(struct bt_conn *conn,
 	exponent = ((uint8_t *)data)[4];
 	value_recv = (double)mantissa * pow(10, exponent);
 
-	printk("PDR: %.2f%%\n", value_recv);
+	pdr = value_recv;
+	// printk("PDR: %.2f%%\n", pdr);
+	k_sem_give(&sem_pdr_recv);
 
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -357,26 +360,34 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 	ARG_UNUSED(dummy2);
 	ARG_UNUSED(dummy3);
 
+	int err;
+
 	while(1) {
+		err = k_sem_take(&sem_pdr_recv, K_FOREVER);
+		if (err) {
+			printk("failed (err %d)\n", err);
+			return;
+		}
+
 		if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
 			uint8_t new_tx_pwr_setting = 0;
 
-			if (rssi > -20) {
-				new_tx_pwr_setting = 0;
-				bis[0]->qos->tx->rtn = 2;
-			} else if (rssi > -30) {
-				new_tx_pwr_setting = 8;
-				bis[0]->qos->tx->rtn = 4;
-			} else if (rssi > -40) {
-				new_tx_pwr_setting = 12;
-				bis[0]->qos->tx->rtn = 6;
-			} else if (rssi > -50) {
-				new_tx_pwr_setting = 13;
-				bis[0]->qos->tx->rtn = 8;
-			} else {
-				new_tx_pwr_setting = 13;
-				bis[0]->qos->tx->rtn = 10;
-			}
+			// if (rssi > -20) {
+			// 	new_tx_pwr_setting = 0;
+			// 	bis[0]->qos->tx->rtn = 2;
+			// } else if (rssi > -30) {
+			// 	new_tx_pwr_setting = 8;
+			// 	bis[0]->qos->tx->rtn = 4;
+			// } else if (rssi > -40) {
+			// 	new_tx_pwr_setting = 12;
+			// 	bis[0]->qos->tx->rtn = 6;
+			// } else if (rssi > -50) {
+			// 	new_tx_pwr_setting = 13;
+			// 	bis[0]->qos->tx->rtn = 8;
+			// } else {
+			// 	new_tx_pwr_setting = 13;
+			// 	bis[0]->qos->tx->rtn = 10;
+			// }
 
 			if(tx_pwr_setting != new_tx_pwr_setting) {
 				uint8_t err = ble_hci_vsc_set_tx_pwr(new_tx_pwr_setting);
@@ -388,8 +399,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			}
 		}
 		
-		printk("PDR: %.2f%% - RSSI: %d - RTN: %u\n", pdr, rssi, bis[0]->qos->tx->rtn);
-		k_sleep(K_MSEC(1000)); // FIXME: PROPER ADAPTATION NEEDED!
+		printk("PDR: %.2f%% - RTN: %u\n", pdr, bis[0]->qos->tx->rtn);
 	}
 }
 
