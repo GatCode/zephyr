@@ -31,12 +31,16 @@ static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 
 #define FIFO_SIZE 100
 
+#define PDR_WATCHDOG_FREQ_MS 1000
+#define INDICATE_IF_PDR_CHANGED_BY 10 // send indication if changes > define
+
 #define LED_ON true
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
-static float pdr = 0.0;
+static double pdr = 0.0;
+static double last_indicated_pdr = 0.0;
 static uint16_t iso_interval = 0;
 
 /* ------------------------------------------------------ */
@@ -120,24 +124,27 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 
 void acl_indicate(double pdr)
 {
-	static uint8_t htm[5];
-	uint32_t mantissa;
-	uint8_t exponent;
+	if (abs(last_indicated_pdr - pdr) > INDICATE_IF_PDR_CHANGED_BY) {
+		static uint8_t htm[5];
+		uint32_t mantissa;
+		uint8_t exponent;
 
-	mantissa = (uint32_t)(pdr * 100);
-	exponent = (uint8_t)-2;
+		mantissa = (uint32_t)(pdr * 100);
+		exponent = (uint8_t)-2;
 
-	htm[0] = 0;
-	sys_put_le24(mantissa, (uint8_t *)&htm[1]);
-	htm[4] = exponent;
+		htm[0] = 0;
+		sys_put_le24(mantissa, (uint8_t *)&htm[1]);
+		htm[4] = exponent;
 
-	ind_params.attr = &hts_svc.attrs[2];
-	ind_params.data = &htm;
-	ind_params.len = sizeof(htm);
-	(void)bt_gatt_indicate(NULL, &ind_params);
+		ind_params.attr = &hts_svc.attrs[2];
+		ind_params.data = &htm;
+		ind_params.len = sizeof(htm);
+		(void)bt_gatt_indicate(NULL, &ind_params);
+		last_indicated_pdr = pdr;
 
-	if (LED_ON) {
-		gpio_pin_set_dt(&led2, 1);
+		if (LED_ON) {
+			gpio_pin_set_dt(&led2, 1);
+		}
 	}
 }
 
@@ -210,34 +217,13 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 	.biginfo = biginfo_cb,
 };
 
-static uint32_t seq_num = 0;
-static uint32_t prev_seq_num = 0;
-
-// void gpio_work_handler(struct k_work *work)
-// {
-//     int err = write_8_bit(&io_encoder, seq_num % 256);
-// 	if(err) {
-// 		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
-// 	}
-// }
-// K_WORK_DEFINE(gpio_work, gpio_work_handler);
-
-// void recv_packet_handler(struct k_timer *dummy)
-// {
-// 	k_work_submit(&gpio_work);
-// }
-// K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
-
-static bool pdr_timer_started = false;
-static bool received_packet = true;
-
 // moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
 uint8_t maverage_values[FIFO_SIZE] = {0}; // all are zero as a start
 uint8_t maverage_current_position  = 0;
 uint64_t maverage_current_sum = 0;
 uint8_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
 
-float RollingmAvg(uint8_t newValue)
+double RollingmAvg(uint8_t newValue)
 {
          //Subtract the oldest number from the prev sum, add the new number
         maverage_current_sum = maverage_current_sum - maverage_values[maverage_current_position] + newValue;
@@ -252,25 +238,30 @@ float RollingmAvg(uint8_t newValue)
         }
                 
         //return the average
-        return (float)maverage_current_sum * 100.0 / (float)maverage_sample_length;
+        return (double)maverage_current_sum * 100.0 / (double)maverage_sample_length;
 }
 
-// void recv_pdr_handler(struct k_timer *dummy)
-// {
-// 	uint8_t value = 0;
+// static bool pdr_timer_started = false;
+static uint32_t seq_num = 0;
+static uint32_t prev_seq_num = 0;
+static uint32_t last_recv_packet_ts = 0;
 
-// 	if(received_packet) {
-// 		value = 1;
-// 	}
+void pdr_watchdog_handler(struct k_timer *dummy)
+{
+	uint32_t curr = audio_sync_timer_curr_time_get();
+	// printk("curr: %u, last_recv_packet_ts: %u, diff: %u\n", curr, last_recv_packet_ts, curr - last_recv_packet_ts);
+	if (curr - last_recv_packet_ts > 1000000) { // > 1s
+		pdr = 0.0;
+		printk("PDR: %.2f%%\n", pdr);
+	}
+}
+K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
-// 	pdr = RollingmAvg(value);
-
-// 	// pdr_indicate();
-// 	k_work_submit(&acl_work_indicate);
-
-// 	received_packet = false; // reset
-// }
-// K_TIMER_DEFINE(recv_pdr, recv_pdr_handler, NULL);
+void recv_packet_handler(struct k_timer *dummy)
+{
+	// currently unused
+}
+K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
@@ -278,33 +269,37 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 
-		printk("Data: ");
+		// printk("Data: ");
 		for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
 			if(i < 4) {
 				count_arr[i] = buf->data[i];
 			}
-			uint8_t data = buf->data[i];
-			printk("%x", data);
+			// uint8_t data = buf->data[i];
+			// printk("%x", data);
 		}
 		seq_num = sys_get_le32(count_arr);
-		printk(" | Packet ID: %u\n", seq_num);
+		// printk(" | Packet ID: %u\n", seq_num);
 
-		// if(!pdr_timer_started) {
-		// 	uint32_t iso_ival_ms = iso_interval * 1.25;
-		// 	k_timer_start(&recv_pdr, K_MSEC(iso_ival_ms), K_MSEC(iso_ival_ms));
-		// 	pdr_timer_started = true;
-		// }
-
-		received_packet = true;
 		if(prev_seq_num + 1 != seq_num) {
-			received_packet = false;
-			printk("\n------------------------- LOST PACKET -------------------------\n");
+			// printk("\n------------------------- LOST PACKET -------------------------\n");
 		}
 		prev_seq_num = seq_num;
 
-		if (seq_num % 10 == 0) {
-			acl_indicate(seq_num + 0.43);
+		uint32_t curr = audio_sync_timer_curr_time_get();
+		uint32_t packet_delta = abs(last_recv_packet_ts - curr);
+		uint32_t iso_interval_us = iso_interval * 1.25 * 1000.0;
+		double lost_packets = (double)packet_delta / (double)iso_interval_us;
+		// printk("lost packets:  %.2f, packet_delta: %u, Packet ID: %u\n", lost_packets, packet_delta, seq_num);
+		if (lost_packets > 0) {
+			for (uint8_t i = 0; i < (uint8_t)lost_packets; i++) {
+				pdr = RollingmAvg(0);
+			}
 		}
+		pdr = RollingmAvg(1);
+
+		printk("PDR: %.2f%%\n", pdr);
+		acl_indicate(pdr);
+		last_recv_packet_ts = audio_sync_timer_curr_time_get();
 
 		// uint32_t info_ts = info->ts;
 		// uint32_t curr = audio_sync_timer_curr_time_get();
@@ -402,6 +397,9 @@ void main(void)
 	printk("Init ISO receiption...");
 	bt_le_scan_cb_register(&scan_callbacks);
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
+
+	/* Start PDR Watchdog timer */
+	k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS), K_MSEC(PDR_WATCHDOG_FREQ_MS));
 
 	do {
 		per_adv_lost = false;

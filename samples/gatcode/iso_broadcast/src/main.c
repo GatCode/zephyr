@@ -28,10 +28,10 @@ static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define ACL_PRIORITY 9
 #define RANGE_PRIORITY 5
 
-#define MAX_RTN 8 // also default rtn
-#define MAX_TXP 13 // also default tx power (+3dBm)
+#define MAX_RTN 0 // also default rtn
+#define MAX_TXP 0 // also default tx power (+3dBm)
 
-#define ENABLE_RANGE_EXTENSION_ALGORITHM true
+#define ENABLE_RANGE_EXTENSION_ALGORITHM false
 
 #define LED_ON true
 
