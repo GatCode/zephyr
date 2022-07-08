@@ -32,7 +32,7 @@ static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define MAX_TXP 0 // also default tx power (+3dBm)
 
 #define PDR_WATCHDOG_FREQ_MS 1000
-#define ENABLE_RANGE_EXTENSION_ALGORITHM false
+#define ENABLE_RANGE_EXTENSION_ALGORITHM true
 
 #define LED_ON true
 
@@ -392,25 +392,25 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 		if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
 			uint8_t new_tx_pwr_setting = 0;
 
-			// if (rssi > -20) {
-			// 	new_tx_pwr_setting = 0;
-			// 	bis[0]->qos->tx->rtn = 2;
-			// } else if (rssi > -30) {
-			// 	new_tx_pwr_setting = 8;
-			// 	bis[0]->qos->tx->rtn = 4;
-			// } else if (rssi > -40) {
-			// 	new_tx_pwr_setting = 12;
-			// 	bis[0]->qos->tx->rtn = 6;
-			// } else if (rssi > -50) {
-			// 	new_tx_pwr_setting = 13;
-			// 	bis[0]->qos->tx->rtn = 8;
-			// } else {
-			// 	new_tx_pwr_setting = 13;
-			// 	bis[0]->qos->tx->rtn = 10;
-			// }
+			if (pdr < 50) {
+				new_tx_pwr_setting = 13;
+				bis[0]->qos->tx->rtn = 8;
+			} else if (pdr < 60) {
+				new_tx_pwr_setting = 12;
+				bis[0]->qos->tx->rtn = 8;
+			} else if (pdr < 70) {
+				new_tx_pwr_setting = 12;
+				bis[0]->qos->tx->rtn = 6;
+			} else if (pdr < 80) {
+				new_tx_pwr_setting = 12;
+				bis[0]->qos->tx->rtn = 4;
+			} else {
+				new_tx_pwr_setting = 12;
+				bis[0]->qos->tx->rtn = 2;
+			}
 
 			if(tx_pwr_setting != new_tx_pwr_setting) {
-				uint8_t err = ble_hci_vsc_set_tx_pwr(new_tx_pwr_setting);
+				int err = ble_hci_vsc_set_tx_pwr(new_tx_pwr_setting);
 				if (err) {
 					printk("Failed to set tx power (err %d)\n", err);
 					return;
@@ -419,7 +419,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			}
 		}
 		
-		printk("PDR: %.2f%% - RTN: %u\n", pdr, bis[0]->qos->tx->rtn);
+		printk("PDR: %.2f%% - RTN: %u - TXP: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting);
 	}
 }
 
