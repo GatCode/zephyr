@@ -62,6 +62,7 @@ static struct k_thread thread_acl_data;
 		BT_GAP_ADV_FAST_INT_MAX_1, NULL)
 
 static struct bt_gatt_indicate_params ind_params;
+static K_SEM_DEFINE(acl_connected, 0, 1);
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -96,6 +97,7 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 		if (LED_ON) {
 			gpio_pin_set_dt(&led3, 1);
 		}
+		k_sem_give(&acl_connected);
 	}
 }
 
@@ -219,14 +221,15 @@ static struct bt_le_scan_cb scan_callbacks = {
 static void sync_cb(struct bt_le_per_adv_sync *sync,
 		    struct bt_le_per_adv_sync_synced_info *info)
 {
-	printk("periodic advertising sync has been terminated!\n");
+	printk("periodic advertising sync received!\n");
 	k_sem_give(&sem_per_sync);
 }
 
 static void term_cb(struct bt_le_per_adv_sync *sync,
 		    const struct bt_le_per_adv_sync_term_info *info)
 {
-	per_adv_lost = true;
+	printk("periodic advertising sync has been terminated!\n");
+	per_adv_lost = true;	
 	k_sem_give(&sem_per_sync_lost);
 }
 
@@ -375,7 +378,7 @@ static struct bt_iso_big_sync_param big_sync_param = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_bitfield = (BIT_MASK(BIS_ISO_CHAN_COUNT) << 1),
 	.mse = MAXIMUM_SUBEVENTS,
-	.sync_timeout = BT_ISO_SYNC_TIMEOUT_MAX, /* in 10 ms units */
+	.sync_timeout = BT_ISO_SYNC_TIMEOUT_MIN, /* in 10 ms units */
 };
 
 void main(void)
@@ -424,6 +427,12 @@ void main(void)
 			ACL_PRIORITY, 0, K_FOREVER);
 	k_thread_name_set(&thread_acl_data, "acl_thread");
 	k_thread_start(&thread_acl_data);
+
+	err = k_sem_take(&acl_connected, K_FOREVER);
+	if (err) {
+		printk("failed (err %d)\n", err);
+		return;
+	}
 
 	/* Start ISO */
 	printk("Init ISO receiption...");

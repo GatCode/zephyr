@@ -398,7 +398,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 		}
 
 		if(ENABLE_RANGE_EXTENSION_ALGORITHM && (prev_pdr < pdr || pdr == 0.0)) {
-			uint8_t new_tx_pwr_setting = 0;
+			uint8_t new_tx_pwr_setting = tx_pwr_setting;
 
 			if (pdr < 50) {
 				new_tx_pwr_setting = 13;
@@ -414,10 +414,10 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			// 	new_tx_pwr_setting = 5;
 			// 	bis[0]->qos->tx->rtn = 4;
 			// } 
-			else {
-				new_tx_pwr_setting = 0;
-				bis[0]->qos->tx->rtn = 2;
-			}
+			// else {
+			// 	new_tx_pwr_setting = 0;
+			// 	bis[0]->qos->tx->rtn = 2;
+			// }
 
 			if(tx_pwr_setting != new_tx_pwr_setting) {
 				err = bt_iso_big_terminate(big);
@@ -426,15 +426,15 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 					return;
 				}
 
-				err = k_sem_take(&sem_big_term, K_FOREVER);
-				if (err) {
-					printk("sem_big_term failed (err %d)\n", err);
-					return;
-				}
-
 				int err = ble_hci_vsc_set_tx_pwr(new_tx_pwr_setting);
 				if (err) {
 					printk("Failed to set tx power (err %d)\n", err);
+					return;
+				}
+
+				err = k_sem_take(&sem_big_term, K_FOREVER);
+				if (err) {
+					printk("sem_big_term failed (err %d)\n", err);
 					return;
 				}
 
