@@ -8,5 +8,6 @@ Furthermore, a lot of this code has been copied from the Zephyr GitHub Repositor
 #### LEDs nRF5340DK
 LED | Status
 --- | --- 
-`1` | ACL Connection Established
-`2` | First PDR Packet Received (ISO Working)
+`0` | PWM representation of PDR
+`2` | ACL Connection Established
+`3` | First PDR Packet Received (ISO Working)

@@ -1,5 +1,6 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/pwm.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
@@ -13,10 +14,11 @@
 #include <sync_timer.h>
 #include <stdlib.h>
 
-#define LED0_NODE DT_ALIAS(led0)
-static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
-#define LED1_NODE DT_ALIAS(led1)
-static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
+#define LED2_NODE DT_ALIAS(led2)
+static const struct gpio_dt_spec led3 = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
+#define LED3_NODE DT_ALIAS(led3)
+static const struct gpio_dt_spec led4 = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
+static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0));
 
 /* ------------------------------------------------------ */
 /* Defines */
@@ -36,7 +38,8 @@ static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
-#define LED_ON true
+#define LED_ON false
+#define PWM_LED_ON true
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -91,7 +94,7 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 		}
 		printk("ACL Connected\n");
 		if (LED_ON) {
-			gpio_pin_set_dt(&led1, 1);
+			gpio_pin_set_dt(&led3, 1);
 		}
 	}
 }
@@ -100,8 +103,8 @@ static void acl_disconnected_cb(struct bt_conn *conn, uint8_t reason)
 {
 	printk("ACL Disconnected (reason 0x%02x)\n", reason);
 	if (LED_ON) {
-		gpio_pin_set_dt(&led1, 0);
-		gpio_pin_set_dt(&led2, 0);
+		gpio_pin_set_dt(&led3, 0);
+		gpio_pin_set_dt(&led4, 0);
 	}
 }
 
@@ -140,6 +143,12 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 
 void acl_indicate(double pdr)
 {
+	if (PWM_LED_ON) {
+		int err = pwm_set_pulse_dt(&pwm_led, (pwm_led.period * pdr) / 100);
+		if (err) {
+			printk("Error %d: failed to set pulse width\n", err);
+		}
+	}
 	if (abs(last_indicated_pdr - pdr) > INDICATE_IF_PDR_CHANGED_BY) {
 		static uint8_t htm[5];
 		uint32_t mantissa;
@@ -159,7 +168,7 @@ void acl_indicate(double pdr)
 		last_indicated_pdr = pdr;
 
 		if (LED_ON) {
-			gpio_pin_set_dt(&led2, 1);
+			gpio_pin_set_dt(&led4, 1);
 		}
 	}
 }
@@ -378,15 +387,20 @@ void main(void)
 	int err;
 
 	/* Initialize the LED */
-	if (!device_is_ready(led1.port) || !device_is_ready(led2.port)) {
+	if (!device_is_ready(led3.port) || !device_is_ready(led4.port) || !device_is_ready(pwm_led.dev)) {
  		printk("Error setting LED\n");
  	}
 
- 	err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE);
-	err |= gpio_pin_configure_dt(&led2, GPIO_OUTPUT_INACTIVE);
+ 	err = gpio_pin_configure_dt(&led3, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led4, GPIO_OUTPUT_INACTIVE);
  	if (err < 0) {
  		printk("Error setting LED (err %d)\n", err);
  	}
+
+	err = pwm_set_pulse_dt(&pwm_led, 0);
+	if (err) {
+		printk("Error %d: failed to set pulse width\n", err);
+	}
 
 	/* Initialize USB Output (Thingy:53) */
 	#ifdef CONFIG_USB_DEVICE_STACK
