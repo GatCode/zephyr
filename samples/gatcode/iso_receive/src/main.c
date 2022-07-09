@@ -83,6 +83,12 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 	if (err) {
 		printk("ACL Connection failed (err 0x%02x)\n", err);
 	} else {
+		uint16_t handle = 0;
+		err = bt_hci_get_conn_handle(conn, &handle);
+		err |= ble_hci_vsc_set_conn_tx_pwr(handle, BLE_HCI_VSC_TX_PWR_0dBm);
+		if (err) {
+			printk("ERROR: Setting ACL TX power failed\n");
+		}
 		printk("ACL Connected\n");
 		if (LED_ON) {
 			gpio_pin_set_dt(&led1, 1);
@@ -204,6 +210,7 @@ static struct bt_le_scan_cb scan_callbacks = {
 static void sync_cb(struct bt_le_per_adv_sync *sync,
 		    struct bt_le_per_adv_sync_synced_info *info)
 {
+	printk("periodic advertising sync has been terminated!\n");
 	k_sem_give(&sem_per_sync);
 }
 

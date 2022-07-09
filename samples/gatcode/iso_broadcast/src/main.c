@@ -176,7 +176,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 	value_recv = (double)mantissa * pow(10, exponent);
 
 	pdr = value_recv;
-	printk("PDR: %.2f%%\n", value_recv);
+	// printk("PDR: %.2f%%\n", value_recv);
 	k_sem_give(&sem_pdr_recv);
 	last_recv_packet_ts = k_uptime_get_32();
 
@@ -368,11 +368,14 @@ static struct k_thread thread_range_data;
 
 void pdr_watchdog_handler(struct k_timer *dummy)
 {
-	uint32_t curr = k_uptime_get_32();
-	if (curr - last_recv_packet_ts > 1000) { // > 1s
-		pdr = 0.0; // reset - no packets arrived in the last second
-		k_sem_give(&sem_pdr_recv);
-	}
+	// NOTE: since the ACL connection is the strongest link,
+	// 		 all packets incl a 0 PDR should come in.
+
+	// uint32_t curr = k_uptime_get_32();
+	// if (curr - last_recv_packet_ts > 1000) { // > 1s
+	// 	pdr = 0.0; // reset - no packets arrived in the last second
+	// 	k_sem_give(&sem_pdr_recv);
+	// }
 }
 K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
@@ -416,11 +419,13 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			if(tx_pwr_setting != new_tx_pwr_setting) {
 				err = bt_iso_big_terminate(big);
 				if (err) {
+					printk("bt_iso_big_terminate failed (err %d)\n", err);
 					return;
 				}
 
 				err = k_sem_take(&sem_big_term, K_FOREVER);
 				if (err) {
+					printk("sem_big_term failed (err %d)\n", err);
 					return;
 				}
 
@@ -432,11 +437,13 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 
 				err = bt_iso_big_create(adv, &big_create_param, &big);
 				if (err) {
+					printk("bt_iso_big_create failed (err %d)\n", err);
 					return;
 				}
 
 				err = k_sem_take(&sem_big_cmplt, K_FOREVER);
 				if (err) {
+					printk("sem_big_cmplt failed (err %d)\n", err);
 					return;
 				}
 

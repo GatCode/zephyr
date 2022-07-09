@@ -157,3 +157,32 @@ int ble_hci_vsc_set_tx_pwr(uint8_t pwr_setting_index)
 
 	return ret;
 }
+
+int ble_hci_vsc_set_conn_tx_pwr(uint16_t conn_handle, enum ble_hci_vs_tx_power tx_power)
+{
+	int ret;
+	struct ble_hci_vs_cp_set_conn_tx_pwr *cp;
+	struct ble_hci_vs_rp_status *rp;
+	struct net_buf *buf, *rsp = NULL;
+
+	buf = bt_hci_cmd_create(HCI_OPCODE_VS_SET_CONN_TX_PWR, sizeof(*cp));
+	if (!buf) {
+		printk("Unable to allocate command buffer\n");
+		return -ENOMEM;
+	}
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = conn_handle;
+	cp->tx_power = tx_power;
+
+	ret = bt_hci_cmd_send_sync(HCI_OPCODE_VS_SET_CONN_TX_PWR, buf, &rsp);
+	if (ret) {
+		printk("Error for HCI VS command HCI_OPCODE_VS_SET_CONN_TX_PWR\n");
+		return ret;
+	}
+
+	rp = (void *)rsp->data;
+	ret = rp->status;
+	net_buf_unref(rsp);
+
+	return ret;
+}

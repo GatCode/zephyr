@@ -11,6 +11,7 @@
 #define HCI_OPCODE_VS_SET_ADV_TX_PWR BT_OP(BT_OGF_VS, 0x3F5)
 #define HCI_OPCODE_VS_SET_RADIO_FE_CFG BT_OP(BT_OGF_VS, 0x3A3)
 #define HCI_OPCODE_VS_SET_PRI_EXT_ADV_MAX_TX_PWR BT_OP(BT_OGF_VS, 0x000)
+#define HCI_OPCODE_VS_SET_CONN_TX_PWR BT_OP(BT_OGF_VS, 0x3F6)
 
 struct ble_hci_vs_rp_status {
 	int8_t status;
@@ -109,5 +110,15 @@ int ble_hci_vsc_set_pri_ext_adv_max_tx_pwr(enum ble_hci_vs_tx_power tx_power);
  * @return 0 for success, error otherwise.
  */
 int ble_hci_vsc_set_tx_pwr(uint8_t pwr_setting_index);
+
+/**
+ * @brief Set TX power for specific connection
+ * @param conn_handle Specific connection handle for TX power setting
+ * @param tx_power TX power setting for the specific connection handle
+ *                 Please check ble_hci_vs_tx_power for possible settings
+ *
+ * @return 0 for success, error otherwise.
+ */
+int ble_hci_vsc_set_conn_tx_pwr(uint16_t conn_handle, enum ble_hci_vs_tx_power tx_power);
 
 #endif /* _BLE_HCI_VSC_H_ */
