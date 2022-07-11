@@ -4,18 +4,14 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
-#include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/iso.h>
+#include <zephyr/usb/usb_device.h>
 #include <zephyr/sys/byteorder.h>
 #include <ble_hci_vsc.h>
-
-#define LED2_NODE DT_ALIAS(led2)
-static const struct gpio_dt_spec led3 = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
-#define LED3_NODE DT_ALIAS(led3)
-static const struct gpio_dt_spec led4 = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
-static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0));
+#include <stdlib.h>
 
 /* ------------------------------------------------------ */
 /* Defines */
@@ -35,11 +31,13 @@ static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0));
 #define LED_ON false
 #define PWM_LED_ON true
 
-#define ENABLE_RANGE_EXTENSION_ALGORITHM true
+#define ENABLE_RANGE_EXTENSION_ALGORITHM false
 
 #define START_RTN 0 // also permanent rtn if algo not activated
 #define START_TXP 0 // -.- see available_vs_tx_pwr_settings for settings
 #define START_PHY BT_GAP_LE_PHY_2M // also permanent [phy] if algo not activated
+
+#define THINGY_53 true
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -49,6 +47,25 @@ static double prev_pdr = 0.0;
 uint8_t tx_pwr_setting = 0;  // also default setting if algo activated
 uint8_t rtn_setting = 0; // also default setting if algo activated
 uint8_t phy_setting = BT_GAP_LE_PHY_2M; // also default setting (ISO only) if algo activated
+
+/* ------------------------------------------------------ */
+/* LEDs */
+/* ------------------------------------------------------ */
+#ifndef THINGY_53
+#define LED2_NODE DT_ALIAS(led2)
+static const struct gpio_dt_spec led3 = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
+#define LED3_NODE DT_ALIAS(led3)
+static const struct gpio_dt_spec led4 = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
+static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0));
+#else
+#define SW0_NODE	DT_ALIAS(sw0)
+#if !DT_NODE_HAS_STATUS(SW0_NODE, okay)
+#error "Unsupported board: sw0 devicetree alias is not defined"
+#endif
+static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios,
+							      {0});
+static struct gpio_callback button_cb_data;
+#endif
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -188,7 +205,9 @@ static uint8_t notify_func(struct bt_conn *conn,
 	last_recv_packet_ts = k_uptime_get_32();
 
 	if (LED_ON) {
+		#ifndef THINGY_53
 		gpio_pin_set_dt(&led4, 1);
+		#endif
 	}
 
 	return BT_GATT_ITER_CONTINUE;
@@ -255,7 +274,9 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 	printk("ACL connected - %s\n", addr);
 	if (LED_ON) {
+		#ifndef THINGY_53
 		gpio_pin_set_dt(&led3, 1);
+		#endif
 	}
 
 	/* Start Service Discovery */
@@ -280,8 +301,10 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	printk("ACL disconnected: %s (reason 0x%02x)\n", addr, reason);
 	if (LED_ON) {
+		#ifndef THINGY_53
 		gpio_pin_set_dt(&led3, 0);
 		gpio_pin_set_dt(&led4, 0);
+		#endif
 	}
 }
 
@@ -468,21 +491,36 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 		}
 		
 		if (PWM_LED_ON) {
+			#ifndef THINGY_53
 			int err = pwm_set_pulse_dt(&pwm_led, (pwm_led.period * pdr) / 100);
 			if (err) {
 				printk("Error %d: failed to set pulse width\n", err);
 			}
+			#endif
 		}
 		printk("PDR: %.2f%% - RTN: %u - TXP: %u, PHY: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting, bis[0]->qos->tx->phy);
 		prev_pdr = pdr;
 	}
 }
 
+/* ------------------------------------------------------ */
+/* Thingy:53 specific */
+/* ------------------------------------------------------ */
+void button_pressed(const struct device *dev, struct gpio_callback *cb,
+		    uint32_t pins)
+{
+	NVIC_SystemReset(); // reboot since the Thingy:53 has no reset button
+}
+
+/* ------------------------------------------------------ */
+/* Main */
+/* ------------------------------------------------------ */
 void main(void)
 {
 	int err;
 
 	/* Initialize the LED */
+	#ifndef THINGY_53
 	if (!device_is_ready(led3.port) || !device_is_ready(led4.port) || !device_is_ready(pwm_led.dev)) {
  		printk("Error setting LED\n");
  	}
@@ -497,6 +535,40 @@ void main(void)
 	if (err) {
 		printk("Error %d: failed to set pulse width\n", err);
 	}
+	#else
+	if (!device_is_ready(button.port)) {
+		printk("Error: button device %s is not ready\n",
+		       button.port->name);
+		return;
+	}
+
+	err = gpio_pin_configure_dt(&button, GPIO_INPUT);
+	if (err != 0) {
+		printk("Error %d: failed to configure %s pin %d\n",
+		       err, button.port->name, button.pin);
+		return;
+	}
+
+	err = gpio_pin_interrupt_configure_dt(&button,
+					      GPIO_INT_EDGE_TO_ACTIVE);
+	if (err != 0) {
+		printk("Error %d: failed to configure interrupt on %s pin %d\n",
+			err, button.port->name, button.pin);
+		return;
+	}
+
+	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
+	gpio_add_callback(button.port, &button_cb_data);
+	printk("Set up button at %s pin %d\n", button.port->name, button.pin);
+	#endif
+
+	/* Initialize USB Output (Thingy:53) */
+	#ifdef CONFIG_USB_DEVICE_STACK
+	err = usb_enable(NULL);
+	if (err) {
+		printk("Failed to initialize USB device\n");
+	}
+	#endif
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
