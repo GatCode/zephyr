@@ -45,6 +45,7 @@ static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0));
 static double pdr = 0.0;
 static double prev_pdr = 0.0;
 uint8_t tx_pwr_setting = 0;
+uint8_t rtn_setting = 0;
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -399,10 +400,11 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 
 		if(ENABLE_RANGE_EXTENSION_ALGORITHM && (prev_pdr < pdr || pdr == 0.0)) {
 			uint8_t new_tx_pwr_setting = tx_pwr_setting;
+			uint8_t new_rtn_setting = rtn_setting;
 
 			if (pdr < 50) {
-				new_tx_pwr_setting = 13;
-				bis[0]->qos->tx->rtn = 8;
+				// new_tx_pwr_setting = 13;
+				new_rtn_setting = 8;
 			} 
 			// else if (pdr < 60) {
 			// 	new_tx_pwr_setting = 12;
@@ -419,7 +421,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			// 	bis[0]->qos->tx->rtn = 2;
 			// }
 
-			if(tx_pwr_setting != new_tx_pwr_setting) {
+			if(tx_pwr_setting != new_tx_pwr_setting || rtn_setting != new_rtn_setting) {
 				err = bt_iso_big_terminate(big);
 				if (err) {
 					printk("bt_iso_big_terminate failed (err %d)\n", err);
@@ -431,6 +433,8 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 					printk("Failed to set tx power (err %d)\n", err);
 					return;
 				}
+
+				bis[0]->qos->tx->rtn = new_rtn_setting;
 
 				err = k_sem_take(&sem_big_term, K_FOREVER);
 				if (err) {
@@ -452,6 +456,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 
 				iso_sent(&bis_iso_chan);
 				tx_pwr_setting = new_tx_pwr_setting;
+				rtn_setting = new_rtn_setting;
 			}
 		}
 		
