@@ -30,22 +30,25 @@ static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0));
 #define ACL_PRIORITY 9
 #define RANGE_PRIORITY 5
 
-#define MAX_RTN 0 // also default rtn
-#define MAX_TXP 0 // also default tx power (+3dBm)
-
 #define PDR_WATCHDOG_FREQ_MS 1000
-#define ENABLE_RANGE_EXTENSION_ALGORITHM true
 
 #define LED_ON false
 #define PWM_LED_ON true
+
+#define ENABLE_RANGE_EXTENSION_ALGORITHM true
+
+#define START_RTN 0 // also permanent rtn if algo not activated
+#define START_TXP 0 // -.- see available_vs_tx_pwr_settings for settings
+#define START_PHY BT_GAP_LE_PHY_2M // also permanent [phy] if algo not activated
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static double pdr = 0.0;
 static double prev_pdr = 0.0;
-uint8_t tx_pwr_setting = 0;
-uint8_t rtn_setting = 0;
+uint8_t tx_pwr_setting = 0;  // also default setting if algo activated
+uint8_t rtn_setting = 0; // also default setting if algo activated
+uint8_t phy_setting = BT_GAP_LE_PHY_2M; // also default setting (ISO only) if algo activated
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -340,8 +343,8 @@ static struct bt_iso_chan_ops iso_ops = {
 
 static struct bt_iso_chan_io_qos iso_tx_qos = {
 	.sdu = DATA_SIZE_BYTE, /* bytes */
-	.rtn = MAX_RTN,
-	.phy = BT_GAP_LE_PHY_2M,
+	.rtn = START_RTN,
+	.phy = START_PHY,
 };
 
 static struct bt_iso_chan_qos bis_iso_qos = {
@@ -401,10 +404,12 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 		if(ENABLE_RANGE_EXTENSION_ALGORITHM && (prev_pdr < pdr || pdr == 0.0)) {
 			uint8_t new_tx_pwr_setting = tx_pwr_setting;
 			uint8_t new_rtn_setting = rtn_setting;
+			uint8_t new_phy_setting = phy_setting;
 
 			if (pdr < 50) {
-				// new_tx_pwr_setting = 13;
+				new_tx_pwr_setting = 13;
 				new_rtn_setting = 8;
+				new_phy_setting = BT_GAP_LE_PHY_1M;
 			} 
 			// else if (pdr < 60) {
 			// 	new_tx_pwr_setting = 12;
@@ -421,7 +426,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			// 	bis[0]->qos->tx->rtn = 2;
 			// }
 
-			if(tx_pwr_setting != new_tx_pwr_setting || rtn_setting != new_rtn_setting) {
+			if(tx_pwr_setting != new_tx_pwr_setting || rtn_setting != new_rtn_setting || phy_setting != new_phy_setting) {
 				err = bt_iso_big_terminate(big);
 				if (err) {
 					printk("bt_iso_big_terminate failed (err %d)\n", err);
@@ -435,6 +440,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 				}
 
 				bis[0]->qos->tx->rtn = new_rtn_setting;
+				bis[0]->qos->tx->phy = new_phy_setting;
 
 				err = k_sem_take(&sem_big_term, K_FOREVER);
 				if (err) {
@@ -457,6 +463,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 				iso_sent(&bis_iso_chan);
 				tx_pwr_setting = new_tx_pwr_setting;
 				rtn_setting = new_rtn_setting;
+				phy_setting = new_phy_setting;
 			}
 		}
 		
@@ -466,7 +473,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 				printk("Error %d: failed to set pulse width\n", err);
 			}
 		}
-		printk("PDR: %.2f%% - RTN: %u - TXP: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting);
+		printk("PDR: %.2f%% - RTN: %u - TXP: %u, PHY: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting, bis[0]->qos->tx->phy);
 		prev_pdr = pdr;
 	}
 }
@@ -545,7 +552,7 @@ void main(void)
 
 	/* Set initial TX power */
 	init_ble_hci_vsc_tx_pwr();
-	err = ble_hci_vsc_set_tx_pwr(MAX_TXP);
+	err = ble_hci_vsc_set_tx_pwr(START_TXP);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
