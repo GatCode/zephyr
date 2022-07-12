@@ -28,14 +28,14 @@
 #define FIFO_SIZE 100
 
 #define PDR_WATCHDOG_FREQ_MS 1000
-#define INDICATE_IF_PDR_CHANGED_BY 10 // send indication if changes > define
+#define INDICATE_IF_PDR_CHANGED_BY 1 // send indication if changes > define
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
 #define LED_ON false
 #define PWM_LED_ON true
 
-#define THINGY_53 true
+#define THINGY_53 // NOTE: IMPORTRANT - DISABLE THIS IF DEVICE CHANGES!!!!!!!!!!!!!!!!!!!!
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -61,6 +61,9 @@ static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0));
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios,
 							      {0});
 static struct gpio_callback button_cb_data;
+#define LED1_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led_red = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
+static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led1));
 #endif
 
 /* ------------------------------------------------------ */
@@ -165,10 +168,15 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 void acl_indicate(double pdr)
 {
 	if (PWM_LED_ON) {
-		#ifndef THINGY_53
 		int err = pwm_set_pulse_dt(&pwm_led, (pwm_led.period * pdr) / 100);
 		if (err) {
 			printk("Error %d: failed to set pulse width\n", err);
+		}
+		#ifdef THINGY_53
+		if (pdr < 1) {
+			gpio_pin_set_dt(&led_red, 1);
+		} else {
+			gpio_pin_set_dt(&led_red, 0);
 		}
 		#endif
 	}
@@ -465,6 +473,20 @@ void main(void)
 	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
 	gpio_add_callback(button.port, &button_cb_data);
 	printk("Set up button at %s pin %d\n", button.port->name, button.pin);
+
+	if (!device_is_ready(led_red.port) || !device_is_ready(pwm_led.dev)) {
+ 		printk("Error setting LED\n");
+ 	}
+
+ 	err = gpio_pin_configure_dt(&led_red, GPIO_OUTPUT_INACTIVE);
+ 	if (err < 0) {
+ 		printk("Error setting LED (err %d)\n", err);
+ 	}
+
+	err = pwm_set_pulse_dt(&pwm_led, 0);
+	if (err) {
+		printk("Error %d: failed to set pulse width\n", err);
+	}
 	#endif
 
 	/* Initialize USB Output (Thingy:53) */
