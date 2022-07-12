@@ -28,7 +28,7 @@
 
 #define PDR_WATCHDOG_FREQ_MS 1000
 
-#define LED_ON false
+#define LED_ON true
 #define PWM_LED_ON true
 
 #define ENABLE_RANGE_EXTENSION_ALGORITHM false

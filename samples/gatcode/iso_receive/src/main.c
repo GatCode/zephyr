@@ -25,14 +25,14 @@
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
 
-#define FIFO_SIZE 100
+#define FIFO_SIZE 500
 
 #define PDR_WATCHDOG_FREQ_MS 1000
 #define INDICATE_IF_PDR_CHANGED_BY 1 // send indication if changes > define
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
-#define LED_ON false
+#define LED_ON true
 #define PWM_LED_ON true
 
 #define THINGY_53 // NOTE: IMPORTRANT - DISABLE THIS IF DEVICE CHANGES!!!!!!!!!!!!!!!!!!!!
