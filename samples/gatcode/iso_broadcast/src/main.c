@@ -28,7 +28,7 @@
 
 #define PDR_WATCHDOG_FREQ_MS 1000
 
-#define LED_ON false
+#define LED_ON true
 #define PWM_LED_ON true
 
 #define ENABLE_RANGE_EXTENSION_ALGORITHM false
@@ -37,7 +37,7 @@
 #define START_TXP 0 // -.- see available_vs_tx_pwr_settings for settings
 #define START_PHY BT_GAP_LE_PHY_2M // also permanent [phy] if algo not activated
 
-#define THINGY_53 // NOTE: IMPORTRANT - DISABLE THIS IF DEVICE CHANGES!!!!!!!!!!!!!!!!!!!!
+// #define THINGY_53 // NOTE: IMPORTRANT - DISABLE THIS IF DEVICE CHANGES!!!!!!!!!!!!!!!!!!!!
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -67,6 +67,8 @@ static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios,
 static struct gpio_callback button_cb_data;
 #define LED1_NODE DT_ALIAS(led0)
 static const struct gpio_dt_spec led_red = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
+#define LED3_NODE DT_ALIAS(led2)
+static const struct gpio_dt_spec led_blue = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
 static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led1));
 #endif
 
@@ -90,6 +92,7 @@ static uint32_t last_recv_packet_ts = 0;
 		CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
 
 static K_SEM_DEFINE(sem_pdr_recv, 0, 1);
+static K_SEM_DEFINE(acl_connected, 0, 1);
 
 static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 			const bt_addr_le_t *addr)
@@ -111,6 +114,12 @@ static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 			return ret;
 		}
 
+		if (LED_ON) {
+			#ifdef THINGY_53
+			gpio_pin_set_dt(&led_blue, 1);
+			#endif
+		}
+		k_sem_give(&acl_connected);
 		return 0;
 	}
 
@@ -307,7 +316,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 		#ifndef THINGY_53
 		gpio_pin_set_dt(&led3, 0);
 		gpio_pin_set_dt(&led4, 0);
-		#endif
+		#else
+		gpio_pin_set_dt(&led_blue, 0);
+		#endif		
 	}
 }
 
@@ -352,6 +363,8 @@ static void iso_sent(struct bt_iso_chan *chan)
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 	sys_put_le32(++seq_num, iso_data);
 	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+
+	printk(".");
 
 	int ret = bt_iso_chan_send(&bis_iso_chan, buf);
 	if (ret < 0) {
@@ -569,11 +582,12 @@ void main(void)
 	gpio_add_callback(button.port, &button_cb_data);
 	printk("Set up button at %s pin %d\n", button.port->name, button.pin);
 
-	if (!device_is_ready(led_red.port) || !device_is_ready(pwm_led.dev)) {
+	if (!device_is_ready(led_red.port) || !device_is_ready(led_blue.port) || !device_is_ready(pwm_led.dev)) {
  		printk("Error setting LED\n");
  	}
 
  	err = gpio_pin_configure_dt(&led_red, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led_blue, GPIO_OUTPUT_INACTIVE);
  	if (err < 0) {
  		printk("Error setting LED (err %d)\n", err);
  	}
@@ -592,6 +606,8 @@ void main(void)
 	}
 	#endif
 
+	k_sleep(K_MSEC(1000));
+
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
 	if (err) {
@@ -607,6 +623,12 @@ void main(void)
 			BT_GAP_ADV_FAST_INT_MIN_2, \
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
+
+	err = k_sem_take(&acl_connected, K_FOREVER);
+	if (err) {
+		printk("failed (err %d)\n", err);
+		return;
+	}
 
 	/* Start PDR Watchdog timer */
 	k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS), K_MSEC(PDR_WATCHDOG_FREQ_MS));

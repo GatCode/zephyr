@@ -11,10 +11,10 @@
 	};
 };
 
-// If mode == 0 -> Chip production default value used (+20 dBm)
-/ {
-	nrf_radio_fem: name_of_fem_node {
-	   compatible  = "nordic,nrf21540-fem";
-	   mode-gpios  = <&gpio1 12 GPIO_ACTIVE_LOW>;
- };
-};
+// // If mode == 0 -> Chip production default value used (+20 dBm)
+// / {
+// 	nrf_radio_fem: name_of_fem_node {
+// 	   compatible  = "nordic,nrf21540-fem";
+// 	   mode-gpios  = <&gpio1 12 GPIO_ACTIVE_LOW>;
+//  };
+// };

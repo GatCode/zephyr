@@ -32,10 +32,10 @@
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
-#define LED_ON false
+#define LED_ON true
 #define PWM_LED_ON true
 
-#define THINGY_53 // NOTE: IMPORTRANT - DISABLE THIS IF DEVICE CHANGES!!!!!!!!!!!!!!!!!!!!
+// #define THINGY_53 // NOTE: IMPORTRANT - DISABLE THIS IF DEVICE CHANGES!!!!!!!!!!!!!!!!!!!!
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -63,6 +63,8 @@ static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios,
 static struct gpio_callback button_cb_data;
 #define LED1_NODE DT_ALIAS(led0)
 static const struct gpio_dt_spec led_red = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
+#define LED3_NODE DT_ALIAS(led2)
+static const struct gpio_dt_spec led_blue = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
 static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led1));
 #endif
 
@@ -115,6 +117,8 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 		if (LED_ON) {
 			#ifndef THINGY_53
 			gpio_pin_set_dt(&led3, 1);
+			#else
+			gpio_pin_set_dt(&led_blue, 1);
 			#endif
 		}
 		k_sem_give(&acl_connected);
@@ -128,7 +132,9 @@ static void acl_disconnected_cb(struct bt_conn *conn, uint8_t reason)
 		#ifndef THINGY_53
 		gpio_pin_set_dt(&led3, 0);
 		gpio_pin_set_dt(&led4, 0);
-		#endif
+		#else
+		gpio_pin_set_dt(&led_blue, 0);
+		#endif		
 	}
 }
 
@@ -474,11 +480,12 @@ void main(void)
 	gpio_add_callback(button.port, &button_cb_data);
 	printk("Set up button at %s pin %d\n", button.port->name, button.pin);
 
-	if (!device_is_ready(led_red.port) || !device_is_ready(pwm_led.dev)) {
+	if (!device_is_ready(led_red.port) || !device_is_ready(led_blue.port) || !device_is_ready(pwm_led.dev)) {
  		printk("Error setting LED\n");
  	}
 
  	err = gpio_pin_configure_dt(&led_red, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led_blue, GPIO_OUTPUT_INACTIVE);
  	if (err < 0) {
  		printk("Error setting LED (err %d)\n", err);
  	}

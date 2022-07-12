@@ -11,13 +11,13 @@
 	};
 };
 
-// If mode == 0 -> Chip production default value used (+20 dBm)
-/ {
-	nrf_radio_fem: name_of_fem_node {
-	   compatible  = "nordic,nrf21540-fem";
-	   mode-gpios  = <&gpio1 12 GPIO_ACTIVE_LOW>;
-	   tx-en-gpios = <&gpio0 30 GPIO_ACTIVE_HIGH>;
-	   rx-en-gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>;
-	   pdn-gpios   = <&gpio0 10 GPIO_ACTIVE_HIGH>;
- };
-};
+// // If mode == 0 -> Chip production default value used (+20 dBm)
+// / {
+// 	nrf_radio_fem: name_of_fem_node {
+// 	   compatible  = "nordic,nrf21540-fem";
+// 	   mode-gpios  = <&gpio1 12 GPIO_ACTIVE_LOW>;
+// 	   tx-en-gpios = <&gpio0 30 GPIO_ACTIVE_HIGH>;
+// 	   rx-en-gpios = <&gpio0 11 GPIO_ACTIVE_HIGH>;
+// 	   pdn-gpios   = <&gpio0 10 GPIO_ACTIVE_HIGH>;
+//  };
+// };
