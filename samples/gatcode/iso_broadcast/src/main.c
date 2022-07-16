@@ -17,7 +17,7 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 #define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 20 // 5ms-4s
-#define RETRANSMISSION_NUMBER 0
+#define RETRANSMISSION_NUMBER 8
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
 
 /* ------------------------------------------------------ */
@@ -85,7 +85,7 @@ static struct bt_iso_chan_ops iso_ops = {
 static struct bt_iso_chan_io_qos iso_tx_qos = {
 	.sdu = DATA_SIZE_BYTE, /* bytes */
 	.rtn = RETRANSMISSION_NUMBER,
-	.phy = BT_GAP_LE_PHY_1M,
+	.phy = BT_GAP_LE_PHY_2M,
 };
 
 static struct bt_iso_chan_qos bis_iso_qos = {
