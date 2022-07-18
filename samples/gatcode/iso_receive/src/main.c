@@ -18,7 +18,7 @@ static struct io_coder io_encoder = {0};
 #define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 
 #define PDR_WATCHDOG_FREQ_MS 1000
-#define FIFO_SIZE 100
+#define FIFO_SIZE 10
 
 /* ------------------------------------------------------ */
 /* Defines Receiver */
@@ -161,20 +161,29 @@ static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
 static uint32_t last_recv_packet_ts = 0;
 
+static uint32_t packets_since_last_reset = 0;
+
 void pdr_watchdog_handler(struct k_timer *dummy)
 {
-	uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
+	// uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
 	// printk("curr: %u, last_recv_packet_ts: %u, diff: %u\n", curr, last_recv_packet_ts, curr - last_recv_packet_ts);
-	if (curr - last_recv_packet_ts > 1000000) { // > 1s
-		pdr = 0.0;
-		printk("PDR: %.2f%%\n", pdr);
-	}
+	// if (curr - last_recv_packet_ts > 1000000) { // > 1s
+	// 	pdr = 0.0;
+	// 	printk("PDR: %.2f%%\n", pdr);
+	// }
+
+	uint32_t expected = 25;
+	pdr = RollingmAvg(((float)packets_since_last_reset / (float)expected) * 100.0);
+
+	printk("PDR: %.2f%%\n", pdr / 100.0);
+
+	packets_since_last_reset=0;
 }
 K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
 void recv_packet_handler(struct k_timer *dummy)
 {
-	// currently unused
+	packets_since_last_reset++;
 }
 K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 
@@ -195,26 +204,29 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		seq_num = sys_get_le32(count_arr);
 		// printk(" | Packet ID: %u\n", seq_num);
 
-		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
-		uint32_t packet_delta = abs(last_recv_packet_ts - curr);
-		uint32_t iso_interval_us = iso_interval * 1.25 * 1000.0;
-		double lost_packets = (double)packet_delta / (double)iso_interval_us;
-		// printk("lost packets: %u, packet_delta: %u, iso_interval_us: %u Packet ID: %u\n", (uint8_t)lost_packets - 1, packet_delta, iso_interval_us, seq_num);
-		if (prev_seq_num + 1 != seq_num) {
-				// printk("\n------------------------- LOST PACKET -------------------------\n");
-				pdr = RollingmAvg(0);
-		} else {
-			pdr = RollingmAvg(1);	
-		}
-		prev_seq_num = seq_num;
 
-		printk("PDR: %.2f%%\n", pdr);
-		last_recv_packet_ts = curr;
 
-		// uint32_t info_ts = info->ts;
 		// uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
-		// uint32_t delta = curr - info_ts;
-		// k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
+		// uint32_t packet_delta = abs(last_recv_packet_ts - curr);
+		// uint32_t iso_interval_us = iso_interval * 1.25 * 1000.0;
+		// double lost_packets = (double)packet_delta / (double)iso_interval_us;
+		// // printk("lost packets: %u, packet_delta: %u, iso_interval_us: %u Packet ID: %u\n", (uint8_t)lost_packets - 1, packet_delta, iso_interval_us, seq_num);
+		// if (prev_seq_num + 1 != seq_num) {
+		// 		// printk("\n------------------------- LOST PACKET -------------------------\n");
+		// 		// pdr = RollingmAvg(0);
+		// } else {
+		// 	packets_since_last_reset++;
+		// 	// pdr = RollingmAvg(1);	
+		// }
+		// prev_seq_num = seq_num;
+
+		// printk("PDR: %.2f%%\n", pdr);
+		// last_recv_packet_ts = curr;
+
+		uint32_t info_ts = info->ts;
+		uint32_t curr = k_cyc_to_us_near32(nrf_rtc_counter_get((NRF_RTC_Type*)NRF_RTC0_BASE));
+		uint32_t delta = curr - info_ts;
+		k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
 	}
 }
 

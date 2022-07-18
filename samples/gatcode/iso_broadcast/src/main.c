@@ -17,7 +17,7 @@ static struct io_coder io_encoder = {0};
 /* ------------------------------------------------------ */
 #define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 20 // 5ms-4s
-#define RETRANSMISSION_NUMBER 8
+#define RETRANSMISSION_NUMBER 2
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
 
 /* ------------------------------------------------------ */
