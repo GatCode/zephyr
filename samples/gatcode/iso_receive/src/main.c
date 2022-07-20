@@ -180,7 +180,7 @@ void acl_indicate(double pdr)
 /* ------------------------------------------------------ */
 /* ISO */
 /* ------------------------------------------------------ */
-#define TIMEOUT_SYNC_CREATE K_SECONDS(20)
+#define TIMEOUT_SYNC_CREATE K_SECONDS(60)
 #define NAME_LEN            30
 
 #define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, \
@@ -188,7 +188,7 @@ void acl_indicate(double pdr)
 					   BT_GAP_SCAN_FAST_INTERVAL, \
 					   BT_GAP_SCAN_FAST_WINDOW)
 
-#define PA_RETRY_COUNT 6
+#define PA_RETRY_COUNT 60
 
 static bool         per_adv_found;
 static bool         per_adv_lost;

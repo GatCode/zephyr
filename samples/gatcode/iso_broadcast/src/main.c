@@ -27,7 +27,14 @@
 
 #define PDR_WATCHDOG_FREQ_MS 1000
 
-#define ENABLE_RANGE_EXTENSION_ALGORITHM false
+#define ENABLE_RANGE_EXTENSION_ALGORITHM true // MAIN ALGO TOGGLE!!!!!!!!!!!!!!!!!!!!!!!!!!
+#define ALGO_MAX_THROUGHPUT (1000 / (SDU_INTERVAL_US / 1000)) * DATA_SIZE_BYTE * 8 / 1000
+#define ALGO_HARD_LIMIT 16 // >= 16kbps are needed for LC3
+#define ALGO_SOFT_LIMIT_1 0.5 * ALGO_MAX_THROUGHPUT
+#define ALGO_SOFT_LIMIT_2 0.8 * ALGO_MAX_THROUGHPUT
+
+#define INTELLIGENT_ALGO true
+#define INCREMEMT_ALGO false
 
 #define START_RTN 0 // also permanent rtn if algo not activated
 #define START_TXP 0 // -.- see available_vs_tx_pwr_settings for settings
@@ -395,6 +402,11 @@ void pdr_watchdog_handler(struct k_timer *dummy)
 }
 K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
+uint32_t get_current_kbps()
+{
+	return (pdr / 100) * ALGO_MAX_THROUGHPUT;
+}
+
 void range_thread(void *dummy1, void *dummy2, void *dummy3)
 {
 	ARG_UNUSED(dummy1);
@@ -414,26 +426,24 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			uint8_t new_tx_pwr_setting = tx_pwr_setting;
 			uint8_t new_rtn_setting = rtn_setting;
 			uint8_t new_phy_setting = phy_setting;
+			uint32_t kbps = get_current_kbps();
 
-			if (pdr < 50) {
-				new_tx_pwr_setting = 13;
-				new_rtn_setting = 8;
-				new_phy_setting = BT_GAP_LE_PHY_1M;
-			} 
-			// else if (pdr < 60) {
-			// 	new_tx_pwr_setting = 12;
-			// 	bis[0]->qos->tx->rtn = 8;
-			// } else if (pdr < 70) {
-			// 	new_tx_pwr_setting = 10;
-			// 	bis[0]->qos->tx->rtn = 6;
-			// } else if (pdr < 80) {
-			// 	new_tx_pwr_setting = 5;
-			// 	bis[0]->qos->tx->rtn = 4;
-			// } 
-			// else {
-			// 	new_tx_pwr_setting = 0;
-			// 	bis[0]->qos->tx->rtn = 2;
-			// }
+			if (INTELLIGENT_ALGO) {
+				if (kbps < ALGO_HARD_LIMIT) {
+					new_tx_pwr_setting = 13; // +3dBm = MAX
+					new_rtn_setting = 8; // MAX
+				} 
+				else if (kbps < ALGO_SOFT_LIMIT_1) {
+					new_tx_pwr_setting = 13; // +0 dBm
+					bis[0]->qos->tx->rtn = 2;
+				} else if (kbps < ALGO_SOFT_LIMIT_2) {
+					new_tx_pwr_setting = 12; // +0 dBm
+					bis[0]->qos->tx->rtn = 2;
+				} else {
+					new_tx_pwr_setting = 8; // -4 dBm
+					bis[0]->qos->tx->rtn = 0;
+				}
+			}
 
 			if(tx_pwr_setting != new_tx_pwr_setting || rtn_setting != new_rtn_setting || phy_setting != new_phy_setting) {
 				err = bt_iso_big_terminate(big);
