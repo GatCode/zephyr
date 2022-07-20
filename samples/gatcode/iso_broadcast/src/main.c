@@ -1,6 +1,5 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/pwm.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
@@ -29,7 +28,6 @@
 #define PDR_WATCHDOG_FREQ_MS 1000
 
 #define LED_ON true
-#define PWM_LED_ON true
 
 #define ENABLE_RANGE_EXTENSION_ALGORITHM false
 
@@ -49,11 +47,14 @@ uint8_t phy_setting = BT_GAP_LE_PHY_2M; // also default setting (ISO only) if al
 /* ------------------------------------------------------ */
 /* LEDs */
 /* ------------------------------------------------------ */
+#define LED0_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+#define LED1_NODE DT_ALIAS(led1)
+static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define LED2_NODE DT_ALIAS(led2)
 static const struct gpio_dt_spec led3 = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
 #define LED3_NODE DT_ALIAS(led3)
 static const struct gpio_dt_spec led4 = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
-static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0));
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -192,10 +193,6 @@ static uint8_t notify_func(struct bt_conn *conn,
 	k_sem_give(&sem_pdr_recv);
 	last_recv_packet_ts = k_uptime_get_32();
 
-	if (LED_ON) {
-		gpio_pin_set_dt(&led4, 1);
-	}
-
 	return BT_GATT_ITER_CONTINUE;
 }
 
@@ -259,9 +256,6 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
 	printk("ACL connected - %s\n", addr);
-	if (LED_ON) {
-		gpio_pin_set_dt(&led3, 1);
-	}
 
 	/* Start Service Discovery */
 	memcpy(&uuid, BT_UUID_HTS, sizeof(uuid));
@@ -282,12 +276,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-
 	printk("ACL disconnected: %s (reason 0x%02x)\n", addr, reason);
-	if (LED_ON) {
-		gpio_pin_set_dt(&led3, 0);
-		gpio_pin_set_dt(&led4, 0);
-	}
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -472,14 +461,34 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			}
 		}
 		
-		if (PWM_LED_ON) {
-			int err = pwm_set_pulse_dt(&pwm_led, (pwm_led.period * pdr) / 100);
-			if (err) {
-				printk("Error %d: failed to set pulse width\n", err);
-			}
-		}
 		printk("PDR: %.2f%% - RTN: %u - TXP: %u, PHY: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting, bis[0]->qos->tx->phy);
 		prev_pdr = pdr;
+
+		if (LED_ON) {
+			if (pdr > 20) {
+				gpio_pin_set_dt(&led1, 1);
+			} else {
+				gpio_pin_set_dt(&led1, 0);
+			}
+
+			if (pdr > 40) {
+				gpio_pin_set_dt(&led2, 1);
+			} else {
+				gpio_pin_set_dt(&led2, 0);
+			}
+
+			if (pdr > 60) {
+				gpio_pin_set_dt(&led3, 1);
+			} else {
+				gpio_pin_set_dt(&led3, 0);
+			}
+
+			if (pdr > 80) {
+				gpio_pin_set_dt(&led4, 1);
+			} else {
+				gpio_pin_set_dt(&led4, 0);
+			}
+		}
 	}
 }
 
@@ -500,20 +509,18 @@ void main(void)
 	int err;
 
 	/* Initialize the LED */
-	if (!device_is_ready(led3.port) || !device_is_ready(led4.port) || !device_is_ready(pwm_led.dev)) {
+	if (!device_is_ready(led1.port) || !device_is_ready(led2.port) ||  \
+		!device_is_ready(led3.port) || !device_is_ready(led4.port)) {
  		printk("Error setting LED\n");
  	}
 
- 	err = gpio_pin_configure_dt(&led3, GPIO_OUTPUT_INACTIVE);
+ 	err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led2, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led3, GPIO_OUTPUT_INACTIVE);
 	err |= gpio_pin_configure_dt(&led4, GPIO_OUTPUT_INACTIVE);
  	if (err < 0) {
  		printk("Error setting LED (err %d)\n", err);
  	}
-
-	err = pwm_set_pulse_dt(&pwm_led, 0);
-	if (err) {
-		printk("Error %d: failed to set pulse width\n", err);
-	}
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);

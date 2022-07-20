@@ -1,6 +1,5 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/pwm.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
@@ -25,7 +24,7 @@
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
 
-#define FIFO_SIZE 500
+#define FIFO_SIZE 100
 
 #define PDR_WATCHDOG_FREQ_MS 1000
 #define INDICATE_IF_PDR_CHANGED_BY 1 // send indication if changes > define
@@ -33,7 +32,6 @@
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
 #define LED_ON true
-#define PWM_LED_ON true
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -45,11 +43,14 @@ static uint16_t iso_interval = 0;
 /* ------------------------------------------------------ */
 /* LEDs */
 /* ------------------------------------------------------ */
+#define LED0_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+#define LED1_NODE DT_ALIAS(led1)
+static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 #define LED2_NODE DT_ALIAS(led2)
 static const struct gpio_dt_spec led3 = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
 #define LED3_NODE DT_ALIAS(led3)
 static const struct gpio_dt_spec led4 = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
-static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0));
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -97,9 +98,6 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 			printk("ERROR: Setting ACL TX power failed\n");
 		}
 		printk("ACL Connected\n");
-		if (LED_ON) {
-			gpio_pin_set_dt(&led3, 1);
-		}
 		k_sem_give(&acl_connected);
 	}
 }
@@ -107,10 +105,6 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 static void acl_disconnected_cb(struct bt_conn *conn, uint8_t reason)
 {
 	printk("ACL Disconnected (reason 0x%02x)\n", reason);
-	if (LED_ON) {
-		gpio_pin_set_dt(&led3, 0);
-		gpio_pin_set_dt(&led4, 0);
-	}
 }
 
 static struct bt_conn_cb conn_callbacks = {
@@ -148,12 +142,6 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 
 void acl_indicate(double pdr)
 {
-	if (PWM_LED_ON) {
-		int err = pwm_set_pulse_dt(&pwm_led, (pwm_led.period * pdr) / 100);
-		if (err) {
-			printk("Error %d: failed to set pulse width\n", err);
-		}
-	}
 	if (abs(last_indicated_pdr - pdr) > INDICATE_IF_PDR_CHANGED_BY) {
 		static uint8_t htm[5];
 		uint32_t mantissa;
@@ -171,10 +159,6 @@ void acl_indicate(double pdr)
 		ind_params.len = sizeof(htm);
 		(void)bt_gatt_indicate(NULL, &ind_params);
 		last_indicated_pdr = pdr;
-
-		if (LED_ON) {
-			gpio_pin_set_dt(&led4, 1);
-		}
 	}
 }
 
@@ -250,10 +234,10 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 };
 
 // moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
-uint8_t maverage_values[FIFO_SIZE] = {0}; // all are zero as a start
-uint8_t maverage_current_position  = 0;
+uint64_t maverage_values[FIFO_SIZE] = {0}; // all are zero as a start
+uint64_t maverage_current_position = 0;
 uint64_t maverage_current_sum = 0;
-uint8_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
+uint64_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
 
 double RollingmAvg(uint8_t newValue)
 {
@@ -334,6 +318,32 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		acl_indicate(pdr);
 		last_recv_packet_ts = audio_sync_timer_curr_time_get();
 
+		if (LED_ON) {
+			if (pdr > 20) {
+				gpio_pin_set_dt(&led1, 1);
+			} else {
+				gpio_pin_set_dt(&led1, 0);
+			}
+
+			if (pdr > 40) {
+				gpio_pin_set_dt(&led2, 1);
+			} else {
+				gpio_pin_set_dt(&led2, 0);
+			}
+
+			if (pdr > 60) {
+				gpio_pin_set_dt(&led3, 1);
+			} else {
+				gpio_pin_set_dt(&led3, 0);
+			}
+
+			if (pdr > 80) {
+				gpio_pin_set_dt(&led4, 1);
+			} else {
+				gpio_pin_set_dt(&led4, 0);
+			}
+		}
+
 		// uint32_t info_ts = info->ts;
 		// uint32_t curr = audio_sync_timer_curr_time_get();
 		// uint32_t delta = curr - info_ts;
@@ -396,20 +406,18 @@ void main(void)
 	int err;
 
 	/* Initialize the LED */
-	if (!device_is_ready(led3.port) || !device_is_ready(led4.port) || !device_is_ready(pwm_led.dev)) {
+	if (!device_is_ready(led1.port) || !device_is_ready(led2.port) ||  \
+		!device_is_ready(led3.port) || !device_is_ready(led4.port)) {
  		printk("Error setting LED\n");
  	}
 
- 	err = gpio_pin_configure_dt(&led3, GPIO_OUTPUT_INACTIVE);
+ 	err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led2, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led3, GPIO_OUTPUT_INACTIVE);
 	err |= gpio_pin_configure_dt(&led4, GPIO_OUTPUT_INACTIVE);
  	if (err < 0) {
  		printk("Error setting LED (err %d)\n", err);
  	}
-
-	err = pwm_set_pulse_dt(&pwm_led, 0);
-	if (err) {
-		printk("Error %d: failed to set pulse width\n", err);
-	}
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
