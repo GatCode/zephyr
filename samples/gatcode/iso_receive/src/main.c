@@ -27,7 +27,7 @@
 #define FIFO_SIZE 100
 
 #define PDR_WATCHDOG_FREQ_MS 1000
-#define INDICATE_IF_PDR_CHANGED_BY 1 // send indication if changes > define
+#define INDICATE_IF_PDR_CHANGED_BY 10 // send indication if changes > define
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
