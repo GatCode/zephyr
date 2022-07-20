@@ -31,14 +31,13 @@
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
-#define LED_ON true
-
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static double pdr = 0.0;
 static double last_indicated_pdr = 0.0;
 static uint16_t iso_interval = 0;
+static bool LED_ON = true;
 
 /* ------------------------------------------------------ */
 /* LEDs */
@@ -51,6 +50,22 @@ static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 static const struct gpio_dt_spec led3 = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
 #define LED3_NODE DT_ALIAS(led3)
 static const struct gpio_dt_spec led4 = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
+
+/* ------------------------------------------------------ */
+/* Button */
+/* ------------------------------------------------------ */
+#define SW0_NODE	DT_ALIAS(sw0)
+static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios, {0});
+static struct gpio_callback button_cb_data;
+
+void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	LED_ON = false;
+	gpio_pin_set_dt(&led1, 0);
+	gpio_pin_set_dt(&led2, 0);
+	gpio_pin_set_dt(&led3, 0);
+	gpio_pin_set_dt(&led4, 0);
+}
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -418,6 +433,28 @@ void main(void)
  	if (err < 0) {
  		printk("Error setting LED (err %d)\n", err);
  	}
+
+	/* Initialize the Button */
+	int ret;
+	if (!device_is_ready(button.port)) {
+		printk("Error: button device %s is not ready\n", button.port->name);
+		return;
+	}
+
+	ret = gpio_pin_configure_dt(&button, GPIO_INPUT);
+	if (ret != 0) {
+		printk("Error %d: failed to configure %s pin %d\n", ret, button.port->name, button.pin);
+		return;
+	}
+
+	ret = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
+	if (ret != 0) {
+		printk("Error %d: failed to configure interrupt on %s pin %d\n", ret, button.port->name, button.pin);
+		return;
+	}
+
+	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
+	gpio_add_callback(button.port, &button_cb_data);
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);

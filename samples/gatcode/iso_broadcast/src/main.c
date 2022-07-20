@@ -27,8 +27,6 @@
 
 #define PDR_WATCHDOG_FREQ_MS 1000
 
-#define LED_ON true
-
 #define ENABLE_RANGE_EXTENSION_ALGORITHM false
 
 #define START_RTN 0 // also permanent rtn if algo not activated
@@ -43,6 +41,7 @@ static double prev_pdr = 0.0;
 uint8_t tx_pwr_setting = 0;  // also default setting if algo activated
 uint8_t rtn_setting = 0; // also default setting if algo activated
 uint8_t phy_setting = BT_GAP_LE_PHY_2M; // also default setting (ISO only) if algo activated
+static bool LED_ON = true;
 
 /* ------------------------------------------------------ */
 /* LEDs */
@@ -55,6 +54,22 @@ static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
 static const struct gpio_dt_spec led3 = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
 #define LED3_NODE DT_ALIAS(led3)
 static const struct gpio_dt_spec led4 = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
+
+/* ------------------------------------------------------ */
+/* Button */
+/* ------------------------------------------------------ */
+#define SW0_NODE	DT_ALIAS(sw0)
+static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios, {0});
+static struct gpio_callback button_cb_data;
+
+void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	LED_ON = false;
+	gpio_pin_set_dt(&led1, 0);
+	gpio_pin_set_dt(&led2, 0);
+	gpio_pin_set_dt(&led3, 0);
+	gpio_pin_set_dt(&led4, 0);
+}
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -493,15 +508,6 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 }
 
 /* ------------------------------------------------------ */
-/* Thingy:53 specific */
-/* ------------------------------------------------------ */
-void button_pressed(const struct device *dev, struct gpio_callback *cb,
-		    uint32_t pins)
-{
-	NVIC_SystemReset(); // reboot since the Thingy:53 has no reset button
-}
-
-/* ------------------------------------------------------ */
 /* Main */
 /* ------------------------------------------------------ */
 void main(void)
@@ -521,6 +527,28 @@ void main(void)
  	if (err < 0) {
  		printk("Error setting LED (err %d)\n", err);
  	}
+
+	/* Initialize the Button */
+	int ret;
+	if (!device_is_ready(button.port)) {
+		printk("Error: button device %s is not ready\n", button.port->name);
+		return;
+	}
+
+	ret = gpio_pin_configure_dt(&button, GPIO_INPUT);
+	if (ret != 0) {
+		printk("Error %d: failed to configure %s pin %d\n", ret, button.port->name, button.pin);
+		return;
+	}
+
+	ret = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
+	if (ret != 0) {
+		printk("Error %d: failed to configure interrupt on %s pin %d\n", ret, button.port->name, button.pin);
+		return;
+	}
+
+	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
+	gpio_add_callback(button.port, &button_cb_data);
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
