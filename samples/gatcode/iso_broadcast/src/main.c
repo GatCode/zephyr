@@ -17,8 +17,8 @@
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
-#define SDU_INTERVAL_US 10000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
+#define DATA_SIZE_BYTE 250 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
+#define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 20 // 5ms-4s
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
 
@@ -37,8 +37,6 @@
 #define START_TXP 0 // -.- see available_vs_tx_pwr_settings for settings
 #define START_PHY BT_GAP_LE_PHY_2M // also permanent [phy] if algo not activated
 
-#define THINGY_53 // NOTE: IMPORTRANT - DISABLE THIS IF DEVICE CHANGES!!!!!!!!!!!!!!!!!!!!
-
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
@@ -51,24 +49,11 @@ uint8_t phy_setting = BT_GAP_LE_PHY_2M; // also default setting (ISO only) if al
 /* ------------------------------------------------------ */
 /* LEDs */
 /* ------------------------------------------------------ */
-#ifndef THINGY_53
 #define LED2_NODE DT_ALIAS(led2)
 static const struct gpio_dt_spec led3 = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
 #define LED3_NODE DT_ALIAS(led3)
 static const struct gpio_dt_spec led4 = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
 static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led0));
-#else
-#define SW0_NODE	DT_ALIAS(sw0)
-#if !DT_NODE_HAS_STATUS(SW0_NODE, okay)
-#error "Unsupported board: sw0 devicetree alias is not defined"
-#endif
-static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios,
-							      {0});
-static struct gpio_callback button_cb_data;
-#define LED1_NODE DT_ALIAS(led0)
-static const struct gpio_dt_spec led_red = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
-static const struct pwm_dt_spec pwm_led = PWM_DT_SPEC_GET(DT_ALIAS(pwm_led1));
-#endif
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -208,9 +193,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 	last_recv_packet_ts = k_uptime_get_32();
 
 	if (LED_ON) {
-		#ifndef THINGY_53
 		gpio_pin_set_dt(&led4, 1);
-		#endif
 	}
 
 	return BT_GATT_ITER_CONTINUE;
@@ -277,9 +260,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 	printk("ACL connected - %s\n", addr);
 	if (LED_ON) {
-		#ifndef THINGY_53
 		gpio_pin_set_dt(&led3, 1);
-		#endif
 	}
 
 	/* Start Service Discovery */
@@ -304,10 +285,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	printk("ACL disconnected: %s (reason 0x%02x)\n", addr, reason);
 	if (LED_ON) {
-		#ifndef THINGY_53
 		gpio_pin_set_dt(&led3, 0);
 		gpio_pin_set_dt(&led4, 0);
-		#endif
 	}
 }
 
@@ -498,13 +477,6 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			if (err) {
 				printk("Error %d: failed to set pulse width\n", err);
 			}
-			#ifdef THINGY_53
-			if (pdr < 1) {
-				gpio_pin_set_dt(&led_red, 1);
-			} else {
-				gpio_pin_set_dt(&led_red, 0);
-			}
-			#endif
 		}
 		printk("PDR: %.2f%% - RTN: %u - TXP: %u, PHY: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting, bis[0]->qos->tx->phy);
 		prev_pdr = pdr;
@@ -528,7 +500,6 @@ void main(void)
 	int err;
 
 	/* Initialize the LED */
-	#ifndef THINGY_53
 	if (!device_is_ready(led3.port) || !device_is_ready(led4.port) || !device_is_ready(pwm_led.dev)) {
  		printk("Error setting LED\n");
  	}
@@ -543,54 +514,6 @@ void main(void)
 	if (err) {
 		printk("Error %d: failed to set pulse width\n", err);
 	}
-	#else
-	if (!device_is_ready(button.port)) {
-		printk("Error: button device %s is not ready\n",
-		       button.port->name);
-		return;
-	}
-
-	err = gpio_pin_configure_dt(&button, GPIO_INPUT);
-	if (err != 0) {
-		printk("Error %d: failed to configure %s pin %d\n",
-		       err, button.port->name, button.pin);
-		return;
-	}
-
-	err = gpio_pin_interrupt_configure_dt(&button,
-					      GPIO_INT_EDGE_TO_ACTIVE);
-	if (err != 0) {
-		printk("Error %d: failed to configure interrupt on %s pin %d\n",
-			err, button.port->name, button.pin);
-		return;
-	}
-
-	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
-	gpio_add_callback(button.port, &button_cb_data);
-	printk("Set up button at %s pin %d\n", button.port->name, button.pin);
-
-	if (!device_is_ready(led_red.port) || !device_is_ready(pwm_led.dev)) {
- 		printk("Error setting LED\n");
- 	}
-
- 	err = gpio_pin_configure_dt(&led_red, GPIO_OUTPUT_INACTIVE);
- 	if (err < 0) {
- 		printk("Error setting LED (err %d)\n", err);
- 	}
-
-	err = pwm_set_pulse_dt(&pwm_led, 0);
-	if (err) {
-		printk("Error %d: failed to set pulse width\n", err);
-	}
-	#endif
-
-	/* Initialize USB Output (Thingy:53) */
-	#ifdef CONFIG_USB_DEVICE_STACK
-	err = usb_enable(NULL);
-	if (err) {
-		printk("Failed to initialize USB device\n");
-	}
-	#endif
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
