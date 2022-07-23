@@ -72,6 +72,7 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t
 /* ------------------------------------------------------ */
 K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
 static struct k_thread thread_acl_data;
+static struct bt_conn *acl_conn;
 
 #define DEVICE_NAME_ACL "nRF5340"
 #define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
@@ -112,6 +113,7 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 		if (err) {
 			printk("ERROR: Setting ACL TX power failed\n");
 		}
+		acl_conn = conn;
 		printk("ACL Connected\n");
 		k_sem_give(&acl_connected);
 	}
@@ -329,7 +331,77 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		}
 		pdr = RollingmAvg(1);
 
-		printk("PDR: %.2f%%\n", pdr);
+		// printk("PDR: %.2f%%\n", pdr);
+
+
+
+
+
+
+		int ret;
+		struct bt_hci_cp_le_read_iso_link_quality *cp;
+		struct bt_hci_rp_le_read_iso_link_quality *rp;
+		struct net_buf *buf, *rsp = NULL;
+
+		buf = bt_hci_cmd_create(BT_HCI_OP_LE_READ_ISO_LINK_QUALITY, sizeof(*cp));
+		if (!buf) {
+			printk("Unable to allocate command buffer\n");
+			return -ENOMEM;
+		}
+		cp = net_buf_add(buf, sizeof(*cp));
+	
+		uint16_t acl_handle = 0;
+		bt_hci_get_conn_handle(chan->iso, &acl_handle);
+		cp->handle = acl_handle;
+
+		ret = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_ISO_LINK_QUALITY, buf, &rsp);
+		if (ret) {
+			printk("Error for HCI VS command BT_HCI_OP_LE_READ_ISO_LINK_QUALITY\n");
+			return ret;
+		}
+
+		rp = (void *)rsp->data;
+
+
+
+
+
+		// int ret;
+		// struct bt_hci_rp_read_supported_commands *rp;
+		// struct net_buf *rsp = NULL;
+
+		// ret = bt_hci_cmd_send_sync(BT_HCI_OP_READ_SUPPORTED_COMMANDS, NULL, &rsp);
+		// if (ret) {
+		// 	printk("Error for HCI VS command BT_HCI_OP_READ_SUPPORTED_COMMANDS\n");
+		// 	return ret;
+		// }
+
+		// rp = (void *)rsp->data;
+
+		printk("PDR: %.2f%% - status: %u\n", pdr, rp->rx_unreceived_packets);
+
+		// ret = rp->status;
+		net_buf_unref(rsp);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 		acl_indicate(pdr);
 		last_recv_packet_ts = audio_sync_timer_curr_time_get();
 

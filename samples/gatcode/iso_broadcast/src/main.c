@@ -27,7 +27,7 @@
 
 #define PDR_WATCHDOG_FREQ_MS 1000
 
-#define ENABLE_RANGE_EXTENSION_ALGORITHM true // MAIN ALGO TOGGLE!!!!!!!!!!!!!!!!!!!!!!!!!!
+#define ENABLE_RANGE_EXTENSION_ALGORITHM false // MAIN ALGO TOGGLE!!!!!!!!!!!!!!!!!!!!!!!!!!
 #define ALGO_MAX_THROUGHPUT (1000 / (SDU_INTERVAL_US / 1000)) * DATA_SIZE_BYTE * 8 / 1000
 #define ALGO_HARD_LIMIT 16 // >= 16kbps are needed for LC3
 #define ALGO_SOFT_LIMIT_1 0.5 * ALGO_MAX_THROUGHPUT
@@ -36,7 +36,7 @@
 #define INTELLIGENT_ALGO true
 #define INCREMEMT_ALGO false
 
-#define START_RTN 0 // also permanent rtn if algo not activated
+#define START_RTN 8 // also permanent rtn if algo not activated
 #define START_TXP 0 // -.- see available_vs_tx_pwr_settings for settings
 #define START_PHY BT_GAP_LE_PHY_2M // also permanent [phy] if algo not activated
 
