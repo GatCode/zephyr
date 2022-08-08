@@ -37,7 +37,6 @@
 static double pdr = 0.0;
 static double last_indicated_pdr = 0.0;
 static uint16_t iso_interval = 0;
-static uint8_t iso_sub_evt_count = 0;
 static bool LED_ON = true;
 
 /* ------------------------------------------------------ */
@@ -242,7 +241,6 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 		       const struct bt_iso_biginfo *biginfo)
 {
 	iso_interval = biginfo->iso_interval;
-	iso_sub_evt_count = biginfo->sub_evt_count;
 	k_sem_give(&sem_per_big_info);
 }
 
@@ -276,6 +274,8 @@ double RollingmAvg(uint8_t newValue)
         return (double)maverage_current_sum * 100.0 / (double)maverage_sample_length;
 }
 
+static uint8_t rtn;
+
 // moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
 uint64_t maverage_values2[FIFO_SIZE] = {0}; // all are zero as a start
 uint64_t maverage_current_position2 = 0;
@@ -297,7 +297,8 @@ double RollingmAvg2(uint8_t newValue)
         }
                 
         //return the average
-        return (double)maverage_current_sum2 * 100.0 / (double)maverage_sample_length2;
+		double avg = (double)maverage_current_sum2 / (double)maverage_sample_length2;
+        return avg * 100.0 / rtn;
 }
 
 // static bool pdr_timer_started = false;
@@ -337,11 +338,12 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			if(i < 4) {
 				count_arr[i] = buf->data[i];
 			}
-			// uint8_t data = buf->data[i];
+			uint8_t data = buf->data[i];
 			// printk("%x", data);
 		}
 		seq_num = sys_get_le32(count_arr);
-		// printk(" | Packet ID: %u\n", seq_num);
+		rtn = buf->data[4];
+		// printk(" | Packet ID: %u - rtn: %u\n", seq_num, buf->data[4]);
 
 		if(prev_seq_num + 1 != seq_num) {
 			// printk("\n------------------------- LOST PACKET -------------------------\n");
@@ -359,13 +361,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			}
 		}
 		pdr = RollingmAvg(1);
-
-		// printk("PDR: %.2f%%\n", pdr);
-
-
-
-
-
 
 		int ret;
 		struct bt_hci_cp_le_read_iso_link_quality *cp;
@@ -391,47 +386,14 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 		rp = (void *)rsp->data;
 
-
-
-
-
-
-		// int ret;
-		// struct bt_hci_rp_read_supported_commands *rp;
-		// struct net_buf *rsp = NULL;
-
-		// ret = bt_hci_cmd_send_sync(BT_HCI_OP_READ_SUPPORTED_COMMANDS, NULL, &rsp);
-		// if (ret) {
-		// 	printk("Error for HCI VS command BT_HCI_OP_READ_SUPPORTED_COMMANDS\n");
-		// 	return ret;
-		// }
-
-		// rp = (void *)rsp->data;
-
-		printk("PDR: %.2f%% - crc: %u - roll: %.2f%%\n", pdr, rp->crc_error_packets - prev_crc_error_packets, RollingmAvg2(rp->crc_error_packets - prev_crc_error_packets));
+		uint8_t crc_error_packets_delta = rp->crc_error_packets - prev_crc_error_packets;
+		uint8_t crc_error_packets = crc_error_packets_delta > rtn ? rtn : crc_error_packets_delta;
+		double is_distance_big = RollingmAvg2(crc_error_packets);
 		prev_crc_error_packets = rp->crc_error_packets;
 
-		// ret = rp->status;
+		printk("PDR: %.2f%% - Great Distance: %.2f%%\n", pdr, is_distance_big);
+	
 		net_buf_unref(rsp);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 		acl_indicate(pdr);
 		last_recv_packet_ts = audio_sync_timer_curr_time_get();

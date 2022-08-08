@@ -36,7 +36,7 @@
 #define INTELLIGENT_ALGO true
 #define INCREMEMT_ALGO false
 
-#define START_RTN 8 // also permanent rtn if algo not activated
+#define START_RTN 2 // also permanent rtn if algo not activated
 #define START_TXP 0 // -.- see available_vs_tx_pwr_settings for settings
 #define START_PHY BT_GAP_LE_PHY_2M // also permanent [phy] if algo not activated
 
@@ -45,8 +45,8 @@
 /* ------------------------------------------------------ */
 static double pdr = 0.0;
 static double prev_pdr = 0.0;
-uint8_t tx_pwr_setting = 0;  // also default setting if algo activated
-uint8_t rtn_setting = 0; // also default setting if algo activated
+uint8_t tx_pwr_setting = 0;
+uint8_t rtn_setting = 0;
 uint8_t phy_setting = BT_GAP_LE_PHY_2M; // also default setting (ISO only) if algo activated
 static bool LED_ON = true;
 
@@ -341,6 +341,7 @@ static void iso_sent(struct bt_iso_chan *chan)
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 	sys_put_le32(++seq_num, iso_data);
+	iso_data[4] = rtn_setting;
 	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
 
 	int ret = bt_iso_chan_send(&bis_iso_chan, buf);
@@ -566,6 +567,10 @@ void main(void)
 		printk("Bluetooth init failed (err %d)\n", err);
 		return;
 	}
+
+	/* Initialize Params */
+	rtn_setting = START_RTN;
+	tx_pwr_setting = START_TXP;
 
 	/* Start ACL Scanning */
 	k_work_submit(&start_scan_work);
