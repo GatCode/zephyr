@@ -37,6 +37,7 @@
 static double pdr = 0.0;
 static double last_indicated_pdr = 0.0;
 static uint16_t iso_interval = 0;
+static uint8_t iso_sub_evt_count = 0;
 static bool LED_ON = true;
 
 /* ------------------------------------------------------ */
@@ -241,6 +242,7 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 		       const struct bt_iso_biginfo *biginfo)
 {
 	iso_interval = biginfo->iso_interval;
+	iso_sub_evt_count = biginfo->sub_evt_count;
 	k_sem_give(&sem_per_big_info);
 }
 
@@ -274,10 +276,36 @@ double RollingmAvg(uint8_t newValue)
         return (double)maverage_current_sum * 100.0 / (double)maverage_sample_length;
 }
 
+// moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
+uint64_t maverage_values2[FIFO_SIZE] = {0}; // all are zero as a start
+uint64_t maverage_current_position2 = 0;
+uint64_t maverage_current_sum2 = 0;
+uint64_t maverage_sample_length2 = sizeof(maverage_values2) / sizeof(maverage_values2[0]);
+
+double RollingmAvg2(uint8_t newValue)
+{
+         //Subtract the oldest number from the prev sum, add the new number
+        maverage_current_sum2 = maverage_current_sum2 - maverage_values2[maverage_current_position2] + newValue;
+
+        //Assign the newValue to the position in the array
+        maverage_values2[maverage_current_position2] = newValue;
+
+        maverage_current_position2++;
+        
+        if (maverage_current_position2 >= maverage_sample_length2) { // Don't go beyond the size of the array...
+            maverage_current_position2 = 0;
+        }
+                
+        //return the average
+        return (double)maverage_current_sum2 * 100.0 / (double)maverage_sample_length2;
+}
+
 // static bool pdr_timer_started = false;
 static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
 static uint32_t last_recv_packet_ts = 0;
+
+static uint32_t prev_crc_error_packets = 0;
 
 void pdr_watchdog_handler(struct k_timer *dummy)
 {
@@ -285,6 +313,7 @@ void pdr_watchdog_handler(struct k_timer *dummy)
 	// printk("curr: %u, last_recv_packet_ts: %u, diff: %u\n", curr, last_recv_packet_ts, curr - last_recv_packet_ts);
 	if (curr - last_recv_packet_ts > 1000000) { // > 1s
 		pdr = 0.0;
+		prev_crc_error_packets = 0;
 		acl_indicate(pdr);
 		printk("PDR: %.2f%%\n", pdr);
 	}
@@ -366,6 +395,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 
 
+
 		// int ret;
 		// struct bt_hci_rp_read_supported_commands *rp;
 		// struct net_buf *rsp = NULL;
@@ -378,7 +408,8 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 		// rp = (void *)rsp->data;
 
-		printk("PDR: %.2f%% - status: %u\n", pdr, rp->rx_unreceived_packets);
+		printk("PDR: %.2f%% - crc: %u - roll: %.2f%%\n", pdr, rp->crc_error_packets - prev_crc_error_packets, RollingmAvg2(rp->crc_error_packets - prev_crc_error_packets));
+		prev_crc_error_packets = rp->crc_error_packets;
 
 		// ret = rp->status;
 		net_buf_unref(rsp);
