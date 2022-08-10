@@ -17,7 +17,7 @@
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 250 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
+#define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 
@@ -159,7 +159,7 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 
 void acl_indicate(double pdr)
 {
-	if (abs(last_indicated_pdr - pdr) > INDICATE_IF_PDR_CHANGED_BY) {
+	if (abs(last_indicated_pdr - pdr) > 1) {
 		static uint8_t htm[5];
 		uint32_t mantissa;
 		uint8_t exponent;
