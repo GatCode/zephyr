@@ -17,17 +17,16 @@
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 250 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
-#define PRESENTATION_DELAY_US 10000
+#define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
 
-#define FIFO_SIZE 100
+#define FIFO_SIZE 50
 
 #define PDR_WATCHDOG_FREQ_MS 1000
-#define INDICATE_IF_PDR_CHANGED_BY 10 // send indication if changes > define
+#define INDICATE_IF_PDR_CHANGED_BY 1 // send indication if changes > define
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
@@ -38,6 +37,8 @@ static double pdr = 0.0;
 static double last_indicated_pdr = 0.0;
 static uint16_t iso_interval = 0;
 static bool LED_ON = true;
+
+static uint32_t last_indicated_ts = 0;
 
 /* ------------------------------------------------------ */
 /* LEDs */
@@ -157,9 +158,75 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 	k_work_submit(&adv_work);
 }
 
+
+static void acl_indicated(struct bt_conn *conn, struct bt_gatt_indicate_params *params, uint8_t err)
+{
+	// uint32_t curr = audio_sync_timer_curr_time_get();
+	// uint32_t t_rtt = curr - last_indicated_ts;
+
+	// printk("INDICATED: %u\n", curr - last_indicated_ts);
+
+	// int ret;
+	// struct bt_hci_cp_le_read_iso_link_quality *cp;
+	// struct bt_hci_rp_le_read_iso_link_quality *rp;
+	// struct net_buf *buf, *rsp = NULL;
+
+	// buf = bt_hci_cmd_create(BT_HCI_OP_LE_READ_ISO_LINK_QUALITY, sizeof(*cp));
+	// if (!buf) {
+	// 	printk("Unable to allocate command buffer\n");
+	// 	return -ENOMEM;
+	// }
+	// cp = net_buf_add(buf, sizeof(*cp));
+
+	// uint16_t acl_handle = 0;
+	// bt_hci_get_conn_handle(conn, &acl_handle);
+	// cp->handle = acl_handle;
+
+	// ret = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_ISO_LINK_QUALITY, buf, &rsp);
+	// if (ret) {
+	// 	printk("Error for HCI VS command BT_HCI_OP_LE_READ_ISO_LINK_QUALITY\n");
+	// 	return ret;
+	// }
+
+	// rp = (void *)rsp->data;
+	
+}
+
+// // moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
+// double maverage_values3[100] = {0}; // all are zero as a start
+// uint64_t maverage_current_position3 = 0;
+// double maverage_current_sum3 = 0;
+// uint64_t maverage_sample_length3 = sizeof(maverage_values3) / sizeof(maverage_values3[0]);
+
+// bool safeToIndicate(double newValue)
+// {
+//          //Subtract the oldest number from the prev sum, add the new number
+//         maverage_current_sum3 = maverage_current_sum3 - maverage_values3[maverage_current_position3] + newValue;
+
+//         //Assign the newValue to the position in the array
+//         maverage_values3[maverage_current_position3] = newValue;
+
+//         maverage_current_position3++;
+        
+//         if (maverage_current_position3 >= maverage_sample_length3) { // Don't go beyond the size of the array...
+//             maverage_current_position3 = 0;
+//         }
+                
+// 		double avg = (double)maverage_current_sum3 / (double)maverage_sample_length3;
+//         return avg > 99.5 ? true : false;
+// }
+
 void acl_indicate(double pdr)
 {
-	if (abs(last_indicated_pdr - pdr) > INDICATE_IF_PDR_CHANGED_BY) {
+	// implement settling period 
+	uint32_t curr = audio_sync_timer_curr_time_get();
+	uint32_t settling_time_difference = curr - last_indicated_ts; // us
+
+	// if last 100 pdr vals were > 99.5% -> safe to switch
+
+	// INDICATE_IF_PDR_CHANGED_BY
+	// if ((abs(last_indicated_pdr - pdr) > 5 || pdr < 1) && settling_time_difference > 10000000) {
+	if (abs(last_indicated_pdr - pdr) >= 1) {
 		static uint8_t htm[5];
 		uint32_t mantissa;
 		uint8_t exponent;
@@ -174,8 +241,13 @@ void acl_indicate(double pdr)
 		ind_params.attr = &hts_svc.attrs[2];
 		ind_params.data = &htm;
 		ind_params.len = sizeof(htm);
+
+		printk("pdr: %u\n", mantissa);
+		// ind_params.func = &acl_indicated;
+		// last_indicated_ts = audio_sync_timer_curr_time_get();
 		(void)bt_gatt_indicate(NULL, &ind_params);
 		last_indicated_pdr = pdr;
+		last_indicated_ts = curr;
 	}
 }
 
@@ -318,6 +390,26 @@ void pdr_watchdog_handler(struct k_timer *dummy)
 		acl_indicate(pdr);
 		printk("PDR: %.2f%%\n", pdr);
 	}
+	// static uint8_t htm[5];
+	// uint32_t mantissa;
+	// uint8_t exponent;
+
+	// mantissa = (uint32_t)(pdr * 100);
+	// exponent = (uint8_t)-2;
+
+	// htm[0] = 0;
+	// sys_put_le24(mantissa, (uint8_t *)&htm[1]);
+	// htm[4] = exponent;
+
+	// ind_params.attr = &hts_svc.attrs[2];
+	// ind_params.data = &htm;
+	// ind_params.len = sizeof(htm);
+	// ind_params.func = &acl_indicated;
+	// last_indicated_ts = audio_sync_timer_curr_time_get();
+	// (void)bt_gatt_indicate(NULL, &ind_params);
+	// last_indicated_pdr = pdr;
+	// last_indicated_ts = curr;
+	// printk("INDICATEEEE\n");
 }
 K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
@@ -391,7 +483,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		double is_distance_big = RollingmAvg2(crc_error_packets);
 		prev_crc_error_packets = rp->crc_error_packets;
 
-		printk("PDR: %.2f%% - Great Distance: %.2f%%\n", pdr, is_distance_big);
+		printk("PDR: %.2f%% - Great Distance: %.2f%% - curr: %u\n", pdr, is_distance_big, curr);
 	
 		net_buf_unref(rsp);
 

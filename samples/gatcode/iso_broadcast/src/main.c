@@ -16,7 +16,7 @@
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 250 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
+#define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 20 // 5ms-4s
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
@@ -27,11 +27,11 @@
 
 #define PDR_WATCHDOG_FREQ_MS 1000
 
-#define ENABLE_RANGE_EXTENSION_ALGORITHM false // MAIN ALGO TOGGLE!!!!!!!!!!!!!!!!!!!!!!!!!!
+#define ENABLE_RANGE_EXTENSION_ALGORITHM true // MAIN ALGO TOGGLE!!!!!!!!!!!!!!!!!!!!!!!!!!
 #define ALGO_MAX_THROUGHPUT (1000 / (SDU_INTERVAL_US / 1000)) * DATA_SIZE_BYTE * 8 / 1000
 #define ALGO_HARD_LIMIT 16 // >= 16kbps are needed for LC3
-#define ALGO_SOFT_LIMIT_1 0.5 * ALGO_MAX_THROUGHPUT
-#define ALGO_SOFT_LIMIT_2 0.8 * ALGO_MAX_THROUGHPUT
+#define ALGO_SOFT_LIMIT_1 0.90 * ALGO_MAX_THROUGHPUT
+#define ALGO_SOFT_LIMIT_2 0.97 * ALGO_MAX_THROUGHPUT
 
 #define INTELLIGENT_ALGO true
 #define INCREMEMT_ALGO false
@@ -48,6 +48,8 @@ static double prev_pdr = 0.0;
 uint8_t tx_pwr_setting = 0;
 uint8_t rtn_setting = 0;
 uint8_t phy_setting = BT_GAP_LE_PHY_2M; // also default setting (ISO only) if algo activated
+uint8_t param_setting = 0;
+static uint32_t prev_kbps = 0;
 static bool LED_ON = true;
 
 /* ------------------------------------------------------ */
@@ -211,7 +213,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 	value_recv = (double)mantissa * pow(10, exponent);
 
 	pdr = value_recv;
-	// printk("PDR: %.2f%%\n", value_recv);
+	// printk("PDR: %.2f%% - %u\n", value_recv, mantissa);
 	k_sem_give(&sem_pdr_recv);
 	last_recv_packet_ts = k_uptime_get_32();
 
@@ -400,6 +402,8 @@ void pdr_watchdog_handler(struct k_timer *dummy)
 	// 	pdr = 0.0; // reset - no packets arrived in the last second
 	// 	k_sem_give(&sem_pdr_recv);
 	// }
+
+	k_sem_give(&sem_pdr_recv);
 }
 K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
@@ -407,6 +411,19 @@ uint32_t get_current_kbps()
 {
 	return (pdr / 100) * ALGO_MAX_THROUGHPUT;
 }
+
+struct broadcast_parameters
+{
+    uint8_t txp;
+    uint8_t rtn;
+};
+static struct broadcast_parameters params[3] = {{0,2}, {0,4}, {1,8}};
+static uint8_t params_idx = 0;
+
+static uint32_t last_switch_ts = 0;
+static uint32_t last_decreased_ts = false;
+
+static uint32_t switchtime = 0;
 
 void range_thread(void *dummy1, void *dummy2, void *dummy3)
 {
@@ -423,44 +440,92 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			return;
 		}
 
-		if(ENABLE_RANGE_EXTENSION_ALGORITHM && (prev_pdr < pdr || pdr == 0.0)) {
+		uint32_t kbps;
+
+		if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
 			uint8_t new_tx_pwr_setting = tx_pwr_setting;
 			uint8_t new_rtn_setting = rtn_setting;
 			uint8_t new_phy_setting = phy_setting;
-			uint32_t kbps = get_current_kbps();
+			kbps = get_current_kbps();
+
+			printk("Before: PDR: %.2f%% - RTN: %u - TXP: %u, KBPS: %u ", pdr, params[params_idx].rtn, params[params_idx].txp, kbps);
 
 			if (INTELLIGENT_ALGO) {
-				if (kbps < ALGO_HARD_LIMIT) {
-					new_tx_pwr_setting = 13; // +3dBm = MAX
-					new_rtn_setting = 8; // MAX
-				} 
-				else if (kbps < ALGO_SOFT_LIMIT_1) {
-					new_tx_pwr_setting = 13; // +0 dBm
-					bis[0]->qos->tx->rtn = 2;
-				} else if (kbps < ALGO_SOFT_LIMIT_2) {
-					new_tx_pwr_setting = 12; // +0 dBm
-					bis[0]->qos->tx->rtn = 2;
+
+				uint32_t curr = k_uptime_get_32();
+
+				if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
+					// increase
+					if (curr - last_decreased_ts > 1000 || kbps < ALGO_HARD_LIMIT) {
+						params_idx = params_idx < 2 ? params_idx + 1 : 2;
+						last_switch_ts = curr;
+					}
+				} else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
+					// ignore
 				} else {
-					new_tx_pwr_setting = 8; // -4 dBm
-					bis[0]->qos->tx->rtn = 0;
+					if (curr - last_switch_ts > 1000) { // > 10s
+						// decrease
+						params_idx = params_idx > 0 ? params_idx - 1 : 0;
+						last_decreased_ts = curr;
+					}
 				}
+
+				// // UP
+				// if (kbps < ALGO_HARD_LIMIT) {
+				// 	params_idx = 2;
+				// 	// new_tx_pwr_setting = 1; // +3dBm = MAX
+				// 	// new_rtn_setting = 8; // MAX
+				// } else if (kbps < ALGO_SOFT_LIMIT_1) {
+				// 	params_idx = 1;
+				// 	// new_tx_pwr_setting = 0; // +0 dBm
+				// 	// new_rtn_setting = 6;
+				// } else if (kbps < ALGO_SOFT_LIMIT_2) {
+				// 	params_idx = 0;
+				// 	// new_tx_pwr_setting = 0; // +0 dBm
+				// 	// new_rtn_setting = 2;
+				// }
+
+				// if (params_idx < param_setting) {
+				// 	// don't allow up switching
+				// 	params_idx = param_setting;
+				// }
+
+				// DOWN
+				// if (kbps > ALGO_MAX_THROUGHPUT * 0.99) {
+				// 	params_idx = params_idx > 0 ? params_idx - 1 : 0;
+				// 	// prev_kbps = kbps;
+				// } else {
+				// 	if (kbps < ALGO_HARD_LIMIT) {
+				// 		params_idx = 2;
+				// 	} else {
+				// 		params_idx = params_idx <= 2 ? params_idx + 1 : 2;
+				// 	}
+				// }
+				// else if (prev_pdr == pdr && kbps > ALGO_SOFT_LIMIT_1) {
+				// 	new_tx_pwr_setting = 0; // +0 dBm
+				// 	new_rtn_setting = 6;
+				// }
 			}
 
-			if(tx_pwr_setting != new_tx_pwr_setting || rtn_setting != new_rtn_setting || phy_setting != new_phy_setting) {
+			printk("After: RTN: %u - TXP: %u\n", params[params_idx].rtn, params[params_idx].txp);
+
+			if(param_setting != params_idx) {
+				switchtime = k_cycle_get_32();
+
 				err = bt_iso_big_terminate(big);
 				if (err) {
 					printk("bt_iso_big_terminate failed (err %d)\n", err);
 					return;
 				}
 
-				int err = ble_hci_vsc_set_tx_pwr(new_tx_pwr_setting);
+				int err = ble_hci_vsc_set_tx_pwr(params[params_idx].txp);
 				if (err) {
 					printk("Failed to set tx power (err %d)\n", err);
 					return;
 				}
 
-				bis[0]->qos->tx->rtn = new_rtn_setting;
-				bis[0]->qos->tx->phy = new_phy_setting;
+				bis[0]->qos->tx->rtn = params[params_idx].rtn;
+				// bis[0]->qos->tx->phy = params[params_idx].;
 
 				err = k_sem_take(&sem_big_term, K_FOREVER);
 				if (err) {
@@ -484,32 +549,35 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 				tx_pwr_setting = new_tx_pwr_setting;
 				rtn_setting = new_rtn_setting;
 				phy_setting = new_phy_setting;
+				param_setting = params_idx;
+
+				printk("Switchtime: %u us\n", k_cycle_get_32() - switchtime);
 			}
 		}
 		
-		printk("PDR: %.2f%% - RTN: %u - TXP: %u, PHY: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting, bis[0]->qos->tx->phy);
+		// printk("PDR: %.2f%% - RTN: %u - TXP: %u, PHY: %u, KBPS: %u\n", pdr, params[params_idx].rtn, params[params_idx].txp, bis[0]->qos->tx->phy, kbps);
 		prev_pdr = pdr;
 
 		if (LED_ON) {
-			if (pdr > 20) {
+			if (kbps >= ALGO_HARD_LIMIT) {
 				gpio_pin_set_dt(&led1, 1);
 			} else {
 				gpio_pin_set_dt(&led1, 0);
 			}
 
-			if (pdr > 40) {
+			if (kbps >= ALGO_SOFT_LIMIT_1) {
 				gpio_pin_set_dt(&led2, 1);
 			} else {
 				gpio_pin_set_dt(&led2, 0);
 			}
 
-			if (pdr > 60) {
+			if (kbps >= ALGO_SOFT_LIMIT_2) {
 				gpio_pin_set_dt(&led3, 1);
 			} else {
 				gpio_pin_set_dt(&led3, 0);
 			}
 
-			if (pdr > 80) {
+			if (pdr > 99.0) {
 				gpio_pin_set_dt(&led4, 1);
 			} else {
 				gpio_pin_set_dt(&led4, 0);
