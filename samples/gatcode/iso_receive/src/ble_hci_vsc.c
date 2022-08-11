@@ -186,3 +186,24 @@ int ble_hci_vsc_set_conn_tx_pwr(uint16_t conn_handle, enum ble_hci_vs_tx_power t
 
 	return ret;
 }
+
+int ble_hci_vsc_set_conn_tx_pwr_index(uint16_t conn_handle, uint8_t pwr_setting_index)
+{
+	int ret;
+
+	struct ble_hci_vs_tx_pwr_setting setting = available_vs_tx_pwr_settings[pwr_setting_index];
+
+	ret = ble_hci_vsc_set_radio_high_pwr_mode(setting.add_3dBm);
+	if (ret) {
+		printk("Error for HCI VS command ble_hci_vsc_set_radio_high_pwr_mode\n");
+		return ret;
+	}
+
+	ret = ble_hci_vsc_set_conn_tx_pwr(conn_handle, setting.tx_power);
+	if (ret) {
+		printk("Error for HCI VS command ble_hci_vsc_set_conn_tx_pwr\n");
+		return ret;
+	}
+
+	return ret;
+}

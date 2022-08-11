@@ -121,4 +121,13 @@ int ble_hci_vsc_set_tx_pwr(uint8_t pwr_setting_index);
  */
 int ble_hci_vsc_set_conn_tx_pwr(uint16_t conn_handle, enum ble_hci_vs_tx_power tx_power);
 
+/**
+ * @brief Set TX power for specific connection
+ * @param conn_handle Specific connection handle for TX power setting
+ * @param pwr_setting_index TX power setting index - see available_vs_tx_pwr_settings.
+ *
+ * @return 0 for success, error otherwise.
+ */
+int ble_hci_vsc_set_conn_tx_pwr_index(uint16_t conn_handle, uint8_t pwr_setting_index);
+
 #endif /* _BLE_HCI_VSC_H_ */

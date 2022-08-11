@@ -26,7 +26,7 @@
 
 #define FIFO_SIZE 100
 
-#define PDR_WATCHDOG_FREQ_MS 100
+#define PDR_WATCHDOG_FREQ_MS 500
 #define INDICATE_IF_PDR_CHANGED_BY 10 // send indication if changes > define
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
@@ -212,20 +212,20 @@ static uint32_t lastExecTs = 0;
 
 void watchdog_txp_worker(struct k_work *item)
 {
-	int err = ble_hci_vsc_set_radio_high_pwr_mode(false);
+	/* Fetch ACL connection handle */
+	uint16_t acl_handle = 0;
+	int err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
 	if (err) {
-		printk("Error for HCI VS command ble_hci_vsc_set_radio_high_pwr_mode\n");
+		printk("Failed to fetch the ACL connection handle (err %d)\n", err);
+		return;
 	}
 
-	// probe with current txp
-	uint16_t acl_handle = 0;
-	err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
-	err |= ble_hci_vsc_set_conn_tx_pwr(acl_handle, BLE_HCI_VSC_TX_PWR_0dBm); // +3dBm
+	/* Probe TXP and Indicate */
+	err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, 13); // +3dBm
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
 	}
-
 
 	static uint8_t htm[5];
 	uint32_t mantissa;
@@ -246,31 +246,14 @@ void watchdog_txp_worker(struct k_work *item)
 	(void)bt_gatt_indicate(NULL, &ind_params);
 	last_indicated_pdr = pdr;
 
-
-
-
-
-
-
-
-	// static uint8_t htm1;
-	// htm1 = 0;
-
-	// probing1_departure = k_uptime_get_32();
-	// ind_params1.attr = &hts_svc.attrs[2];
-	// ind_params1.data = &htm1;
-	// ind_params1.len = sizeof(htm1);
-	// ind_params1.func = &acl_indication_finished1;
-	// (void)bt_gatt_indicate(NULL, &ind_params1);
-
+	/* Probe TXP */
 	err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
 	if (err) {
 		printk("failed (err %d)\n", err);
 		return;
 	}
 
-	err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
-	err |= ble_hci_vsc_set_conn_tx_pwr(acl_handle, BLE_HCI_VSC_TX_PWR_Neg40dBm); // +3dBm
+	err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, 0); // -40dBm
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
@@ -298,34 +281,15 @@ K_WORK_DEFINE(watchdog_txp_work, watchdog_txp_worker);
 
 void acl_indicate(double pdr)
 {
-	if (abs(last_indicated_pdr - pdr) > 2) {
-
+	// if (abs(last_indicated_pdr - pdr) > 2) {
 		k_work_submit(&watchdog_txp_work);
-	// uint32_t curr = audio_sync_timer_curr_time_get();
-	// if (curr - lastExecTs > 5000000) {
-		// static uint8_t htm[5];
-		// uint32_t mantissa;
-		// uint8_t exponent;
-
-		// mantissa = (uint32_t)(pdr * 100);
-		// exponent = (uint8_t)-2;
-
-		// htm[0] = 0;
-		// sys_put_le24(mantissa, (uint8_t *)&htm[1]);
-		// htm[4] = exponent;
-
-		// ind_params.attr = &hts_svc.attrs[2];
-		// ind_params.data = &htm;
-		// ind_params.len = sizeof(htm);
-		// (void)bt_gatt_indicate(NULL, &ind_params);
-		// last_indicated_pdr = pdr;
-	}
+	// }
 }
 
 /* ------------------------------------------------------ */
 /* ISO */
 /* ------------------------------------------------------ */
-#define TIMEOUT_SYNC_CREATE K_SECONDS(60)
+#define TIMEOUT_SYNC_CREATE K_SECONDS(10)
 #define NAME_LEN            30
 
 #define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, \
@@ -333,7 +297,7 @@ void acl_indicate(double pdr)
 					   BT_GAP_SCAN_FAST_INTERVAL, \
 					   BT_GAP_SCAN_FAST_WINDOW)
 
-#define PA_RETRY_COUNT 60
+#define PA_RETRY_COUNT 10
 
 static bool         per_adv_found;
 static bool         per_adv_lost;
@@ -453,6 +417,7 @@ static uint32_t prev_crc_error_packets = 0;
 
 void pdr_watchdog_handler(struct k_timer *dummy)
 {
+	acl_indicate(pdr);
 	// k_work_submit(&watchdog_txp_work);
 
 	// uint32_t curr = audio_sync_timer_curr_time_get();
@@ -507,40 +472,9 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		}
 		pdr = RollingmAvg(1);
 
-		int ret;
-		struct bt_hci_cp_le_read_iso_link_quality *cp;
-		struct bt_hci_rp_le_read_iso_link_quality *rp;
-		struct net_buf *buf, *rsp = NULL;
-
-		buf = bt_hci_cmd_create(BT_HCI_OP_LE_READ_ISO_LINK_QUALITY, sizeof(*cp));
-		if (!buf) {
-			printk("Unable to allocate command buffer\n");
-			return -ENOMEM;
-		}
-		cp = net_buf_add(buf, sizeof(*cp));
+		printk("PDR: %.2f%%\n", pdr);
 	
-		uint16_t acl_handle = 0;
-		bt_hci_get_conn_handle(chan->iso, &acl_handle);
-		cp->handle = acl_handle;
-
-		ret = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_ISO_LINK_QUALITY, buf, &rsp);
-		if (ret) {
-			printk("Error for HCI VS command BT_HCI_OP_LE_READ_ISO_LINK_QUALITY\n");
-			return ret;
-		}
-
-		rp = (void *)rsp->data;
-
-		uint8_t crc_error_packets_delta = rp->crc_error_packets - prev_crc_error_packets;
-		uint8_t crc_error_packets = crc_error_packets_delta > rtn ? rtn : crc_error_packets_delta;
-		double is_distance_big = RollingmAvg2(crc_error_packets);
-		prev_crc_error_packets = rp->crc_error_packets;
-
-		// printk("PDR: %.2f%% - Great Distance: %.2f%%\n", pdr, is_distance_big);
-	
-		net_buf_unref(rsp);
-
-		acl_indicate(pdr);
+		// acl_indicate(pdr);
 		last_recv_packet_ts = audio_sync_timer_curr_time_get();
 
 		if (LED_ON) {
@@ -810,6 +744,7 @@ per_sync_lost_check:
 		err = k_sem_take(&sem_per_sync_lost, K_NO_WAIT);
 		if (err) {
 			/* Periodic Sync active, go back to creating BIG Sync */
+			k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS), K_MSEC(PDR_WATCHDOG_FREQ_MS)); // start timer again
 			goto big_sync_create;
 		}
 		printk("Periodic sync lost.\n");
