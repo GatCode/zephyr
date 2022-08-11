@@ -435,69 +435,69 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			return;
 		}
 
-		if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
-			uint32_t kbps = get_current_kbps();
+		// if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
+		// 	uint32_t kbps = get_current_kbps();
 
-			if (INTELLIGENT_ALGO) {
-				uint32_t curr = k_uptime_get_32();
+		// 	if (INTELLIGENT_ALGO) {
+		// 		uint32_t curr = k_uptime_get_32();
 
-				if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
-					// increase
-					if (curr - last_decreased_ts > 1000 || kbps < ALGO_HARD_LIMIT) {
-						params_idx = params_idx < 2 ? params_idx + 1 : 2;
-						last_switch_ts = curr;
-					}
-				} else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
-					// ignore
-				} else {
-					if (curr - last_switch_ts > 1000) { // > 10s
-						// decrease
-						params_idx = params_idx > 0 ? params_idx - 1 : 0;
-						last_decreased_ts = curr;
-					}
-				}
-			}
+		// 		if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
+		// 			// increase
+		// 			if (curr - last_decreased_ts > 1000 || kbps < ALGO_HARD_LIMIT) {
+		// 				params_idx = params_idx < 2 ? params_idx + 1 : 2;
+		// 				last_switch_ts = curr;
+		// 			}
+		// 		} else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
+		// 			// ignore
+		// 		} else {
+		// 			if (curr - last_switch_ts > 1000) { // > 10s
+		// 				// decrease
+		// 				params_idx = params_idx > 0 ? params_idx - 1 : 0;
+		// 				last_decreased_ts = curr;
+		// 			}
+		// 		}
+		// 	}
 
-			if(param_setting != params_idx) {
-				err = bt_iso_big_terminate(big);
-				if (err) {
-					printk("bt_iso_big_terminate failed (err %d)\n", err);
-					return;
-				}
+		// 	if(param_setting != params_idx) {
+		// 		err = bt_iso_big_terminate(big);
+		// 		if (err) {
+		// 			printk("bt_iso_big_terminate failed (err %d)\n", err);
+		// 			return;
+		// 		}
 
-				int err = ble_hci_vsc_set_tx_pwr(params[params_idx].txp);
-				if (err) {
-					printk("Failed to set tx power (err %d)\n", err);
-					return;
-				}
+		// 		int err = ble_hci_vsc_set_tx_pwr(params[params_idx].txp);
+		// 		if (err) {
+		// 			printk("Failed to set tx power (err %d)\n", err);
+		// 			return;
+		// 		}
 
-				bis[0]->qos->tx->rtn = params[params_idx].rtn;
-				// bis[0]->qos->tx->phy = new_phy_setting;
+		// 		bis[0]->qos->tx->rtn = params[params_idx].rtn;
+		// 		// bis[0]->qos->tx->phy = new_phy_setting;
 
-				err = k_sem_take(&sem_big_term, K_FOREVER);
-				if (err) {
-					printk("sem_big_term failed (err %d)\n", err);
-					return;
-				}
+		// 		err = k_sem_take(&sem_big_term, K_FOREVER);
+		// 		if (err) {
+		// 			printk("sem_big_term failed (err %d)\n", err);
+		// 			return;
+		// 		}
 
-				err = bt_iso_big_create(adv, &big_create_param, &big);
-				if (err) {
-					printk("bt_iso_big_create failed (err %d)\n", err);
-					return;
-				}
+		// 		err = bt_iso_big_create(adv, &big_create_param, &big);
+		// 		if (err) {
+		// 			printk("bt_iso_big_create failed (err %d)\n", err);
+		// 			return;
+		// 		}
 
-				err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-				if (err) {
-					printk("sem_big_cmplt failed (err %d)\n", err);
-					return;
-				}
+		// 		err = k_sem_take(&sem_big_cmplt, K_FOREVER);
+		// 		if (err) {
+		// 			printk("sem_big_cmplt failed (err %d)\n", err);
+		// 			return;
+		// 		}
 
-				iso_sent(&bis_iso_chan);
-				tx_pwr_setting = params[params_idx].txp;
-				rtn_setting = params[params_idx].rtn;
-				param_setting = params_idx;
-			}
-		}
+		// 		iso_sent(&bis_iso_chan);
+		// 		tx_pwr_setting = params[params_idx].txp;
+		// 		rtn_setting = params[params_idx].rtn;
+		// 		param_setting = params_idx;
+		// 	}
+		// }
 		
 		printk("PDR: %.2f%% - RTN: %u - TXP: %u, PHY: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting, bis[0]->qos->tx->phy);
 		prev_pdr = pdr;

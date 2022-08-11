@@ -26,7 +26,7 @@
 
 #define FIFO_SIZE 100
 
-#define PDR_WATCHDOG_FREQ_MS 1000
+#define PDR_WATCHDOG_FREQ_MS 100
 #define INDICATE_IF_PDR_CHANGED_BY 10 // send indication if changes > define
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
@@ -38,6 +38,8 @@ static double pdr = 0.0;
 static double last_indicated_pdr = 0.0;
 static uint16_t iso_interval = 0;
 static bool LED_ON = true;
+
+static uint8_t probing_txp = MAX_TXP;
 
 /* ------------------------------------------------------ */
 /* LEDs */
@@ -82,6 +84,8 @@ static struct bt_conn *acl_conn;
 		BT_GAP_ADV_FAST_INT_MAX_1, NULL)
 
 static struct bt_gatt_indicate_params ind_params;
+static struct bt_gatt_indicate_params ind_params1;
+static struct bt_gatt_indicate_params ind_params2;
 static K_SEM_DEFINE(acl_connected, 0, 1);
 
 static const struct bt_data ad[] = {
@@ -147,7 +151,7 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 
 	/* Set MAX TX power */
 	init_ble_hci_vsc_tx_pwr();
-	int err = ble_hci_vsc_set_tx_pwr(MAX_TXP);
+	int err = ble_hci_vsc_set_tx_pwr(probing_txp);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
@@ -157,26 +161,146 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 	k_work_submit(&adv_work);
 }
 
+static K_SEM_DEFINE(txp_finish_sem, 0, 1);
+
+static uint32_t txp_work_set_txp = MAX_TXP;
+
+void txp_set_work(struct k_work *item)
+{
+	// probe with current txp
+	int err = ble_hci_vsc_set_tx_pwr(txp_work_set_txp); // +3dBm
+	if (err) {
+		printk("Failed to set tx power (err %d)\n", err);
+		return;
+	}
+
+	k_sem_give(&txp_finish_sem);
+}
+K_WORK_DEFINE(txp_work, txp_set_work);
+
+static uint32_t probing1_departure = 0;
+static uint32_t probing1_arrival = 0;
+static uint32_t probing2_departure = 0;
+static uint32_t probing2_arrival = 0;
+
+static K_SEM_DEFINE(sem_probing_finished_1, 0, 1);
+static K_SEM_DEFINE(sem_probing_finished_2, 0, 1);
+
+void acl_indication_finished1(struct bt_conn *conn,
+					struct bt_gatt_indicate_params *params,
+					uint8_t err)
+{
+	// printk("indicated 1\n");
+	probing1_arrival = k_uptime_get_32();
+	k_sem_give(&sem_probing_finished_1);
+}
+
+
+void acl_indication_finished2(struct bt_conn *conn,
+					struct bt_gatt_indicate_params *params,
+					uint8_t err)
+{
+	// printk("indicated 2\n");
+	probing2_arrival = k_uptime_get_32();
+	k_sem_give(&sem_probing_finished_2);
+
+	printk("Higher: %u, Lower: %u\n", probing1_arrival-probing1_departure, probing2_arrival-probing2_departure);
+}
+
+static uint32_t lastExecTs = 0;
+
 void acl_indicate(double pdr)
 {
-	if (abs(last_indicated_pdr - pdr) > 1) {
-		static uint8_t htm[5];
-		uint32_t mantissa;
-		uint8_t exponent;
+	// if (abs(last_indicated_pdr - pdr) > 10) {
+	// uint32_t curr = audio_sync_timer_curr_time_get();
+	// if (curr - lastExecTs > 5000000) {
+	// 	// static uint8_t htm[5];
+	// 	// uint32_t mantissa;
+	// 	// uint8_t exponent;
 
-		mantissa = (uint32_t)(pdr * 100);
-		exponent = (uint8_t)-2;
+	// 	// mantissa = (uint32_t)(pdr * 100);
+	// 	// exponent = (uint8_t)-2;
 
-		htm[0] = 0;
-		sys_put_le24(mantissa, (uint8_t *)&htm[1]);
-		htm[4] = exponent;
+	// 	// htm[0] = 0;
+	// 	// sys_put_le24(mantissa, (uint8_t *)&htm[1]);
+	// 	// htm[4] = exponent;
 
-		ind_params.attr = &hts_svc.attrs[2];
-		ind_params.data = &htm;
-		ind_params.len = sizeof(htm);
-		(void)bt_gatt_indicate(NULL, &ind_params);
-		last_indicated_pdr = pdr;
-	}
+	// 	// ind_params.attr = &hts_svc.attrs[2];
+	// 	// ind_params.data = &htm;
+	// 	// ind_params.len = sizeof(htm);
+	// 	// ind_params.func = &acl_indication_finished1;
+	// 	// (void)bt_gatt_indicate(NULL, &ind_params);
+	// 	// last_indicated_pdr = pdr;
+	// // }
+
+	
+
+	// // txp_work_set_txp = MAX_TXP - 1;
+	// // k_work_submit(&txp_work);
+	// // int err = k_sem_take(&txp_finish_sem, K_FOREVER);
+	// // if (err) {
+	// // 	printk("failed (err %d)\n", err);
+	// // 	return;
+	// // }
+
+	// static uint8_t htm1;
+	// htm1 = 0;
+
+	// probing1_departure = audio_sync_timer_curr_time_get();
+	// ind_params1.attr = &hts_svc.attrs[2];
+	// ind_params1.data = &htm1;
+	// ind_params1.len = sizeof(htm1);
+	// ind_params1.func = &acl_indication_finished1;
+	// (void)bt_gatt_indicate(NULL, &ind_params1);
+
+
+
+	// // txp_work_set_txp = MAX_TXP - 1;
+	// // k_work_submit(&txp_work);
+	// // err = k_sem_take(&txp_finish_sem, K_FOREVER);
+	// // if (err) {
+	// // 	printk("failed (err %d)\n", err);
+	// // 	return;
+	// // }
+
+	// static uint8_t htm2;
+	// htm2 = 1;
+
+	// probing2_departure = audio_sync_timer_curr_time_get();
+	// ind_params2.attr = &hts_svc.attrs[2];
+	// ind_params2.data = &htm2;
+	// ind_params2.len = sizeof(htm2);
+	// ind_params2.func = &acl_indication_finished2;
+	// (void)bt_gatt_indicate(NULL, &ind_params2);
+
+
+	// last_indicated_pdr = pdr;
+
+	// lastExecTs = curr;
+	// }
+
+
+
+
+
+
+
+	// static uint8_t htm[5];
+	// uint32_t mantissa;
+	// uint8_t exponent;
+
+	// mantissa = (uint32_t)(pdr * 100);
+	// exponent = (uint8_t)-2;
+
+	// htm[0] = 0;
+	// sys_put_le24(mantissa, (uint8_t *)&htm[1]);
+	// htm[4] = exponent;
+
+	// ind_params.attr = &hts_svc.attrs[2];
+	// ind_params.data = &htm;
+	// ind_params.len = sizeof(htm);
+	// (void)bt_gatt_indicate(NULL, &ind_params);
+	// last_indicated_pdr = pdr;
 }
 
 /* ------------------------------------------------------ */
@@ -308,16 +432,87 @@ static uint32_t last_recv_packet_ts = 0;
 
 static uint32_t prev_crc_error_packets = 0;
 
+void watchdog_txp_worker(struct k_work *item)
+{
+	int err = ble_hci_vsc_set_radio_high_pwr_mode(false);
+	if (err) {
+		printk("Error for HCI VS command ble_hci_vsc_set_radio_high_pwr_mode\n");
+	}
+
+	// probe with current txp
+	uint16_t acl_handle = 0;
+	err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
+	err |= ble_hci_vsc_set_conn_tx_pwr(acl_handle, BLE_HCI_VSC_TX_PWR_Neg40dBm); // +3dBm
+	if (err) {
+		printk("Failed to set tx power (err %d)\n", err);
+		return;
+	}
+
+	static uint8_t htm1;
+	htm1 = 0;
+
+	probing1_departure = k_uptime_get_32();
+	ind_params1.attr = &hts_svc.attrs[2];
+	ind_params1.data = &htm1;
+	ind_params1.len = sizeof(htm1);
+	ind_params1.func = &acl_indication_finished1;
+	(void)bt_gatt_indicate(NULL, &ind_params1);
+
+	err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
+	if (err) {
+		printk("failed (err %d)\n", err);
+		return;
+	}
+
+
+
+	// // probe with current txp
+	// err = ble_hci_vsc_set_tx_pwr(MAX_TXP -1); // +3dBm
+	// if (err) {
+	// 	printk("Failed to set tx power (err %d)\n", err);
+	// 	return;
+	// }
+
+	err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
+	err |= ble_hci_vsc_set_conn_tx_pwr(acl_handle, BLE_HCI_VSC_TX_PWR_Neg20dBm); // +3dBm
+	if (err) {
+		printk("Failed to set tx power (err %d)\n", err);
+		return;
+	}
+
+	static uint8_t htm2;
+	htm2 = 1;
+
+	probing2_departure = k_uptime_get_32();
+	ind_params2.attr = &hts_svc.attrs[2];
+	ind_params2.data = &htm2;
+	ind_params2.len = sizeof(htm2);
+	ind_params2.func = &acl_indication_finished2;
+	(void)bt_gatt_indicate(NULL, &ind_params2);
+
+	err = k_sem_take(&sem_probing_finished_2, K_FOREVER);
+	if (err) {
+		printk("failed (err %d)\n", err);
+		return;
+	}
+
+
+	last_indicated_pdr = pdr;
+}
+K_WORK_DEFINE(watchdog_txp_work, watchdog_txp_worker);
+
 void pdr_watchdog_handler(struct k_timer *dummy)
 {
-	uint32_t curr = audio_sync_timer_curr_time_get();
-	// printk("curr: %u, last_recv_packet_ts: %u, diff: %u\n", curr, last_recv_packet_ts, curr - last_recv_packet_ts);
-	if (curr - last_recv_packet_ts > 1000000) { // > 1s
-		pdr = 0.0;
-		prev_crc_error_packets = 0;
-		acl_indicate(pdr);
-		printk("PDR: %.2f%%\n", pdr);
-	}
+	k_work_submit(&watchdog_txp_work);
+
+	// uint32_t curr = audio_sync_timer_curr_time_get();
+	// // printk("curr: %u, last_recv_packet_ts: %u, diff: %u\n", curr, last_recv_packet_ts, curr - last_recv_packet_ts);
+	// if (curr - last_recv_packet_ts > 1000000) { // > 1s
+	// 	pdr = 0.0;
+	// 	prev_crc_error_packets = 0;
+	// 	acl_indicate(pdr);
+	// 	printk("PDR: %.2f%%\n", pdr);
+	// }	
 }
 K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
@@ -391,7 +586,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		double is_distance_big = RollingmAvg2(crc_error_packets);
 		prev_crc_error_packets = rp->crc_error_packets;
 
-		printk("PDR: %.2f%% - Great Distance: %.2f%%\n", pdr, is_distance_big);
+		// printk("PDR: %.2f%% - Great Distance: %.2f%%\n", pdr, is_distance_big);
 	
 		net_buf_unref(rsp);
 
