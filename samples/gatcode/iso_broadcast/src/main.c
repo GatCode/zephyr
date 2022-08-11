@@ -302,6 +302,11 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	char addr[BT_ADDR_LE_STR_LEN];
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 	printk("ACL disconnected: %s (reason 0x%02x)\n", addr, reason);
+
+	bt_conn_unref(conn);
+
+	/* Start ACL Scanning */
+	k_work_submit(&start_scan_work);
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {

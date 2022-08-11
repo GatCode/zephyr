@@ -126,6 +126,7 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 static void acl_disconnected_cb(struct bt_conn *conn, uint8_t reason)
 {
 	printk("ACL Disconnected (reason 0x%02x)\n", reason);
+	k_thread_start(&thread_acl_data);
 }
 
 static struct bt_conn_cb conn_callbacks = {
