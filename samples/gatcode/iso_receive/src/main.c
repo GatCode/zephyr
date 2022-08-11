@@ -209,98 +209,116 @@ void acl_indication_finished2(struct bt_conn *conn,
 
 static uint32_t lastExecTs = 0;
 
-void acl_indicate(double pdr)
+void watchdog_txp_worker(struct k_work *item)
 {
-	// if (abs(last_indicated_pdr - pdr) > 10) {
-	// uint32_t curr = audio_sync_timer_curr_time_get();
-	// if (curr - lastExecTs > 5000000) {
-	// 	// static uint8_t htm[5];
-	// 	// uint32_t mantissa;
-	// 	// uint8_t exponent;
+	int err = ble_hci_vsc_set_radio_high_pwr_mode(false);
+	if (err) {
+		printk("Error for HCI VS command ble_hci_vsc_set_radio_high_pwr_mode\n");
+	}
 
-	// 	// mantissa = (uint32_t)(pdr * 100);
-	// 	// exponent = (uint8_t)-2;
+	// probe with current txp
+	uint16_t acl_handle = 0;
+	err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
+	err |= ble_hci_vsc_set_conn_tx_pwr(acl_handle, BLE_HCI_VSC_TX_PWR_0dBm); // +3dBm
+	if (err) {
+		printk("Failed to set tx power (err %d)\n", err);
+		return;
+	}
 
-	// 	// htm[0] = 0;
-	// 	// sys_put_le24(mantissa, (uint8_t *)&htm[1]);
-	// 	// htm[4] = exponent;
 
-	// 	// ind_params.attr = &hts_svc.attrs[2];
-	// 	// ind_params.data = &htm;
-	// 	// ind_params.len = sizeof(htm);
-	// 	// ind_params.func = &acl_indication_finished1;
-	// 	// (void)bt_gatt_indicate(NULL, &ind_params);
-	// 	// last_indicated_pdr = pdr;
-	// // }
+	static uint8_t htm[5];
+	uint32_t mantissa;
+	uint8_t exponent;
 
-	
+	mantissa = (uint32_t)(pdr * 100);
+	exponent = (uint8_t)-2;
 
-	// // txp_work_set_txp = MAX_TXP - 1;
-	// // k_work_submit(&txp_work);
-	// // int err = k_sem_take(&txp_finish_sem, K_FOREVER);
-	// // if (err) {
-	// // 	printk("failed (err %d)\n", err);
-	// // 	return;
-	// // }
+	htm[0] = 0;
+	sys_put_le24(mantissa, (uint8_t *)&htm[1]);
+	htm[4] = exponent;
+
+	probing1_departure = k_uptime_get_32();
+	ind_params.attr = &hts_svc.attrs[2];
+	ind_params.data = &htm;
+	ind_params.len = sizeof(htm);
+	ind_params.func = &acl_indication_finished1;
+	(void)bt_gatt_indicate(NULL, &ind_params);
+	last_indicated_pdr = pdr;
+
+
+
+
+
+
+
 
 	// static uint8_t htm1;
 	// htm1 = 0;
 
-	// probing1_departure = audio_sync_timer_curr_time_get();
+	// probing1_departure = k_uptime_get_32();
 	// ind_params1.attr = &hts_svc.attrs[2];
 	// ind_params1.data = &htm1;
 	// ind_params1.len = sizeof(htm1);
 	// ind_params1.func = &acl_indication_finished1;
 	// (void)bt_gatt_indicate(NULL, &ind_params1);
 
+	err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
+	if (err) {
+		printk("failed (err %d)\n", err);
+		return;
+	}
 
+	err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
+	err |= ble_hci_vsc_set_conn_tx_pwr(acl_handle, BLE_HCI_VSC_TX_PWR_Neg40dBm); // +3dBm
+	if (err) {
+		printk("Failed to set tx power (err %d)\n", err);
+		return;
+	}
 
-	// // txp_work_set_txp = MAX_TXP - 1;
-	// // k_work_submit(&txp_work);
-	// // err = k_sem_take(&txp_finish_sem, K_FOREVER);
-	// // if (err) {
-	// // 	printk("failed (err %d)\n", err);
-	// // 	return;
-	// // }
+	static uint8_t htm2;
+	htm2 = 1;
 
-	// static uint8_t htm2;
-	// htm2 = 1;
+	probing2_departure = k_uptime_get_32();
+	ind_params2.attr = &hts_svc.attrs[2];
+	ind_params2.data = &htm2;
+	ind_params2.len = sizeof(htm2);
+	ind_params2.func = &acl_indication_finished2;
+	(void)bt_gatt_indicate(NULL, &ind_params2);
 
-	// probing2_departure = audio_sync_timer_curr_time_get();
-	// ind_params2.attr = &hts_svc.attrs[2];
-	// ind_params2.data = &htm2;
-	// ind_params2.len = sizeof(htm2);
-	// ind_params2.func = &acl_indication_finished2;
-	// (void)bt_gatt_indicate(NULL, &ind_params2);
+	err = k_sem_take(&sem_probing_finished_2, K_FOREVER);
+	if (err) {
+		printk("failed (err %d)\n", err);
+		return;
+	}
 
+	last_indicated_pdr = pdr;
+}
+K_WORK_DEFINE(watchdog_txp_work, watchdog_txp_worker);
 
-	// last_indicated_pdr = pdr;
+void acl_indicate(double pdr)
+{
+	if (abs(last_indicated_pdr - pdr) > 2) {
 
-	// lastExecTs = curr;
-	// }
+		k_work_submit(&watchdog_txp_work);
+	// uint32_t curr = audio_sync_timer_curr_time_get();
+	// if (curr - lastExecTs > 5000000) {
+		// static uint8_t htm[5];
+		// uint32_t mantissa;
+		// uint8_t exponent;
 
+		// mantissa = (uint32_t)(pdr * 100);
+		// exponent = (uint8_t)-2;
 
+		// htm[0] = 0;
+		// sys_put_le24(mantissa, (uint8_t *)&htm[1]);
+		// htm[4] = exponent;
 
-
-
-
-
-	// static uint8_t htm[5];
-	// uint32_t mantissa;
-	// uint8_t exponent;
-
-	// mantissa = (uint32_t)(pdr * 100);
-	// exponent = (uint8_t)-2;
-
-	// htm[0] = 0;
-	// sys_put_le24(mantissa, (uint8_t *)&htm[1]);
-	// htm[4] = exponent;
-
-	// ind_params.attr = &hts_svc.attrs[2];
-	// ind_params.data = &htm;
-	// ind_params.len = sizeof(htm);
-	// (void)bt_gatt_indicate(NULL, &ind_params);
-	// last_indicated_pdr = pdr;
+		// ind_params.attr = &hts_svc.attrs[2];
+		// ind_params.data = &htm;
+		// ind_params.len = sizeof(htm);
+		// (void)bt_gatt_indicate(NULL, &ind_params);
+		// last_indicated_pdr = pdr;
+	}
 }
 
 /* ------------------------------------------------------ */
@@ -432,78 +450,9 @@ static uint32_t last_recv_packet_ts = 0;
 
 static uint32_t prev_crc_error_packets = 0;
 
-void watchdog_txp_worker(struct k_work *item)
-{
-	int err = ble_hci_vsc_set_radio_high_pwr_mode(false);
-	if (err) {
-		printk("Error for HCI VS command ble_hci_vsc_set_radio_high_pwr_mode\n");
-	}
-
-	// probe with current txp
-	uint16_t acl_handle = 0;
-	err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
-	err |= ble_hci_vsc_set_conn_tx_pwr(acl_handle, BLE_HCI_VSC_TX_PWR_Neg40dBm); // +3dBm
-	if (err) {
-		printk("Failed to set tx power (err %d)\n", err);
-		return;
-	}
-
-	static uint8_t htm1;
-	htm1 = 0;
-
-	probing1_departure = k_uptime_get_32();
-	ind_params1.attr = &hts_svc.attrs[2];
-	ind_params1.data = &htm1;
-	ind_params1.len = sizeof(htm1);
-	ind_params1.func = &acl_indication_finished1;
-	(void)bt_gatt_indicate(NULL, &ind_params1);
-
-	err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
-	if (err) {
-		printk("failed (err %d)\n", err);
-		return;
-	}
-
-
-
-	// // probe with current txp
-	// err = ble_hci_vsc_set_tx_pwr(MAX_TXP -1); // +3dBm
-	// if (err) {
-	// 	printk("Failed to set tx power (err %d)\n", err);
-	// 	return;
-	// }
-
-	err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
-	err |= ble_hci_vsc_set_conn_tx_pwr(acl_handle, BLE_HCI_VSC_TX_PWR_Neg20dBm); // +3dBm
-	if (err) {
-		printk("Failed to set tx power (err %d)\n", err);
-		return;
-	}
-
-	static uint8_t htm2;
-	htm2 = 1;
-
-	probing2_departure = k_uptime_get_32();
-	ind_params2.attr = &hts_svc.attrs[2];
-	ind_params2.data = &htm2;
-	ind_params2.len = sizeof(htm2);
-	ind_params2.func = &acl_indication_finished2;
-	(void)bt_gatt_indicate(NULL, &ind_params2);
-
-	err = k_sem_take(&sem_probing_finished_2, K_FOREVER);
-	if (err) {
-		printk("failed (err %d)\n", err);
-		return;
-	}
-
-
-	last_indicated_pdr = pdr;
-}
-K_WORK_DEFINE(watchdog_txp_work, watchdog_txp_worker);
-
 void pdr_watchdog_handler(struct k_timer *dummy)
 {
-	k_work_submit(&watchdog_txp_work);
+	// k_work_submit(&watchdog_txp_work);
 
 	// uint32_t curr = audio_sync_timer_curr_time_get();
 	// // printk("curr: %u, last_recv_packet_ts: %u, diff: %u\n", curr, last_recv_packet_ts, curr - last_recv_packet_ts);
@@ -743,7 +692,7 @@ void main(void)
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
 
 	/* Start PDR Watchdog timer */
-	k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS), K_MSEC(PDR_WATCHDOG_FREQ_MS));
+	k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS * 3), K_MSEC(PDR_WATCHDOG_FREQ_MS));
 
 	do {
 		per_adv_lost = false;

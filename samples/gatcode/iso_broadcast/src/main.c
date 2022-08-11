@@ -207,14 +207,16 @@ static uint8_t notify_func(struct bt_conn *conn,
 		return BT_GATT_ITER_STOP;
 	}
 
-	mantissa = sys_get_le24(&((uint8_t *)data)[1]);
-	exponent = ((uint8_t *)data)[4];
-	value_recv = (double)mantissa * pow(10, exponent);
+	if (length > 4) { // ignore TXP probing
+		mantissa = sys_get_le24(&((uint8_t *)data)[1]);
+		exponent = ((uint8_t *)data)[4];
+		value_recv = (double)mantissa * pow(10, exponent);
 
-	pdr = value_recv;
-	// printk("PDR: %.2f%%\n", value_recv);
-	k_sem_give(&sem_pdr_recv);
-	last_recv_packet_ts = k_uptime_get_32();
+		pdr = value_recv;
+		// printk("PDR: %.2f%%\n", value_recv);
+		k_sem_give(&sem_pdr_recv);
+		last_recv_packet_ts = k_uptime_get_32();
+	}
 
 	return BT_GATT_ITER_CONTINUE;
 }
