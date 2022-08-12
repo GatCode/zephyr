@@ -463,20 +463,20 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		uint32_t curr = audio_sync_timer_curr_time_get();
 		uint32_t packet_delta = abs(last_recv_packet_ts - curr);
 		uint32_t iso_interval_us = iso_interval * 1.25 * 1000.0;
-		double lost_packets = (double)packet_delta / (double)iso_interval_us;
-		// printk("lost packets:  %.2f, packet_delta: %u, Packet ID: %u\n", lost_packets, packet_delta, seq_num);
-		if (lost_packets > 0) {
-			for (uint8_t i = 0; i < (uint8_t)lost_packets; i++) {
+		uint8_t lost_packets = (double)packet_delta / (double)iso_interval_us;
+		last_recv_packet_ts = curr;
+		// printk("lost packets:  %u, packet_delta: %u, Packet ID: %u - iso_interval_us: %u\n", lost_packets, packet_delta, seq_num, iso_interval_us);
+		if (lost_packets > 1) {
+			for (uint8_t i = 0; i < lost_packets; i++) {
 				pdr = RollingmAvg(0);
 			}
 		}
 		pdr = RollingmAvg(1);
 
-		printk("PDR: %.2f%%\n", pdr);
+		printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
 	
 		// acl_indicate(pdr);
-		last_recv_packet_ts = audio_sync_timer_curr_time_get();
-
+		
 		if (LED_ON) {
 			if (pdr > 20) {
 				gpio_pin_set_dt(&led1, 1);
