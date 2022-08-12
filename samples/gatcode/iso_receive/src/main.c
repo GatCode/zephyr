@@ -191,7 +191,6 @@ void acl_indication_finished1(struct bt_conn *conn,
 					struct bt_gatt_indicate_params *params,
 					uint8_t err)
 {
-	// printk("indicated 1\n");
 	probing1_arrival = k_uptime_get_32();
 	k_sem_give(&sem_probing_finished_1);
 }
@@ -201,14 +200,48 @@ void acl_indication_finished2(struct bt_conn *conn,
 					struct bt_gatt_indicate_params *params,
 					uint8_t err)
 {
-	// printk("indicated 2\n");
 	probing2_arrival = k_uptime_get_32();
 	k_sem_give(&sem_probing_finished_2);
-
-	printk("Higher: %u, Lower: %u\n", probing1_arrival-probing1_departure, probing2_arrival-probing2_departure);
 }
 
 static uint32_t lastExecTs = 0;
+static uint8_t currentTXP = MAX_TXP; // start with max TXP
+
+static uint16_t txp_delay_values_high[10] = {0};
+static uint16_t txp_delay_values_low[10] = {0};
+static uint64_t txp_delay_current_position_high = 0;
+static uint64_t txp_delay_current_position_low = 0;
+
+bool txp_readings_stable(uint8_t txp_reading, bool high_reading)
+{
+	if (high_reading) {
+		txp_delay_values_high[txp_delay_current_position_high] = txp_reading;
+		txp_delay_current_position_high++;
+		if (txp_delay_current_position_high >= sizeof(txp_delay_values_high) / sizeof(txp_delay_values_high[0])) {
+			txp_delay_current_position_high = 0;
+		}
+	} else {
+		txp_delay_values_low[txp_delay_current_position_low] = txp_reading;
+		txp_delay_current_position_low++;
+		if (txp_delay_current_position_low >= sizeof(txp_delay_values_low) / sizeof(txp_delay_values_low[0])) {
+			txp_delay_current_position_low = 0;
+		}
+	}
+
+	for (uint8_t i = 0; i < 10; i++) {
+		if (high_reading) {
+			if (txp_delay_values_high[i] != txp_delay_values_high[0]) {
+				return false;
+			}
+		} else {
+			if (txp_delay_values_low[i] != txp_delay_values_low[0]) {
+				return false;
+			}
+		}
+	}
+		
+	return true;
+}
 
 void watchdog_txp_worker(struct k_work *item)
 {
@@ -220,8 +253,8 @@ void watchdog_txp_worker(struct k_work *item)
 		return;
 	}
 
-	/* Probe TXP and Indicate */
-	err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, 13); // +3dBm
+	/* Probe current TXP and Indicate */
+	err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, currentTXP); // +3dBm
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
@@ -246,14 +279,14 @@ void watchdog_txp_worker(struct k_work *item)
 	(void)bt_gatt_indicate(NULL, &ind_params);
 	last_indicated_pdr = pdr;
 
-	/* Probe TXP */
+	/* Probe with lower TXP */
 	err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
 	if (err) {
 		printk("failed (err %d)\n", err);
 		return;
 	}
 
-	err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, 0); // -40dBm
+	err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, currentTXP - 1);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
@@ -274,6 +307,12 @@ void watchdog_txp_worker(struct k_work *item)
 		printk("failed (err %d)\n", err);
 		return;
 	}
+
+	/* Check if it's safe to downgrade the TXP */
+	uint8_t highReading = probing1_arrival-probing1_departure;
+	uint8_t lowReading = probing2_arrival-probing2_departure;
+	printk("Higher: %u, Lower: %u, H stable: %u, L stable: %u\n", highReading, lowReading, txp_readings_stable(highReading, true), txp_readings_stable(highReading, false));
+
 
 	last_indicated_pdr = pdr;
 }
@@ -473,7 +512,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		}
 		pdr = RollingmAvg(1);
 
-		printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
+		// printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
 	
 		// acl_indicate(pdr);
 		
