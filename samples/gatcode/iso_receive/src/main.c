@@ -9,6 +9,7 @@
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/usb/usb_device.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/ring_buffer.h>
 #include <ble_hci_vsc.h>
 #include <sync_timer.h>
 #include <stdlib.h>
@@ -311,7 +312,7 @@ void watchdog_txp_worker(struct k_work *item)
 	/* Check if it's safe to downgrade the TXP */
 	uint8_t highReading = probing1_arrival-probing1_departure;
 	uint8_t lowReading = probing2_arrival-probing2_departure;
-	printk("Higher: %u, Lower: %u, H stable: %u, L stable: %u\n", highReading, lowReading, txp_readings_stable(highReading, true), txp_readings_stable(highReading, false));
+	// printk("Higher: %u, Lower: %u, H stable: %u, L stable: %u\n", highReading, lowReading, txp_readings_stable(highReading, true), txp_readings_stable(highReading, false));
 
 
 	last_indicated_pdr = pdr;
@@ -470,6 +471,64 @@ void pdr_watchdog_handler(struct k_timer *dummy)
 }
 K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
+static bool iso_just_established = true;
+RING_BUF_DECLARE(PacketBuffer, 100 * DATA_SIZE_BYTE);
+
+void watchdog_work_start(struct k_work *item)
+{
+	printk("Hello World\n");
+}
+K_WORK_DEFINE(watchdog_handler, watchdog_work_start);
+
+static uint32_t last_reading = 0;
+
+void buffer_watchdog_handler(struct k_timer *dummy)
+{
+	// fires 50x per second
+	uint32_t free_slots = ring_buf_space_get(&PacketBuffer);
+	
+	printk("Free buffer slots: %u", free_slots / DATA_SIZE_BYTE);
+
+	if (iso_just_established && free_slots == 0) {
+		iso_just_established = false;
+	} 
+	
+	if (iso_just_established) {
+		printk("\n");
+		return;
+	}
+	
+	if (!ring_buf_is_empty(&PacketBuffer)) {
+		uint8_t data[DATA_SIZE_BYTE];
+		ring_buf_get(&PacketBuffer, &data, DATA_SIZE_BYTE);
+
+		uint8_t count_arr[4];
+		for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
+			if(i < 4) {
+				count_arr[i] = data[i];
+			}
+		}
+		seq_num = sys_get_le32(count_arr);
+
+		printk(" - seq_num: %u", seq_num);
+
+		if (seq_num - 1 != last_reading) {
+			printk(" - LOST");
+		}
+
+		last_reading = seq_num;
+	}
+
+	printk("\n");
+
+
+	
+	
+
+	// k_work_submit(&watchdog_handler);
+}
+K_TIMER_DEFINE(buffer_watchdog, buffer_watchdog_handler, NULL);
+
 void recv_packet_handler(struct k_timer *dummy)
 {
 	// currently unused
@@ -512,6 +571,8 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		}
 		pdr = RollingmAvg(1);
 
+		ring_buf_put(&PacketBuffer, buf->data, DATA_SIZE_BYTE);
+
 		// printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
 	
 		// acl_indicate(pdr);
@@ -551,14 +612,15 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 static void iso_connected(struct bt_iso_chan *chan)
 {
-	printk("ISO Channel %p connected\n", chan);
+	// printk("ISO Channel %p connected\n", chan);
+	// iso_just_established = true;
 	k_sem_give(&sem_big_sync);
 }
 
 static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 {
-	printk("ISO Channel %p disconnected with reason 0x%02x\n",
-	       chan, reason);
+	// printk("ISO Channel %p disconnected with reason 0x%02x\n",
+	    //    chan, reason);
 
 	if (reason != BT_HCI_ERR_OP_CANCELLED_BY_HOST) {
 		k_sem_give(&sem_big_sync_lost);
@@ -667,6 +729,7 @@ void main(void)
 
 	/* Start PDR Watchdog timer */
 	k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS * 3), K_MSEC(PDR_WATCHDOG_FREQ_MS));
+	k_timer_start(&buffer_watchdog, K_NO_WAIT, K_MSEC(20));
 
 	do {
 		per_adv_lost = false;
@@ -696,7 +759,7 @@ void main(void)
 		}
 		printk("success.\n");
 
-		printk("Creating Periodic Advertising Sync...");
+		// printk("Creating Periodic Advertising Sync...");
 		bt_addr_le_copy(&sync_create_param.addr, &per_addr);
 		sync_create_param.options = 0;
 		sync_create_param.sid = per_sid;
@@ -708,9 +771,9 @@ void main(void)
 			printk("failed (err %d)\n", err);
 			return;
 		}
-		printk("success.\n");
+		// printk("success.\n");
 
-		printk("Waiting for periodic sync...\n");
+		// printk("Waiting for periodic sync...\n");
 		err = k_sem_take(&sem_per_sync, K_MSEC(sem_timeout));
 		if (err) {
 			printk("failed (err %d)\n", err);
@@ -723,9 +786,9 @@ void main(void)
 			}
 			continue;
 		}
-		printk("Periodic sync established.\n");
+		// printk("Periodic sync established.\n");
 
-		printk("Waiting for BIG info...\n");
+		// printk("Waiting for BIG info...\n");
 		err = k_sem_take(&sem_per_big_info, K_MSEC(sem_timeout));
 		if (err) {
 			printk("failed (err %d)\n", err);
@@ -742,18 +805,18 @@ void main(void)
 			}
 			continue;
 		}
-		printk("Periodic sync established.\n");
+		// printk("Periodic sync established.\n");
 
 big_sync_create:
-		printk("Create BIG Sync...\n");
+		// printk("Create BIG Sync...\n");
 		err = bt_iso_big_sync(sync, &big_sync_param, &big);
 		if (err) {
 			printk("failed (err %d)\n", err);
 			return;
 		}
-		printk("success.\n");
+		// printk("success.\n");
 
-		printk("Waiting for BIG sync...\n");
+		// printk("Waiting for BIG sync...\n");
 		err = k_sem_take(&sem_big_sync, TIMEOUT_SYNC_CREATE);
 		if (err) {
 			printk("failed (err %d)\n", err);
@@ -768,24 +831,24 @@ big_sync_create:
 
 			goto per_sync_lost_check;
 		}
-		printk("BIG sync established.\n");
+		// printk("BIG sync established.\n");
 
-		printk("Waiting for BIG sync lost...\n");
+		// printk("Waiting for BIG sync lost...\n");
 		err = k_sem_take(&sem_big_sync_lost, K_FOREVER);
 		if (err) {
 			printk("failed (err %d)\n", err);
 			return;
 		}
-		printk("BIG sync lost.\n");
+		// printk("BIG sync lost.\n");
 
 per_sync_lost_check:
-		printk("Check for periodic sync lost...\n");
+		// printk("Check for periodic sync lost...\n");
 		err = k_sem_take(&sem_per_sync_lost, K_NO_WAIT);
 		if (err) {
 			/* Periodic Sync active, go back to creating BIG Sync */
 			k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS), K_MSEC(PDR_WATCHDOG_FREQ_MS)); // start timer again
 			goto big_sync_create;
 		}
-		printk("Periodic sync lost.\n");
+		// printk("Periodic sync lost.\n");
 	} while (true);
 }

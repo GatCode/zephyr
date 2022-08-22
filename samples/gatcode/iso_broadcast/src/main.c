@@ -329,7 +329,7 @@ static struct bt_iso_big *big;
 
 static void iso_connected(struct bt_iso_chan *chan)
 {
-	seq_num = 0U;
+	// seq_num = 0U;
 	k_sem_give(&sem_big_cmplt);
 }
 
@@ -346,6 +346,23 @@ struct net_buf *buf;
 
 static void iso_sent(struct bt_iso_chan *chan)
 {
+	// buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
+	// net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+	// sys_put_le32(++seq_num, iso_data);
+	// iso_data[4] = rtn_setting;
+	// net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+
+	// int ret = bt_iso_chan_send(&bis_iso_chan, buf);
+	// if (ret < 0) {
+	// 	// printk("Unable to broadcast data: %d", ret);
+	// 	net_buf_unref(buf);
+	// 	return;
+	// }
+}
+
+// TODO: send at fixed rate
+void send_handler(struct k_timer *dummy)
+{
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 	sys_put_le32(++seq_num, iso_data);
@@ -359,6 +376,7 @@ static void iso_sent(struct bt_iso_chan *chan)
 		return;
 	}
 }
+K_TIMER_DEFINE(send_timer, send_handler, NULL);
 
 static struct bt_iso_chan_ops iso_ops = {
 	.connected	= iso_connected,
@@ -445,27 +463,30 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 		if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
 			uint32_t kbps = get_current_kbps();
 
-			if (INTELLIGENT_ALGO) {
-				uint32_t curr = k_uptime_get_32();
+			// if (INTELLIGENT_ALGO) {
+			// 	uint32_t curr = k_uptime_get_32();
 
-				if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
-					// increase
-					if (curr - last_decreased_ts > 1000 || kbps < ALGO_HARD_LIMIT) {
-						params_idx = params_idx < 2 ? params_idx + 1 : 2;
-						last_switch_ts = curr;
-					}
-				} else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
-					// ignore
-				} else {
-					// if (curr - last_switch_ts > 1000) { // > 10s
-					// 	// decrease
-					// 	params_idx = params_idx > 0 ? params_idx - 1 : 0;
-					// 	last_decreased_ts = curr;
-					// }
-				}
-			}
+			// 	if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
+			// 		// increase
+			// 		if (curr - last_decreased_ts > 1000 || kbps < ALGO_HARD_LIMIT) {
+			// 			params_idx = params_idx < 2 ? params_idx + 1 : 2;
+			// 			last_switch_ts = curr;
+			// 		}
+			// 	} else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
+			// 		// ignore
+			// 	} else {
+			// 		// if (curr - last_switch_ts > 1000) { // > 10s
+			// 		// 	// decrease
+			// 		// 	params_idx = params_idx > 0 ? params_idx - 1 : 0;
+			// 		// 	last_decreased_ts = curr;
+			// 		// }
+			// 	}
+			// }
 
-			if(param_setting != params_idx) {
+			uint32_t curr = k_uptime_get_32();
+			if (curr - last_decreased_ts > 10000) {
+				last_decreased_ts = curr;
+			// if(param_setting != params_idx) {
 				err = bt_iso_big_terminate(big);
 				if (err) {
 					printk("bt_iso_big_terminate failed (err %d)\n", err);
@@ -668,8 +689,10 @@ void main(void)
 	printk("done.\n");
 
 	/* Prime TX buffer */
-	printk("Initialize sending (fill buffer)\n");
-	for (unsigned int j = 0U; j < BROADCAST_ENQUEUE_COUNT; j++) {
-		iso_sent(&bis_iso_chan);
-	}
+	// printk("Initialize sending (fill buffer)\n");
+	// for (unsigned int j = 0U; j < BROADCAST_ENQUEUE_COUNT; j++) {
+	// 	iso_sent(&bis_iso_chan);
+	// }
+
+	k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
 }
