@@ -244,6 +244,9 @@ bool txp_readings_stable(uint8_t txp_reading, bool high_reading)
 	return true;
 }
 
+static bool iso_just_established = true;
+RING_BUF_DECLARE(PacketBuffer, 100 * DATA_SIZE_BYTE);
+
 void watchdog_txp_worker(struct k_work *item)
 {
 	/* Fetch ACL connection handle */
@@ -280,38 +283,58 @@ void watchdog_txp_worker(struct k_work *item)
 	(void)bt_gatt_indicate(NULL, &ind_params);
 	last_indicated_pdr = pdr;
 
-	/* Probe with lower TXP */
+	uint32_t free_slots = ring_buf_space_get(&PacketBuffer) / DATA_SIZE_BYTE;
+	static uint8_t htm2;
+
+	if (free_slots > 25) { // indicate doubling
+		htm2 = 10;
+	} else {
+		htm2 = 11;
+	}
+	
 	err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
 	if (err) {
 		printk("failed (err %d)\n", err);
 		return;
 	}
 
-	err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, currentTXP - 1);
-	if (err) {
-		printk("Failed to set tx power (err %d)\n", err);
-		return;
-	}
-
-	static uint8_t htm2;
-	htm2 = 1;
-
-	probing2_departure = k_uptime_get_32();
 	ind_params2.attr = &hts_svc.attrs[2];
 	ind_params2.data = &htm2;
 	ind_params2.len = sizeof(htm2);
-	ind_params2.func = &acl_indication_finished2;
 	(void)bt_gatt_indicate(NULL, &ind_params2);
 
-	err = k_sem_take(&sem_probing_finished_2, K_FOREVER);
-	if (err) {
-		printk("failed (err %d)\n", err);
-		return;
-	}
+	// /* Probe with lower TXP */
+	// err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
+	// if (err) {
+	// 	printk("failed (err %d)\n", err);
+	// 	return;
+	// }
 
-	/* Check if it's safe to downgrade the TXP */
-	uint8_t highReading = probing1_arrival-probing1_departure;
-	uint8_t lowReading = probing2_arrival-probing2_departure;
+	// err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, currentTXP - 1);
+	// if (err) {
+	// 	printk("Failed to set tx power (err %d)\n", err);
+	// 	return;
+	// }
+
+	// static uint8_t htm2;
+	// htm2 = 1;
+
+	// probing2_departure = k_uptime_get_32();
+	// ind_params2.attr = &hts_svc.attrs[2];
+	// ind_params2.data = &htm2;
+	// ind_params2.len = sizeof(htm2);
+	// ind_params2.func = &acl_indication_finished2;
+	// (void)bt_gatt_indicate(NULL, &ind_params2);
+
+	// err = k_sem_take(&sem_probing_finished_2, K_FOREVER);
+	// if (err) {
+	// 	printk("failed (err %d)\n", err);
+	// 	return;
+	// }
+
+	// /* Check if it's safe to downgrade the TXP */
+	// uint8_t highReading = probing1_arrival-probing1_departure;
+	// uint8_t lowReading = probing2_arrival-probing2_departure;
 	// printk("Higher: %u, Lower: %u, H stable: %u, L stable: %u\n", highReading, lowReading, txp_readings_stable(highReading, true), txp_readings_stable(highReading, false));
 
 
@@ -450,7 +473,6 @@ double RollingmAvg2(uint8_t newValue)
 
 // static bool pdr_timer_started = false;
 static uint32_t seq_num = 0;
-static uint32_t prev_seq_num = 0;
 static uint32_t last_recv_packet_ts = 0;
 
 static uint32_t prev_crc_error_packets = 0;
@@ -471,8 +493,6 @@ void pdr_watchdog_handler(struct k_timer *dummy)
 }
 K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
-static bool iso_just_established = true;
-RING_BUF_DECLARE(PacketBuffer, 100 * DATA_SIZE_BYTE);
 
 void watchdog_work_start(struct k_work *item)
 {
@@ -510,7 +530,8 @@ void buffer_watchdog_handler(struct k_timer *dummy)
 		}
 		seq_num = sys_get_le32(count_arr);
 
-		printk(" - seq_num: %u", seq_num);
+		printk(" - seq_num: %u", seq_num % 256);
+		gpio_pin_toggle_dt(&led2);
 
 		if (seq_num - 1 != last_reading) {
 			printk(" - LOST");
@@ -541,22 +562,30 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 
-		// printk("Data: ");
 		for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
 			if(i < 4) {
 				count_arr[i] = buf->data[i];
 			}
 			uint8_t data = buf->data[i];
-			// printk("%x", data);
 		}
 		seq_num = sys_get_le32(count_arr);
 		rtn = buf->data[4];
-		// printk(" | Packet ID: %u - rtn: %u\n", seq_num, buf->data[4]);
 
-		if(prev_seq_num + 1 != seq_num) {
-			// printk("\n------------------------- LOST PACKET -------------------------\n");
+		ring_buf_put(&PacketBuffer, buf->data, DATA_SIZE_BYTE);
+
+		if (buf->len > DATA_SIZE_BYTE) { // DOUBLE BUFFERING ACTIVATED
+			for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
+				if(i < 4) {
+					count_arr[i] = buf->data[DATA_SIZE_BYTE + i];
+				}
+				uint8_t data = buf->data[DATA_SIZE_BYTE + i];
+			}
+			seq_num = sys_get_le32(count_arr);
+
+			ring_buf_put(&PacketBuffer, buf->data + DATA_SIZE_BYTE, DATA_SIZE_BYTE);
 		}
-		prev_seq_num = seq_num;
+
+
 
 		uint32_t curr = audio_sync_timer_curr_time_get();
 		uint32_t packet_delta = abs(last_recv_packet_ts - curr);
@@ -571,37 +600,37 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		}
 		pdr = RollingmAvg(1);
 
-		ring_buf_put(&PacketBuffer, buf->data, DATA_SIZE_BYTE);
+		
 
 		// printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
 	
 		// acl_indicate(pdr);
 		
-		if (LED_ON) {
-			if (pdr > 20) {
-				gpio_pin_set_dt(&led1, 1);
-			} else {
-				gpio_pin_set_dt(&led1, 0);
-			}
+		// if (LED_ON) {
+		// 	if (pdr > 20) {
+		// 		gpio_pin_set_dt(&led1, 1);
+		// 	} else {
+		// 		gpio_pin_set_dt(&led1, 0);
+		// 	}
 
-			if (pdr > 40) {
-				gpio_pin_set_dt(&led2, 1);
-			} else {
-				gpio_pin_set_dt(&led2, 0);
-			}
+		// 	if (pdr > 40) {
+		// 		gpio_pin_set_dt(&led2, 1);
+		// 	} else {
+		// 		gpio_pin_set_dt(&led2, 0);
+		// 	}
 
-			if (pdr > 60) {
-				gpio_pin_set_dt(&led3, 1);
-			} else {
-				gpio_pin_set_dt(&led3, 0);
-			}
+		// 	if (pdr > 60) {
+		// 		gpio_pin_set_dt(&led3, 1);
+		// 	} else {
+		// 		gpio_pin_set_dt(&led3, 0);
+		// 	}
 
-			if (pdr > 80) {
-				gpio_pin_set_dt(&led4, 1);
-			} else {
-				gpio_pin_set_dt(&led4, 0);
-			}
-		}
+		// 	if (pdr > 80) {
+		// 		gpio_pin_set_dt(&led4, 1);
+		// 	} else {
+		// 		gpio_pin_set_dt(&led4, 0);
+		// 	}
+		// }
 
 		// uint32_t info_ts = info->ts;
 		// uint32_t curr = audio_sync_timer_curr_time_get();
@@ -619,6 +648,7 @@ static void iso_connected(struct bt_iso_chan *chan)
 
 static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 {
+	gpio_pin_toggle_dt(&led1);
 	// printk("ISO Channel %p disconnected with reason 0x%02x\n",
 	    //    chan, reason);
 

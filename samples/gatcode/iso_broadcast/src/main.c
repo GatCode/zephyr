@@ -193,6 +193,9 @@ static double pow(double x, double y)
 	return result;
 }
 
+static bool double_buffering = false;
+static bool double_buffering_qos_activated = false;
+
 static uint8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
 			   const void *data, uint16_t length)
@@ -216,6 +219,15 @@ static uint8_t notify_func(struct bt_conn *conn,
 		// printk("PDR: %.2f%%\n", value_recv);
 		k_sem_give(&sem_pdr_recv);
 		last_recv_packet_ts = k_uptime_get_32();
+	} else {
+		uint8_t sent_opcode = ((uint8_t *)data)[0];
+		if (sent_opcode == 10) { // double
+			double_buffering = true;
+			printk("DOUBLE BUFFERING\n");
+		} else if (sent_opcode == 11) { // reset
+			double_buffering = false;
+		}
+		// printk("PDR: %u\n", sent_opcode);
 	}
 
 	return BT_GATT_ITER_CONTINUE;
@@ -342,6 +354,8 @@ static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 static struct bt_iso_chan bis_iso_chan;
 
 uint8_t iso_data[DATA_SIZE_BYTE] = { 0 };
+uint8_t iso_data_second[DATA_SIZE_BYTE] = { 0 };
+uint8_t iso_data_double_buffer[2 * DATA_SIZE_BYTE] = { 0 };
 struct net_buf *buf;
 
 static void iso_sent(struct bt_iso_chan *chan)
@@ -363,11 +377,28 @@ static void iso_sent(struct bt_iso_chan *chan)
 // TODO: send at fixed rate
 void send_handler(struct k_timer *dummy)
 {
+	// buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
+	// net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+	// sys_put_le32(++seq_num, iso_data);
+	// iso_data[4] = rtn_setting;
+	// net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-	sys_put_le32(++seq_num, iso_data);
-	iso_data[4] = rtn_setting;
-	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+
+	if (double_buffering && double_buffering_qos_activated) {
+		sys_put_le32(++seq_num, iso_data);
+		sys_put_le32(++seq_num, iso_data_second);
+		memcpy(iso_data_double_buffer, iso_data, DATA_SIZE_BYTE);
+		memcpy(iso_data_double_buffer + DATA_SIZE_BYTE, iso_data_second, DATA_SIZE_BYTE);
+		iso_data[4] = rtn_setting;
+		iso_data[4 + DATA_SIZE_BYTE] = rtn_setting;
+		net_buf_add_mem(buf, iso_data_double_buffer, sizeof(iso_data_double_buffer));
+	} else {
+		sys_put_le32(++seq_num, iso_data);
+		iso_data[4] = rtn_setting;
+		net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+	}
 
 	int ret = bt_iso_chan_send(&bis_iso_chan, buf);
 	if (ret < 0) {
@@ -484,7 +515,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			// }
 
 			uint32_t curr = k_uptime_get_32();
-			if (curr - last_decreased_ts > 10000) {
+			if (curr - last_decreased_ts > 1000) {
 				last_decreased_ts = curr;
 			// if(param_setting != params_idx) {
 				err = bt_iso_big_terminate(big);
@@ -501,6 +532,14 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 
 				bis[0]->qos->tx->rtn = params[params_idx].rtn;
 				// bis[0]->qos->tx->phy = new_phy_setting;
+
+				if (double_buffering) {
+					bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE;
+					double_buffering_qos_activated = true;
+				} else {
+					bis[0]->qos->tx->sdu = DATA_SIZE_BYTE;
+					double_buffering_qos_activated = false;
+				}
 
 				err = k_sem_take(&sem_big_term, K_FOREVER);
 				if (err) {
