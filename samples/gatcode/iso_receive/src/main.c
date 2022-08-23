@@ -32,6 +32,10 @@
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
+#define PACKET_BUFFER_SIZE 100 // = 2s
+#define PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW 20 // must be min 12 slots to ensure no issues
+#define PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH 40 // must be min 12 slots to ensure no issues
+
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
@@ -245,7 +249,9 @@ bool txp_readings_stable(uint8_t txp_reading, bool high_reading)
 }
 
 static bool iso_just_established = true;
-RING_BUF_DECLARE(PacketBuffer, 100 * DATA_SIZE_BYTE);
+RING_BUF_DECLARE(PacketBuffer, PACKET_BUFFER_SIZE * DATA_SIZE_BYTE);
+
+static uint8_t last_indicated_opcode = 0;
 
 void watchdog_txp_worker(struct k_work *item)
 {
@@ -286,10 +292,16 @@ void watchdog_txp_worker(struct k_work *item)
 	uint32_t free_slots = ring_buf_space_get(&PacketBuffer) / DATA_SIZE_BYTE;
 	static uint8_t htm2;
 
-	if (free_slots > 25) { // indicate doubling
-		htm2 = 10;
+	if (PACKET_BUFFER_SIZE - free_slots > PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH) {
+		htm2 = 10; // ready for downshift
+	} else if (PACKET_BUFFER_SIZE - free_slots > PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW) {
+		htm2 = 11; // normal buffering speed - ready for next adjustment
 	} else {
-		htm2 = 11;
+		htm2 = 12; // ignore
+	}
+
+	if (last_indicated_opcode == htm2) {
+		return; // only indicate changes
 	}
 	
 	err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
@@ -302,6 +314,8 @@ void watchdog_txp_worker(struct k_work *item)
 	ind_params2.data = &htm2;
 	ind_params2.len = sizeof(htm2);
 	(void)bt_gatt_indicate(NULL, &ind_params2);
+
+	last_indicated_opcode = htm2;
 
 	// /* Probe with lower TXP */
 	// err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
@@ -507,9 +521,11 @@ void buffer_watchdog_handler(struct k_timer *dummy)
 	// fires 50x per second
 	uint32_t free_slots = ring_buf_space_get(&PacketBuffer);
 	
-	printk("Free buffer slots: %u", free_slots / DATA_SIZE_BYTE);
+	// printk("Free buffer slots: %u", free_slots / DATA_SIZE_BYTE);
+	printk("Buffer occupied: %u out of %u", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE);
 
-	if (iso_just_established && free_slots == 0) {
+	// initial buffer fill as stream establishment
+	if (PACKET_BUFFER_SIZE - (free_slots / DATA_SIZE_BYTE) > PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH && iso_just_established) {
 		iso_just_established = false;
 	} 
 	
@@ -530,7 +546,7 @@ void buffer_watchdog_handler(struct k_timer *dummy)
 		}
 		seq_num = sys_get_le32(count_arr);
 
-		printk(" - seq_num: %u", seq_num % 256);
+		printk(" - seq_num: %u", seq_num);
 		gpio_pin_toggle_dt(&led2);
 
 		if (seq_num - 1 != last_reading) {
@@ -585,8 +601,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			ring_buf_put(&PacketBuffer, buf->data + DATA_SIZE_BYTE, DATA_SIZE_BYTE);
 		}
 
-
-
 		uint32_t curr = audio_sync_timer_curr_time_get();
 		uint32_t packet_delta = abs(last_recv_packet_ts - curr);
 		uint32_t iso_interval_us = iso_interval * 1.25 * 1000.0;
@@ -604,7 +618,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 		// printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
 	
-		// acl_indicate(pdr);
+		acl_indicate(pdr);
 		
 		// if (LED_ON) {
 		// 	if (pdr > 20) {
