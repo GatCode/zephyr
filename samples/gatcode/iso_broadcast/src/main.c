@@ -194,9 +194,9 @@ static double pow(double x, double y)
 }
 
 // static bool double_buffering_need = false;
-static bool double_buffering_qos_activated = false;
-static bool receiver_buffer_filled_for_downshift = false;
-static bool receiver_buffer_filled = false;
+static bool double_sending_rate_activated = false;
+static bool buffer_reached_A = false;
+static bool buffer_reached_B = false;
 
 static uint8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
@@ -212,37 +212,24 @@ static uint8_t notify_func(struct bt_conn *conn,
 		return BT_GATT_ITER_STOP;
 	}
 
-	if (length > 4) { // ignore TXP probing
+	if (length > 4) { // PRR
 		mantissa = sys_get_le24(&((uint8_t *)data)[1]);
 		exponent = ((uint8_t *)data)[4];
-		value_recv = (double)mantissa * pow(10, exponent);
-
-		pdr = value_recv;
-		// printk("PDR: %.2f%%\n", value_recv);
-		// k_sem_give(&sem_pdr_recv);
-		// last_recv_packet_ts = k_uptime_get_32();
-	} else {
+		pdr = (double)mantissa * pow(10, exponent);
+	} else { // OPCODES
 		uint8_t curr_opcode = ((uint8_t *)data)[0];
-		if (curr_opcode == 10) { // buffer filled enough for downshift
-			receiver_buffer_filled_for_downshift = true;
-			receiver_buffer_filled = false;
-		} else if (curr_opcode == 11) { // enough buffers filled to allow for a new triggering
-			receiver_buffer_filled_for_downshift = false;
-			receiver_buffer_filled = true;
-			// double_buffering = false;
-			// printk("RECV BUFFER FILLED ENOUGH - ALLOW FOR NEW TRIGGERING\n");
+		if (curr_opcode == 10) { // buffer reached B
+			buffer_reached_B = true;
+		} else if (curr_opcode == 11) { // buffer reached A
+			buffer_reached_A = true;
 		} else {
-			receiver_buffer_filled_for_downshift = false;
-			receiver_buffer_filled = false;
-			// printk("-\n");
+			buffer_reached_A = false;
+			buffer_reached_B = false;
 		}
-		// printk("PDR: %u\n", sent_opcode);	
 
 		k_sem_give(&sem_pdr_recv);
 		last_recv_packet_ts = k_uptime_get_32();
 	}
-
-
 
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -400,7 +387,7 @@ void send_handler(struct k_timer *dummy)
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 
-	if (double_buffering_qos_activated) {
+	if (double_sending_rate_activated) {
 		sys_put_le32(++seq_num, iso_data);
 		sys_put_le32(++seq_num, iso_data_second);
 		memcpy(iso_data_double_buffer, iso_data, DATA_SIZE_BYTE);
@@ -512,80 +499,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 
 		uint32_t curr = k_uptime_get_32();
 
-		// if (curr - last_big_adjustment_ts > 1000 && (receiver_buffer_filled || receiver_buffer_filled_for_downshift)) { // trigger big adjustment incl. buffering speed doubling (1s interval)
-		// 	last_big_adjustment_ts = curr;
-
-		// 	k_timer_stop(&send_timer);
-
-		// 	err = bt_iso_big_terminate(big);
-		// 	if (err) {
-		// 		printk("bt_iso_big_terminate failed (err %d)\n", err);
-		// 		return;
-		// 	}
-
-		// 	err = k_sem_take(&sem_big_term, K_FOREVER);
-		// 	if (err) {
-		// 		printk("sem_big_term failed (err %d)\n", err);
-		// 		return;
-		// 	}
-
-		// 	bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
-		// 	double_buffering_qos_activated = true; // set global flag
-
-		// 	err = bt_iso_big_create(adv, &big_create_param, &big);
-		// 	if (err) {
-		// 		printk("bt_iso_big_create failed (err %d)\n", err);
-		// 		return;
-		// 	}
-
-		// 	err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-		// 	if (err) {
-		// 		printk("sem_big_cmplt failed (err %d)\n", err);
-		// 		return;
-		// 	}
-
-		// 	k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
-		// 	// printk("DOUBLE BUFFERING SPEED!\n");
-		// } else if (receiver_buffer_filled_for_downshift && double_buffering_qos_activated) { // revert to normal speed
-		// 	last_big_adjustment_ts = curr;
-
-		// 	k_timer_stop(&send_timer);
-
-		// 	err = bt_iso_big_terminate(big);
-		// 	if (err) {
-		// 		printk("bt_iso_big_terminate failed (err %d)\n", err);
-		// 		return;
-		// 	}
-
-		// 	err = k_sem_take(&sem_big_term, K_FOREVER);
-		// 	if (err) {
-		// 		printk("sem_big_term failed (err %d)\n", err);
-		// 		return;
-		// 	}
-
-		// 	bis[0]->qos->tx->sdu = DATA_SIZE_BYTE; // double speed
-		// 	double_buffering_qos_activated = false; // set global flag
-
-		// 	err = bt_iso_big_create(adv, &big_create_param, &big);
-		// 	if (err) {
-		// 		printk("bt_iso_big_create failed (err %d)\n", err);
-		// 		return;
-		// 	}
-
-		// 	err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-		// 	if (err) {
-		// 		printk("sem_big_cmplt failed (err %d)\n", err);
-		// 		return;
-		// 	}
-
-		// 	k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
-		// 	// printk("REVERT TO NORMAL SPEED!\n");
-		// }
-
-
-		if (receiver_buffer_filled_for_downshift && double_buffering_qos_activated) { // revert to normal speed
-			last_big_adjustment_ts = curr;
-
+		if (buffer_reached_B && double_sending_rate_activated) { // revert to normal speed
 			k_timer_stop(&send_timer);
 
 			err = bt_iso_big_terminate(big);
@@ -600,8 +514,8 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 				return;
 			}
 
-			bis[0]->qos->tx->sdu = DATA_SIZE_BYTE; // double speed
-			double_buffering_qos_activated = false; // set global flag
+			bis[0]->qos->tx->sdu = DATA_SIZE_BYTE;
+			double_sending_rate_activated = false;
 
 			err = bt_iso_big_create(adv, &big_create_param, &big);
 			if (err) {
@@ -619,130 +533,98 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			// printk("REVERT TO NORMAL SPEED!\n");
 		}
 
+		uint32_t kbps = get_current_kbps();
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-		if(ENABLE_RANGE_EXTENSION_ALGORITHM) {
-			uint32_t kbps = get_current_kbps();
-
-			if (INTELLIGENT_ALGO) {
-				// uint32_t curr = k_uptime_get_32();
-
-				// printk("kbps: %u\n", kbps);
-				if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
-					// increase
-					// printk("Increase\n");
-					if ((curr - last_decreased_ts > 1000 && curr - last_decreased_ts > 5000) || kbps < ALGO_HARD_LIMIT) {
-						params_idx = params_idx < 2 ? params_idx + 1 : 2;
-						last_switch_ts = curr;
-					}
-				} else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
-					// ignore
-				} else {
-					if (curr - last_switch_ts > 5000 && curr - last_decreased_ts > 5000) { // > 10s
-						// decrease
-						// printk("Decrease\n");
-						params_idx = params_idx > 0 ? params_idx - 1 : 0;
-						last_decreased_ts = curr;
-					}
-				}
+		if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
+			// increase
+			if ((curr - last_decreased_ts > 1000 && curr - last_decreased_ts > 5000) || kbps < ALGO_HARD_LIMIT) {
+				params_idx = params_idx < 2 ? params_idx + 1 : 2;
+				last_switch_ts = curr;
 			}
-
-			if(param_setting != params_idx) {
-				printk("params_idx %u\n", params_idx);
-
-				k_timer_stop(&send_timer);
-
-				err = bt_iso_big_terminate(big);
-				if (err) {
-					printk("bt_iso_big_terminate failed (err %d)\n", err);
-					return;
-				}
-
-				err = k_sem_take(&sem_big_term, K_FOREVER);
-				if (err) {
-					printk("sem_big_term failed (err %d)\n", err);
-					return;
-				}
-
-				int err = ble_hci_vsc_set_tx_pwr(params[params_idx].txp);
-				if (err) {
-					printk("Failed to set tx power (err %d)\n", err);
-					return;
-				}
-
-				bis[0]->qos->tx->rtn = params[params_idx].rtn;
-
-				// if (receiver_buffer_filled) {
-					bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
-					double_buffering_qos_activated = true; // set global flag
-				// }
-				//  else if (receiver_buffer_filled_for_downshift && double_buffering_qos_activated) {
-				// 	bis[0]->qos->tx->sdu = DATA_SIZE_BYTE;
-				// 	double_buffering_qos_activated = false;
-				// }
-				// else ignore
-
-				err = bt_iso_big_create(adv, &big_create_param, &big);
-				if (err) {
-					printk("bt_iso_big_create failed (err %d)\n", err);
-					return;
-				}
-
-				err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-				if (err) {
-					printk("sem_big_cmplt failed (err %d)\n", err);
-					return;
-				}
-
-				k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
-				param_setting = params_idx;
+		} else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
+			// ignore
+		} else {
+			if (curr - last_switch_ts > 5000 && curr - last_decreased_ts > 5000) { // > 10s
+				// decrease
+				params_idx = params_idx > 0 ? params_idx - 1 : 0;
+				last_decreased_ts = curr;
 			}
 		}
+
+		// increase / decrease
+		if(param_setting != params_idx) {
+			printk("params_idx %u\n", params_idx);
+
+			k_timer_stop(&send_timer);
+
+			err = bt_iso_big_terminate(big);
+			if (err) {
+				printk("bt_iso_big_terminate failed (err %d)\n", err);
+				return;
+			}
+
+			err = k_sem_take(&sem_big_term, K_FOREVER);
+			if (err) {
+				printk("sem_big_term failed (err %d)\n", err);
+				return;
+			}
+
+			int err = ble_hci_vsc_set_tx_pwr(params[params_idx].txp);
+			if (err) {
+				printk("Failed to set tx power (err %d)\n", err);
+				return;
+			}
+
+			bis[0]->qos->tx->rtn = params[params_idx].rtn;
+
+			bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
+			double_sending_rate_activated = true; // set global flag
+
+			err = bt_iso_big_create(adv, &big_create_param, &big);
+			if (err) {
+				printk("bt_iso_big_create failed (err %d)\n", err);
+				return;
+			}
+
+			err = k_sem_take(&sem_big_cmplt, K_FOREVER);
+			if (err) {
+				printk("sem_big_cmplt failed (err %d)\n", err);
+				return;
+			}
+
+			k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
+			param_setting = params_idx;
+		}
+		
 		
 		// printk("PDR: %.2f%% - RTN: %u - TXP: %u, PHY: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting, bis[0]->qos->tx->phy);
 		prev_pdr = pdr;
 
-		// if (LED_ON) {
-		// 	if (pdr > 20) {
-		// 		gpio_pin_set_dt(&led1, 1);
-		// 	} else {
-		// 		gpio_pin_set_dt(&led1, 0);
-		// 	}
+		if (LED_ON) {
+			if (pdr > 20) {
+				gpio_pin_set_dt(&led1, 1);
+			} else {
+				gpio_pin_set_dt(&led1, 0);
+			}
 
-		// 	if (pdr > 40) {
-		// 		gpio_pin_set_dt(&led2, 1);
-		// 	} else {
-		// 		gpio_pin_set_dt(&led2, 0);
-		// 	}
+			if (pdr > 40) {
+				gpio_pin_set_dt(&led2, 1);
+			} else {
+				gpio_pin_set_dt(&led2, 0);
+			}
 
-		// 	if (pdr > 60) {
-		// 		gpio_pin_set_dt(&led3, 1);
-		// 	} else {
-		// 		gpio_pin_set_dt(&led3, 0);
-		// 	}
+			if (pdr > 60) {
+				gpio_pin_set_dt(&led3, 1);
+			} else {
+				gpio_pin_set_dt(&led3, 0);
+			}
 
-		// 	if (pdr > 80) {
-		// 		gpio_pin_set_dt(&led4, 1);
-		// 	} else {
-		// 		gpio_pin_set_dt(&led4, 0);
-		// 	}
-		// }
+			if (pdr > 80) {
+				gpio_pin_set_dt(&led4, 1);
+			} else {
+				gpio_pin_set_dt(&led4, 0);
+			}
+		}
 	}
 }
 

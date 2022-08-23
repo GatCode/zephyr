@@ -33,8 +33,8 @@
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
 #define PACKET_BUFFER_SIZE 100 // = 2s
-#define PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW 20 // must be min 12 slots to ensure no issues
-#define PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH 40 // must be min 12 slots to ensure no issues
+#define PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW 25 // must be min 12 slots to ensure no issues
+#define PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH 30 // must be min 12 slots to ensure no issues
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
