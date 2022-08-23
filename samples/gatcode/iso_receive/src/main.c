@@ -25,7 +25,7 @@
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
 
-#define FIFO_SIZE 100
+#define FIFO_SIZE 250
 
 #define PDR_WATCHDOG_FREQ_MS 500
 #define INDICATE_IF_PDR_CHANGED_BY 10 // send indication if changes > define
@@ -40,6 +40,7 @@
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static double pdr = 0.0;
+static double pdr_after = 0.0;
 static double last_indicated_pdr = 0.0;
 static uint16_t iso_interval = 0;
 static bool LED_ON = true;
@@ -274,7 +275,7 @@ void watchdog_txp_worker(struct k_work *item)
 	uint32_t mantissa;
 	uint8_t exponent;
 
-	mantissa = (uint32_t)(pdr * 100);
+	mantissa = (uint32_t)(pdr_after * 100);
 	exponent = (uint8_t)-2;
 
 	htm[0] = 0;
@@ -287,7 +288,7 @@ void watchdog_txp_worker(struct k_work *item)
 	ind_params.len = sizeof(htm);
 	ind_params.func = &acl_indication_finished1;
 	(void)bt_gatt_indicate(NULL, &ind_params);
-	last_indicated_pdr = pdr;
+	last_indicated_pdr = pdr_after;
 
 	uint32_t free_slots = ring_buf_space_get(&PacketBuffer) / DATA_SIZE_BYTE;
 	static uint8_t htm2;
@@ -481,8 +482,7 @@ double RollingmAvg2(uint8_t newValue)
         }
                 
         //return the average
-		double avg = (double)maverage_current_sum2 / (double)maverage_sample_length2;
-        return avg * 100.0 / rtn;
+        return (double)maverage_current_sum2 * 100.0 / (double)maverage_sample_length2;
 }
 
 // static bool pdr_timer_started = false;
@@ -520,9 +520,6 @@ void buffer_watchdog_handler(struct k_timer *dummy)
 {
 	// fires 50x per second
 	uint32_t free_slots = ring_buf_space_get(&PacketBuffer);
-	
-	// printk("Free buffer slots: %u", free_slots / DATA_SIZE_BYTE);
-	printk("Buffer occupied: %u out of %u", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE);
 
 	// initial buffer fill as stream establishment
 	if (PACKET_BUFFER_SIZE - (free_slots / DATA_SIZE_BYTE) > PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH && iso_just_established) {
@@ -530,7 +527,6 @@ void buffer_watchdog_handler(struct k_timer *dummy)
 	} 
 	
 	if (iso_just_established) {
-		printk("\n");
 		return;
 	}
 	
@@ -546,17 +542,23 @@ void buffer_watchdog_handler(struct k_timer *dummy)
 		}
 		seq_num = sys_get_le32(count_arr);
 
-		printk(" - seq_num: %u", seq_num);
 		gpio_pin_toggle_dt(&led2);
 
 		if (seq_num - 1 != last_reading) {
-			printk(" - LOST");
+			for (uint8_t i = 0; i < seq_num - last_reading; i++) {
+				pdr_after = RollingmAvg2(0);
+			}
+		} else {
+			pdr_after = RollingmAvg2(1);
 		}
+	
+		// printk("Free buffer slots: %u", free_slots / DATA_SIZE_BYTE);
+		printk("Buffer occupied: %u out of %u - prr: %.02f%% - new prr: %.02f%%\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, pdr, pdr_after);
+
 
 		last_reading = seq_num;
 	}
 
-	printk("\n");
 
 
 	
