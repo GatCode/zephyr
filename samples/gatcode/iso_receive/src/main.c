@@ -18,14 +18,14 @@
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
+#define DATA_SIZE_BYTE 75 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define PRESENTATION_DELAY_US 10000
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 
 #define STACKSIZE 1024
 #define ACL_PRIORITY 9
 
-#define FIFO_SIZE 250
+#define FIFO_SIZE 50
 
 #define PDR_WATCHDOG_FREQ_MS 500
 #define INDICATE_IF_PDR_CHANGED_BY 10 // send indication if changes > define

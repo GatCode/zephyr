@@ -16,7 +16,7 @@
 /* Defines */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
+#define DATA_SIZE_BYTE 75 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 20 // 5ms-4s
 #define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
@@ -198,6 +198,61 @@ static bool double_sending_rate_activated = false;
 static bool buffer_reached_A = false;
 static bool buffer_reached_B = false;
 
+static void read_conn_rssi(uint16_t handle, int8_t *rssi)
+{
+	struct net_buf *buf, *rsp = NULL;
+	struct bt_hci_cp_read_rssi *cp;
+	struct bt_hci_rp_read_rssi *rp;
+
+	int err;
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
+	if (!buf) {
+		printk("Unable to allocate command buffer\n");
+		return;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = sys_cpu_to_le16(handle);
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
+	if (err) {
+		uint8_t reason = rsp ?
+			((struct bt_hci_rp_read_rssi *)rsp->data)->status : 0;
+		printk("Read RSSI err: %d reason 0x%02x\n", err, reason);
+		return;
+	}
+
+	rp = (void *)rsp->data;
+	*rssi = rp->rssi;
+
+	net_buf_unref(rsp);
+}
+
+// moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
+uint64_t maverage_values[10] = {0}; // all are zero as a start
+uint64_t maverage_current_position = 0;
+uint64_t maverage_current_sum = 0;
+uint64_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
+
+int8_t RollingmAvg(int8_t newValue)
+{
+         //Subtract the oldest number from the prev sum, add the new number
+        maverage_current_sum = maverage_current_sum - maverage_values[maverage_current_position] + abs(newValue);
+
+        //Assign the newValue to the position in the array
+        maverage_values[maverage_current_position] = abs(newValue);
+
+        maverage_current_position++;
+        
+        if (maverage_current_position >= maverage_sample_length) { // Don't go beyond the size of the array...
+            maverage_current_position = 0;
+        }
+                
+        //return the average
+        return -(maverage_current_sum / maverage_sample_length);
+}
+
 static uint8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
 			   const void *data, uint16_t length)
@@ -230,6 +285,13 @@ static uint8_t notify_func(struct bt_conn *conn,
 		k_sem_give(&sem_pdr_recv);
 		last_recv_packet_ts = k_uptime_get_32();
 	}
+	
+	int8_t rssi = 0;
+	uint16_t handle = 0;
+	bt_hci_get_conn_handle(conn, &handle);
+	read_conn_rssi(handle, &rssi);
+
+	printk("rssi: %d\n", RollingmAvg(rssi));
 
 	return BT_GATT_ITER_CONTINUE;
 }
