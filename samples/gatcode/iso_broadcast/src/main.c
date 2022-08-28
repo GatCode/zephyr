@@ -25,7 +25,7 @@
 #define ACL_PRIORITY 9
 #define RANGE_PRIORITY 5
 
-#define PDR_WATCHDOG_FREQ_MS 1000
+#define PDR_WATCHDOG_FREQ_MS 100
 
 #define ENABLE_RANGE_EXTENSION_ALGORITHM true // MAIN ALGO TOGGLE!!!!!!!!!!!!!!!!!!!!!!!!!!
 #define ALGO_MAX_THROUGHPUT (1000 / (SDU_INTERVAL_US / 1000)) * DATA_SIZE_BYTE * 8 / 1000
@@ -282,7 +282,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 			buffer_reached_B = false;
 		}
 
-		k_sem_give(&sem_pdr_recv);
+		// k_sem_give(&sem_pdr_recv);
 		last_recv_packet_ts = k_uptime_get_32();
 	}
 	
@@ -291,7 +291,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 	bt_hci_get_conn_handle(conn, &handle);
 	read_conn_rssi(handle, &rssi);
 
-	printk("rssi: %d\n", RollingmAvg(rssi));
+	// printk("rssi: %d\n", RollingmAvg(rssi));
 
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -437,6 +437,11 @@ static void iso_sent(struct bt_iso_chan *chan)
 	// }
 }
 
+void send_handler_stop(struct k_timer *dummy)
+{
+	printk("TIMER STOPPED @ seq_num: %u\n", seq_num);
+}
+
 // TODO: send at fixed rate
 void send_handler(struct k_timer *dummy)
 {
@@ -449,21 +454,21 @@ void send_handler(struct k_timer *dummy)
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 
-	if (double_sending_rate_activated) {
-		sys_put_le32(++seq_num, iso_data);
-		sys_put_le32(++seq_num, iso_data_second);
-		memcpy(iso_data_double_buffer, iso_data, DATA_SIZE_BYTE);
-		memcpy(iso_data_double_buffer + DATA_SIZE_BYTE, iso_data_second, DATA_SIZE_BYTE);
-		iso_data[4] = rtn_setting;
-		iso_data[4 + DATA_SIZE_BYTE] = rtn_setting;
-		net_buf_add_mem(buf, iso_data_double_buffer, sizeof(iso_data_double_buffer));
-		// printk("Sent seq_num: %u and %u\n", seq_num - 1, seq_num);
-	} else {
+	// if (double_sending_rate_activated) {
+	// 	sys_put_le32(++seq_num, iso_data);
+	// 	sys_put_le32(++seq_num, iso_data_second);
+	// 	memcpy(iso_data_double_buffer, iso_data, DATA_SIZE_BYTE);
+	// 	memcpy(iso_data_double_buffer + DATA_SIZE_BYTE, iso_data_second, DATA_SIZE_BYTE);
+	// 	iso_data[4] = rtn_setting;
+	// 	iso_data[4 + DATA_SIZE_BYTE] = rtn_setting;
+	// 	net_buf_add_mem(buf, iso_data_double_buffer, sizeof(iso_data_double_buffer));
+	// 	// printk("Sent seq_num: %u and %u\n", seq_num - 1, seq_num);
+	// } else {
 		sys_put_le32(++seq_num, iso_data);
 		iso_data[4] = rtn_setting;
 		net_buf_add_mem(buf, iso_data, sizeof(iso_data));
-		// printk("Sent seq_num: %u\n", seq_num);
-	}
+		printk("Sent seq_num: %u\n", seq_num);
+	// }
 
 	int ret = bt_iso_chan_send(&bis_iso_chan, buf);
 	if (ret < 0) {
@@ -472,7 +477,7 @@ void send_handler(struct k_timer *dummy)
 		return;
 	}
 }
-K_TIMER_DEFINE(send_timer, send_handler, NULL);
+K_TIMER_DEFINE(send_timer, send_handler, send_handler_stop);
 
 static struct bt_iso_chan_ops iso_ops = {
 	.connected	= iso_connected,
@@ -561,60 +566,61 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 
 		uint32_t curr = k_uptime_get_32();
 
-		if (buffer_reached_B && double_sending_rate_activated) { // revert to normal speed
-			k_timer_stop(&send_timer);
+		// if (buffer_reached_B && double_sending_rate_activated) { // revert to normal speed
+		// 	k_timer_stop(&send_timer);
 
-			err = bt_iso_big_terminate(big);
-			if (err) {
-				printk("bt_iso_big_terminate failed (err %d)\n", err);
-				return;
-			}
+		// 	err = bt_iso_big_terminate(big);
+		// 	if (err) {
+		// 		printk("bt_iso_big_terminate failed (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			err = k_sem_take(&sem_big_term, K_FOREVER);
-			if (err) {
-				printk("sem_big_term failed (err %d)\n", err);
-				return;
-			}
+		// 	err = k_sem_take(&sem_big_term, K_FOREVER);
+		// 	if (err) {
+		// 		printk("sem_big_term failed (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			bis[0]->qos->tx->sdu = DATA_SIZE_BYTE;
-			double_sending_rate_activated = false;
+		// 	bis[0]->qos->tx->sdu = DATA_SIZE_BYTE;
+		// 	double_sending_rate_activated = false;
 
-			err = bt_iso_big_create(adv, &big_create_param, &big);
-			if (err) {
-				printk("bt_iso_big_create failed (err %d)\n", err);
-				return;
-			}
+		// 	err = bt_iso_big_create(adv, &big_create_param, &big);
+		// 	if (err) {
+		// 		printk("bt_iso_big_create failed (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-			if (err) {
-				printk("sem_big_cmplt failed (err %d)\n", err);
-				return;
-			}
+		// 	err = k_sem_take(&sem_big_cmplt, K_FOREVER);
+		// 	if (err) {
+		// 		printk("sem_big_cmplt failed (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
-			// printk("REVERT TO NORMAL SPEED!\n");
-		}
+		// 	k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
+		// 	// printk("REVERT TO NORMAL SPEED!\n");
+		// }
 
-		uint32_t kbps = get_current_kbps();
+		// uint32_t kbps = get_current_kbps();
 
-		if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
-			// increase
-			if ((curr - last_decreased_ts > 1000 && curr - last_decreased_ts > 5000) || kbps < ALGO_HARD_LIMIT) {
-				params_idx = params_idx < 2 ? params_idx + 1 : 2;
-				last_switch_ts = curr;
-			}
-		} else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
-			// ignore
-		} else {
-			if (curr - last_switch_ts > 5000 && curr - last_decreased_ts > 5000) { // > 10s
-				// decrease
-				params_idx = params_idx > 0 ? params_idx - 1 : 0;
-				last_decreased_ts = curr;
-			}
-		}
+		// if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
+		// 	// increase
+		// 	if ((curr - last_decreased_ts > 1000 && curr - last_decreased_ts > 5000) || kbps < ALGO_HARD_LIMIT) {
+		// 		params_idx = params_idx < 2 ? params_idx + 1 : 2;
+		// 		last_switch_ts = curr;
+		// 	}
+		// } else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
+		// 	// ignore
+		// } else {
+		// 	if (curr - last_switch_ts > 5000 && curr - last_decreased_ts > 5000) { // > 10s
+		// 		// decrease
+		// 		params_idx = params_idx > 0 ? params_idx - 1 : 0;
+		// 		last_decreased_ts = curr;
+		// 	}
+		// }
 
 		// increase / decrease
-		if(param_setting != params_idx) {
+		if (curr - last_decreased_ts > 1000) { //(param_setting != params_idx) {
+			last_decreased_ts = curr;
 			printk("params_idx %u\n", params_idx);
 
 			k_timer_stop(&send_timer);
@@ -631,16 +637,16 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 				return;
 			}
 
-			int err = ble_hci_vsc_set_tx_pwr(params[params_idx].txp);
-			if (err) {
-				printk("Failed to set tx power (err %d)\n", err);
-				return;
-			}
+			// int err = ble_hci_vsc_set_tx_pwr(params[params_idx].txp);
+			// if (err) {
+			// 	printk("Failed to set tx power (err %d)\n", err);
+			// 	return;
+			// }
 
-			bis[0]->qos->tx->rtn = params[params_idx].rtn;
+			// bis[0]->qos->tx->rtn = params[params_idx].rtn;
 
-			bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
-			double_sending_rate_activated = true; // set global flag
+			// bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
+			// double_sending_rate_activated = true; // set global flag
 
 			err = bt_iso_big_create(adv, &big_create_param, &big);
 			if (err) {
@@ -654,7 +660,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 				return;
 			}
 
-			k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
+			k_timer_start(&send_timer, K_MSEC(200), K_MSEC(20));
 			param_setting = params_idx;
 		}
 		

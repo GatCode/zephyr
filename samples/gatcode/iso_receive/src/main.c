@@ -553,7 +553,7 @@ void buffer_watchdog_handler(struct k_timer *dummy)
 		}
 	
 		// printk("Free buffer slots: %u", free_slots / DATA_SIZE_BYTE);
-		printk("Buffer occupied: %u out of %u - prr: %.02f%% - new prr: %.02f%%\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, pdr, pdr_after);
+		// printk("Buffer occupied: %u out of %u - prr: %.02f%% - new prr: %.02f%%\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, pdr, pdr_after);
 
 
 		last_reading = seq_num;
@@ -574,9 +574,12 @@ void recv_packet_handler(struct k_timer *dummy)
 }
 K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 
+static uint32_t prev_seq_num = 0;
+
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
+	printk("ALRIGHT\n");
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 
@@ -591,17 +594,17 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 		ring_buf_put(&PacketBuffer, buf->data, DATA_SIZE_BYTE);
 
-		if (buf->len > DATA_SIZE_BYTE) { // DOUBLE BUFFERING ACTIVATED
-			for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
-				if(i < 4) {
-					count_arr[i] = buf->data[DATA_SIZE_BYTE + i];
-				}
-				uint8_t data = buf->data[DATA_SIZE_BYTE + i];
-			}
-			seq_num = sys_get_le32(count_arr);
+		// if (buf->len > DATA_SIZE_BYTE) { // DOUBLE BUFFERING ACTIVATED
+		// 	for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
+		// 		if(i < 4) {
+		// 			count_arr[i] = buf->data[DATA_SIZE_BYTE + i];
+		// 		}
+		// 		uint8_t data = buf->data[DATA_SIZE_BYTE + i];
+		// 	}
+		// 	seq_num = sys_get_le32(count_arr);
 
-			ring_buf_put(&PacketBuffer, buf->data + DATA_SIZE_BYTE, DATA_SIZE_BYTE);
-		}
+		// 	ring_buf_put(&PacketBuffer, buf->data + DATA_SIZE_BYTE, DATA_SIZE_BYTE);
+		// }
 
 		uint32_t curr = audio_sync_timer_curr_time_get();
 		uint32_t packet_delta = abs(last_recv_packet_ts - curr);
@@ -617,10 +620,14 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		pdr = RollingmAvg(1);
 
 		
-
-		// printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
+		if (seq_num - 1 != prev_seq_num) {
+			printk("PDR: %.2f%% - seq: %u - LOST\n", pdr, seq_num);
+		} else {
+			printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
+		}
 	
 		acl_indicate(pdr);
+		prev_seq_num = seq_num;
 		
 		// if (LED_ON) {
 		// 	if (pdr > 20) {
