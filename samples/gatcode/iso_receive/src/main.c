@@ -429,10 +429,16 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 	k_sem_give(&sem_per_big_info);
 }
 
+static void recv_cb(struct bt_le_per_adv_sync *sync, const struct bt_le_per_adv_sync_recv_info *info, struct net_buf_simple *buf)
+{
+	printk("rssi: %d\n", info->rssi);
+}
+
 static struct bt_le_per_adv_sync_cb sync_callbacks = {
 	.synced = sync_cb,
 	.term = term_cb,
 	.biginfo = biginfo_cb,
+	.recv = recv_cb,
 };
 
 // moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
@@ -576,10 +582,41 @@ K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
 
 static uint32_t prev_seq_num = 0;
 
+static void read_conn_rssi(uint16_t handle, int8_t *rssi)
+{
+	struct net_buf *buf, *rsp = NULL;
+	struct bt_hci_cp_read_rssi *cp;
+	struct bt_hci_rp_read_rssi *rp;
+
+	int err;
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
+	if (!buf) {
+		printk("Unable to allocate command buffer\n");
+		return;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = sys_cpu_to_le16(handle);
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
+	if (err) {
+		uint8_t reason = rsp ?
+			((struct bt_hci_rp_read_rssi *)rsp->data)->status : 0;
+		printk("Read RSSI err: %d reason 0x%02x\n", err, reason);
+		return;
+	}
+
+	rp = (void *)rsp->data;
+	*rssi = rp->rssi;
+
+	net_buf_unref(rsp);
+}
+
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
-	printk("ALRIGHT\n");
+	// printk("ALRIGHT\n");
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 
@@ -619,12 +656,18 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		}
 		pdr = RollingmAvg(1);
 
+		// int8_t rssi = 0;
+		// // uint16_t handle = 0;
+		// // bt_hci_get_conn_handle(chan->iso, &handle);
+		// // read_conn_rssi(handle, &rssi);
+		// // printk("rssi: %d\n", rssi);
+
 		
-		if (seq_num - 1 != prev_seq_num) {
-			printk("PDR: %.2f%% - seq: %u - LOST\n", pdr, seq_num);
-		} else {
-			printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
-		}
+		// if (seq_num - 1 != prev_seq_num) {
+		// 	printk("PDR: %.2f%% - seq: %u - LOST\n", pdr, seq_num);
+		// } else {
+		// 	printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
+		// }
 	
 		acl_indicate(pdr);
 		prev_seq_num = seq_num;

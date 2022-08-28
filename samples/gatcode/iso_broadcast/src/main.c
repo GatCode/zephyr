@@ -619,7 +619,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 		// }
 
 		// increase / decrease
-		if (curr - last_decreased_ts > 1000) { //(param_setting != params_idx) {
+		if (curr - last_decreased_ts > 5000) { //(param_setting != params_idx) {
 			last_decreased_ts = curr;
 			printk("params_idx %u\n", params_idx);
 
