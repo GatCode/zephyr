@@ -13,43 +13,41 @@
 #include <stdlib.h>
 
 /* ------------------------------------------------------ */
-/* Defines */
+/* Defines Iso */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
 #define DATA_SIZE_BYTE 75 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 20 // 5ms-4s
-#define BROADCAST_ENQUEUE_COUNT 2U // Guarantee always data to send
+#define BROADCAST_ENQUEUE_COUNT 2U // guarantee always data to send
 
+/* ------------------------------------------------------ */
+/* Defines R3 Concept */
+/* ------------------------------------------------------ */
+#define RTN 2 // also permanent rtn if algo not activated
+#define TXP 0 // -.- see available_vs_tx_pwr_settings for settings
+
+/* ------------------------------------------------------ */
+/* Defines Threads (main thread = prio 0) */
+/* ------------------------------------------------------ */
 #define STACKSIZE 1024
-
-// Thread Priorities (MAIN == 0)
 #define ACL_PRIORITY 10
 #define RANGE_PRIORITY 20
 
-#define PDR_WATCHDOG_FREQ_MS 100
+/* ------------------------------------------------------ */
+/* Defines Algorithm */
+/* ------------------------------------------------------ */
+#define ENABLE_RANGE_EXTENSION_ALGORITHM true
 
-#define ENABLE_RANGE_EXTENSION_ALGORITHM true // MAIN ALGO TOGGLE!!!!!!!!!!!!!!!!!!!!!!!!!!
 #define ALGO_MAX_THROUGHPUT (1000 / (SDU_INTERVAL_US / 1000)) * DATA_SIZE_BYTE * 8 / 1000
 #define ALGO_HARD_LIMIT 16 // >= 16kbps are needed for LC3
-#define ALGO_SOFT_LIMIT_1 0.5 * ALGO_MAX_THROUGHPUT
-#define ALGO_SOFT_LIMIT_2 0.8 * ALGO_MAX_THROUGHPUT
-
-#define INTELLIGENT_ALGO true
-#define INCREMEMT_ALGO false
-
-#define START_RTN 2 // also permanent rtn if algo not activated
-#define START_TXP 0 // -.- see available_vs_tx_pwr_settings for settings
-#define START_PHY BT_GAP_LE_PHY_2M // also permanent [phy] if algo not activated
+#define ALGO_SOFT_LIMIT_1 ALGO_MAX_THROUGHPUT * 0.5
+#define ALGO_SOFT_LIMIT_2 ALGO_MAX_THROUGHPUT * 0.8
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
-static double pdr = 0.0;
-static double prev_pdr = 0.0;
-uint8_t tx_pwr_setting = 0;
-uint8_t rtn_setting = 0;
-uint8_t phy_setting = BT_GAP_LE_PHY_2M; // also default setting (ISO only) if algo activated
+static double prr = 0.0;
 uint8_t param_setting = 0;
 static bool LED_ON = true;
 
@@ -99,8 +97,6 @@ static uint32_t last_recv_packet_ts = 0;
 #define BT_LE_CONN_PARAM_MULTI \
 		BT_LE_CONN_PARAM(CONFIG_BLE_ACL_CONN_INTERVAL, CONFIG_BLE_ACL_CONN_INTERVAL, \
 		CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
-
-static K_SEM_DEFINE(sem_pdr_recv, 0, 1);
 
 static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 			const bt_addr_le_t *addr)
@@ -272,7 +268,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 	if (length > 4) { // PRR
 		mantissa = sys_get_le24(&((uint8_t *)data)[1]);
 		exponent = ((uint8_t *)data)[4];
-		pdr = (double)mantissa * pow(10, exponent);
+		prr = (double)mantissa * pow(10, exponent);
 	} else { // OPCODES
 		uint8_t curr_opcode = ((uint8_t *)data)[0];
 		if (curr_opcode == 10) { // buffer reached B
@@ -284,14 +280,15 @@ static uint8_t notify_func(struct bt_conn *conn,
 			buffer_reached_B = false;
 		}
 
-		// k_sem_give(&sem_pdr_recv);
 		last_recv_packet_ts = k_uptime_get_32();
 	}
+
+	printk("Received PRR: %.2f%%\n", prr);
 	
-	int8_t rssi = 0;
-	uint16_t handle = 0;
-	bt_hci_get_conn_handle(conn, &handle);
-	read_conn_rssi(handle, &rssi);
+	// int8_t rssi = 0;
+	// uint16_t handle = 0;
+	// bt_hci_get_conn_handle(conn, &handle);
+	// read_conn_rssi(handle, &rssi);
 
 	// printk("rssi: %d\n", RollingmAvg(rssi));
 
@@ -395,16 +392,16 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 /* ISO */
 /* ------------------------------------------------------ */
 NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BROADCAST_ENQUEUE_COUNT * BIS_ISO_CHAN_COUNT,
-			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
+	BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
 
+static K_SEM_DEFINE(sem_send_handler_stopped, 0, 1);
 static K_SEM_DEFINE(sem_big_cmplt, 0, 1);
 static K_SEM_DEFINE(sem_big_term, 0, 1);
 
 static uint32_t seq_num;
 static struct bt_le_ext_adv *adv;
 static struct bt_iso_big *big;
-
-static struct bt_iso_chan bis_iso_chan; // fwd declaration
+static struct bt_iso_chan bis_iso_chan;
 
 static void iso_connected(struct bt_iso_chan *chan)
 {
@@ -416,44 +413,13 @@ static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 	k_sem_give(&sem_big_term);
 }
 
+struct net_buf *buf;
 uint8_t iso_data[DATA_SIZE_BYTE] = { 0 };
 uint8_t iso_data_second[DATA_SIZE_BYTE] = { 0 };
 uint8_t iso_data_double_buffer[2 * DATA_SIZE_BYTE] = { 0 };
-struct net_buf *buf;
 
-static void iso_sent(struct bt_iso_chan *chan)
-{
-	// buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
-	// net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-	// sys_put_le32(++seq_num, iso_data);
-	// iso_data[4] = rtn_setting;
-	// net_buf_add_mem(buf, iso_data, sizeof(iso_data));
-
-	// int ret = bt_iso_chan_send(&bis_iso_chan, buf);
-	// if (ret < 0) {
-	// 	// printk("Unable to broadcast data: %d", ret);
-	// 	net_buf_unref(buf);
-	// 	return;
-	// }
-}
-
-static K_SEM_DEFINE(sem_send_timer_stopped, 0, 1);
-
-void send_handler_stop(struct k_timer *dummy)
-{
-	printk("TIMER STOPPED @ seq_num: %u\n", seq_num);
-	k_sem_give(&sem_send_timer_stopped);
-}
-
-// TODO: send at fixed rate
 void send_handler(struct k_timer *self)
 {
-	// buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
-	// net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-	// sys_put_le32(++seq_num, iso_data);
-	// iso_data[4] = rtn_setting;
-	// net_buf_add_mem(buf, iso_data, sizeof(iso_data));
-
 	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
 	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
 
@@ -462,16 +428,13 @@ void send_handler(struct k_timer *self)
 		sys_put_le32(++seq_num, iso_data_second);
 		memcpy(iso_data_double_buffer, iso_data, DATA_SIZE_BYTE);
 		memcpy(iso_data_double_buffer + DATA_SIZE_BYTE, iso_data_second, DATA_SIZE_BYTE);
-		iso_data[4] = rtn_setting;
-		iso_data[4 + DATA_SIZE_BYTE] = rtn_setting;
 		net_buf_add_mem(buf, iso_data_double_buffer, sizeof(iso_data_double_buffer));
-		printk("Sent seq_num: %u\n", seq_num - 1);
-		printk("Sent seq_num: %u\n", seq_num);
+		// printk("Sent seq_num: %u\n", seq_num - 1);
+		// printk("Sent seq_num: %u\n", seq_num);
 	} else {
 		sys_put_le32(++seq_num, iso_data);
-		iso_data[4] = rtn_setting;
 		net_buf_add_mem(buf, iso_data, sizeof(iso_data));
-		printk("Sent seq_num: %u\n", seq_num);
+		// printk("Sent seq_num: %u\n", seq_num);
 	}
 
 	int ret = bt_iso_chan_send(&bis_iso_chan, buf);
@@ -481,18 +444,24 @@ void send_handler(struct k_timer *self)
 		return;
 	}
 }
-K_TIMER_DEFINE(send_timer, send_handler, send_handler_stop);
+
+void send_handler_stopped(struct k_timer *dummy)
+{
+	// printk("TIMER STOPPED @ seq_num: %u\n", seq_num);
+	k_sem_give(&sem_send_handler_stopped);
+}
+
+K_TIMER_DEFINE(send_timer, send_handler, send_handler_stopped);
 
 static struct bt_iso_chan_ops iso_ops = {
 	.connected	= iso_connected,
 	.disconnected = iso_disconnected,
-	.sent = iso_sent,
 };
 
 static struct bt_iso_chan_io_qos iso_tx_qos = {
-	.sdu = DATA_SIZE_BYTE, /* bytes */
-	.rtn = START_RTN,
-	.phy = START_PHY,
+	.sdu = DATA_SIZE_BYTE,
+	.rtn = RTN,
+	.phy = BT_GAP_LE_PHY_2M,
 };
 
 static struct bt_iso_chan_qos bis_iso_qos = {
@@ -521,23 +490,9 @@ static struct bt_iso_big_create_param big_create_param = {
 K_THREAD_STACK_DEFINE(thread_range_stack_area, STACKSIZE);
 static struct k_thread thread_range_data;
 
-// void pdr_watchdog_handler(struct k_timer *dummy)
-// {
-// 	// NOTE: since the ACL connection is the strongest link,
-// 	// 		 all packets incl a 0 PDR should come in.
-
-// 	// uint32_t curr = k_uptime_get_32();
-// 	// if (curr - last_recv_packet_ts > 1000) { // > 1s
-// 	// 	pdr = 0.0; // reset - no packets arrived in the last second
-// 	// 	k_sem_give(&sem_pdr_recv);
-// 	// }
-// 	k_sem_give(&sem_pdr_recv);
-// }
-// K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
-
 uint32_t get_current_kbps()
 {
-	return (pdr / 100) * ALGO_MAX_THROUGHPUT;
+	return (prr / 100) * ALGO_MAX_THROUGHPUT;
 }
 
 struct broadcast_parameters
@@ -562,19 +517,12 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 	int err;
 
 	while(1) {
-		// k_sleep(K_MSEC(10));
-		// err = k_sem_take(&sem_pdr_recv, K_FOREVER);
-		// if (err) {
-		// 	printk("failed (err %d)\n", err);
-		// 	return;
-		// }
-
 		uint32_t curr = k_uptime_get_32();
 
 		if (buffer_reached_B && double_sending_rate_activated) { // revert to normal speed
 
 			k_timer_stop(&send_timer);
-			err = k_sem_take(&sem_send_timer_stopped, K_FOREVER);
+			err = k_sem_take(&sem_send_handler_stopped, K_FOREVER);
 			if (err) {
 				printk("sem_big_term failed (err %d)\n", err);
 				return;
@@ -631,12 +579,12 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 		// }
 
 		// increase / decrease
-		else if (curr - last_decreased_ts > 5000) { //(param_setting != params_idx) {
+		else if (curr - last_decreased_ts > 2000) { //(param_setting != params_idx) {
 			last_decreased_ts = curr;
 			// printk("params_idx %u\n", params_idx);
 
 			k_timer_stop(&send_timer);
-			err = k_sem_take(&sem_send_timer_stopped, K_FOREVER);
+			err = k_sem_take(&sem_send_handler_stopped, K_FOREVER);
 			if (err) {
 				printk("sem_big_term failed (err %d)\n", err);
 				return;
@@ -682,30 +630,26 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 			param_setting = params_idx;
 		}
 		
-		
-		// printk("PDR: %.2f%% - RTN: %u - TXP: %u, PHY: %u\n", pdr, bis[0]->qos->tx->rtn, tx_pwr_setting, bis[0]->qos->tx->phy);
-		prev_pdr = pdr;
-
 		if (LED_ON) {
-			if (pdr > 20) {
+			if (prr > 20) {
 				gpio_pin_set_dt(&led1, 1);
 			} else {
 				gpio_pin_set_dt(&led1, 0);
 			}
 
-			if (pdr > 40) {
+			if (prr > 40) {
 				gpio_pin_set_dt(&led2, 1);
 			} else {
 				gpio_pin_set_dt(&led2, 0);
 			}
 
-			if (pdr > 60) {
+			if (prr > 60) {
 				gpio_pin_set_dt(&led3, 1);
 			} else {
 				gpio_pin_set_dt(&led3, 0);
 			}
 
-			if (pdr > 80) {
+			if (prr > 80) {
 				gpio_pin_set_dt(&led4, 1);
 			} else {
 				gpio_pin_set_dt(&led4, 0);
@@ -764,10 +708,6 @@ void main(void)
 		return;
 	}
 
-	/* Initialize Params */
-	rtn_setting = START_RTN;
-	tx_pwr_setting = START_TXP;
-
 	/* Start ACL Scanning */
 	k_work_submit(&start_scan_work);
 
@@ -776,9 +716,6 @@ void main(void)
 			BT_GAP_ADV_FAST_INT_MIN_2, \
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
-
-	/* Start PDR Watchdog timer */
-	// k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS), K_MSEC(PDR_WATCHDOG_FREQ_MS));
 
 	/* Create a non-connectable non-scannable advertising set */
 	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CUSTOM, NULL, &adv);
@@ -814,7 +751,7 @@ void main(void)
 
 	/* Set initial TX power */
 	init_ble_hci_vsc_tx_pwr();
-	err = ble_hci_vsc_set_tx_pwr(START_TXP);
+	err = ble_hci_vsc_set_tx_pwr(TXP);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
