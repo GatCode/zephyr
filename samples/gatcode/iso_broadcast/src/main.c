@@ -536,6 +536,12 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 				return;
 			}
 
+			err = bt_le_ext_adv_stop(adv);
+			if (err) {
+				printk("Failed to start extended advertising (err %d)\n", err);
+				return;
+			}
+
 			// int err = ble_hci_vsc_set_tx_pwr(params[params_idx].txp);
 			// if (err) {
 			// 	printk("Failed to set tx power (err %d)\n", err);
@@ -546,6 +552,12 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 
 			bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
 			double_sending_rate_activated = true; // set global flag
+
+			err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+			if (err) {
+				printk("Failed to start extended advertising (err %d)\n", err);
+				return;
+			}
 
 			err = bt_iso_big_create(adv, &big_create_param, &big);
 			if (err) {
@@ -650,6 +662,14 @@ void main(void)
 			BT_GAP_ADV_FAST_INT_MAX_2, \
 			NULL)
 
+	/* Set initial TX power */
+	init_ble_hci_vsc_tx_pwr();
+	err = ble_hci_vsc_set_tx_pwr(TXP);
+	if (err) {
+		printk("Failed to set tx power (err %d)\n", err);
+		return;
+	}
+
 	/* Create a non-connectable non-scannable advertising set */
 	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_CUSTOM, NULL, &adv);
 	if (err) {
@@ -679,14 +699,6 @@ void main(void)
 	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
 	if (err) {
 		printk("Failed to start extended advertising (err %d)\n", err);
-		return;
-	}
-
-	/* Set initial TX power */
-	init_ble_hci_vsc_tx_pwr();
-	err = ble_hci_vsc_set_tx_pwr(TXP);
-	if (err) {
-		printk("Failed to set tx power (err %d)\n", err);
 		return;
 	}
 

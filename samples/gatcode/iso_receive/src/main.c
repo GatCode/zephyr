@@ -436,7 +436,7 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 
 static void recv_cb(struct bt_le_per_adv_sync *sync, const struct bt_le_per_adv_sync_recv_info *info, struct net_buf_simple *buf)
 {
-	// printk("rssi: %d\n", info->rssi);
+	printk("rssi: %d, tx_power: %d\n", info->rssi, info->tx_power);
 }
 
 static struct bt_le_per_adv_sync_cb sync_callbacks = {
@@ -507,12 +507,12 @@ void buffer_timer_handler(struct k_timer *dummy)
 
 		acl_indicate(pdr_after);
 	
-		printk("Buffer occupied: %u out of %u - prr: %.02f%% - new prr: %.02f%% - seq_num: %u", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, pdr, pdr_after, seq_num);
-		if (seq_num - 1 != prev_seq_num) {
-			printk(" - LOST\n");
-		} else {
-			printk("\n");
-		}
+		// printk("Buffer occupied: %u out of %u - prr: %.02f%% - new prr: %.02f%% - seq_num: %u", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, pdr, pdr_after, seq_num);
+		// if (seq_num - 1 != prev_seq_num) {
+		// 	printk(" - LOST\n");
+		// } else {
+		// 	printk("\n");
+		// }
 
 		prev_seq_num = seq_num;
 	}
