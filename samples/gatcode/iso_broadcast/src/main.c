@@ -7,7 +7,6 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/iso.h>
-#include <zephyr/usb/usb_device.h>
 #include <zephyr/sys/byteorder.h>
 #include <ble_hci_vsc.h>
 #include <stdlib.h>
@@ -16,7 +15,7 @@
 /* Defines Iso */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 75 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
+#define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
 #define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 20 // 5ms-4s
 #define BROADCAST_ENQUEUE_COUNT 2U // guarantee always data to send
@@ -32,7 +31,7 @@
 /* ------------------------------------------------------ */
 #define STACKSIZE 1024
 #define ACL_PRIORITY 10
-#define RANGE_PRIORITY 20
+#define ADJ_PRIORITY 20
 
 /* ------------------------------------------------------ */
 /* Defines Algorithm */
@@ -191,65 +190,9 @@ static double pow(double x, double y)
 	return result;
 }
 
-// static bool double_buffering_need = false;
 static bool double_sending_rate_activated = false;
 static bool buffer_reached_A = false;
 static bool buffer_reached_B = false;
-
-static void read_conn_rssi(uint16_t handle, int8_t *rssi)
-{
-	struct net_buf *buf, *rsp = NULL;
-	struct bt_hci_cp_read_rssi *cp;
-	struct bt_hci_rp_read_rssi *rp;
-
-	int err;
-
-	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
-	if (!buf) {
-		printk("Unable to allocate command buffer\n");
-		return;
-	}
-
-	cp = net_buf_add(buf, sizeof(*cp));
-	cp->handle = sys_cpu_to_le16(handle);
-
-	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
-	if (err) {
-		uint8_t reason = rsp ?
-			((struct bt_hci_rp_read_rssi *)rsp->data)->status : 0;
-		printk("Read RSSI err: %d reason 0x%02x\n", err, reason);
-		return;
-	}
-
-	rp = (void *)rsp->data;
-	*rssi = rp->rssi;
-
-	net_buf_unref(rsp);
-}
-
-// moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
-uint64_t maverage_values[10] = {0}; // all are zero as a start
-uint64_t maverage_current_position = 0;
-uint64_t maverage_current_sum = 0;
-uint64_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
-
-int8_t RollingmAvg(int8_t newValue)
-{
-         //Subtract the oldest number from the prev sum, add the new number
-        maverage_current_sum = maverage_current_sum - maverage_values[maverage_current_position] + abs(newValue);
-
-        //Assign the newValue to the position in the array
-        maverage_values[maverage_current_position] = abs(newValue);
-
-        maverage_current_position++;
-        
-        if (maverage_current_position >= maverage_sample_length) { // Don't go beyond the size of the array...
-            maverage_current_position = 0;
-        }
-                
-        //return the average
-        return -(maverage_current_sum / maverage_sample_length);
-}
 
 static uint8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
@@ -285,13 +228,6 @@ static uint8_t notify_func(struct bt_conn *conn,
 
 	printk("Received PRR: %.2f%%\n", prr);
 	
-	// int8_t rssi = 0;
-	// uint16_t handle = 0;
-	// bt_hci_get_conn_handle(conn, &handle);
-	// read_conn_rssi(handle, &rssi);
-
-	// printk("rssi: %d\n", RollingmAvg(rssi));
-
 	return BT_GATT_ITER_CONTINUE;
 }
 
@@ -429,12 +365,12 @@ void send_handler(struct k_timer *self)
 		memcpy(iso_data_double_buffer, iso_data, DATA_SIZE_BYTE);
 		memcpy(iso_data_double_buffer + DATA_SIZE_BYTE, iso_data_second, DATA_SIZE_BYTE);
 		net_buf_add_mem(buf, iso_data_double_buffer, sizeof(iso_data_double_buffer));
-		// printk("Sent seq_num: %u\n", seq_num - 1);
-		// printk("Sent seq_num: %u\n", seq_num);
+		printk("Sent seq_num: %u\n", seq_num - 1);
+		printk("Sent seq_num: %u\n", seq_num);
 	} else {
 		sys_put_le32(++seq_num, iso_data);
 		net_buf_add_mem(buf, iso_data, sizeof(iso_data));
-		// printk("Sent seq_num: %u\n", seq_num);
+		printk("Sent seq_num: %u\n", seq_num);
 	}
 
 	int ret = bt_iso_chan_send(&bis_iso_chan, buf);
@@ -485,10 +421,10 @@ static struct bt_iso_big_create_param big_create_param = {
 };
 
 /* ------------------------------------------------------ */
-/* Range Extension (Model) */
+/* Adjustment Algorithm */
 /* ------------------------------------------------------ */
-K_THREAD_STACK_DEFINE(thread_range_stack_area, STACKSIZE);
-static struct k_thread thread_range_data;
+K_THREAD_STACK_DEFINE(adj_stack_area, STACKSIZE);
+static struct k_thread adj_thread;
 
 uint32_t get_current_kbps()
 {
@@ -504,11 +440,8 @@ static struct broadcast_parameters params[3] = {{0,2}, {0,4}, {1,8}};
 static uint8_t params_idx = 0;
 static uint32_t last_switch_ts = 0;
 static uint32_t last_decreased_ts = 0;
-static uint32_t last_buffering_speed_ts = 0;
 
-static uint32_t last_big_adjustment_ts = 0;
-
-void range_thread(void *dummy1, void *dummy2, void *dummy3)
+void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 {
 	ARG_UNUSED(dummy1);
 	ARG_UNUSED(dummy2);
@@ -556,7 +489,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 				return;
 			}
 
-			k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
+			k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
 			// printk("REVERT TO NORMAL SPEED!\n");
 		}
 
@@ -626,7 +559,7 @@ void range_thread(void *dummy1, void *dummy2, void *dummy3)
 				return;
 			}
 
-			k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
+			k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
 			param_setting = params_idx;
 		}
 		
@@ -757,13 +690,13 @@ void main(void)
 		return;
 	}
 
-	/* Initialize Range Extension */
-	k_thread_create(&thread_range_data, thread_range_stack_area,
-		K_THREAD_STACK_SIZEOF(thread_range_stack_area),
-		range_thread, NULL, NULL, NULL,
-		RANGE_PRIORITY, 0, K_FOREVER);
-	k_thread_name_set(&thread_range_data, "range_thread");
-	k_thread_start(&thread_range_data);
+	/* Start Adjustment Thread */
+	k_thread_create(&adj_thread, adj_stack_area,
+		K_THREAD_STACK_SIZEOF(adj_stack_area),
+		adj_thread_handler, NULL, NULL, NULL,
+		ADJ_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&adj_thread, "adj_thread_handler");
+	k_thread_start(&adj_thread);
 
 	/* Create BIG */
 	err = bt_iso_big_create(adv, &big_create_param, &big);
@@ -781,5 +714,5 @@ void main(void)
 	printk("done.\n");
 
 	/* Start ISO Transmission */
-	k_timer_start(&send_timer, K_NO_WAIT, K_MSEC(20));
+	k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
 }

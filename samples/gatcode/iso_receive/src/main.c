@@ -7,7 +7,6 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/iso.h>
-#include <zephyr/usb/usb_device.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/ring_buffer.h>
 #include <ble_hci_vsc.h>
@@ -15,26 +14,35 @@
 #include <stdlib.h>
 
 /* ------------------------------------------------------ */
-/* Defines */
+/* Defines Iso */
 /* ------------------------------------------------------ */
 #define BIS_ISO_CHAN_COUNT 1
-#define DATA_SIZE_BYTE 75 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
-#define PRESENTATION_DELAY_US 10000
+#define DATA_SIZE_BYTE 50 // must be >= 23 (MTU minimum) && <= 251 (PDU_LEN_MAX)
+#define SDU_INTERVAL_US 20000 // could also be extraced from big info
 #define MAXIMUM_SUBEVENTS 31 // MSE | 1-31
 
+/* ------------------------------------------------------ */
+/* Defines Threads (main thread = prio 0) */
+/* ------------------------------------------------------ */
 #define STACKSIZE 1024
-#define ACL_PRIORITY 9
+#define ACL_PRIORITY 10
 
-#define FIFO_SIZE 50
+/* ------------------------------------------------------ */
+/* Defines R3 Concept */
+/* ------------------------------------------------------ */
+#define ACL_TXP 13 // +3dBm
 
-#define PDR_WATCHDOG_FREQ_MS 500
-#define INDICATE_IF_PDR_CHANGED_BY 10 // send indication if changes > define
+/* ------------------------------------------------------ */
+/* PRR Calculation */
+/* ------------------------------------------------------ */
+#define PRR_MAVG_WINDOW_SIZE 50
 
-#define MAX_TXP 13 // set ACL TX power to max (+3dBm)
-
-#define PACKET_BUFFER_SIZE 40 // = 1s
-#define PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW 20 // must be min 12 slots to ensure no issues - 50% = 7 packets
-#define PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH 33 // must be min 12 slots to ensure no issue - 50% = 7 packets
+/* ------------------------------------------------------ */
+/* Defines Algorithm */
+/* ------------------------------------------------------ */
+#define PACKET_BUFFER_SIZE 40 // 50 = 1s
+#define PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW 20 // must be min 13 slots to ensure no issues - 50% = 7 packets
+#define PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH 33 // must be min 13 slots to ensure no issue - 50% = 7 packets
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -42,10 +50,7 @@
 static double pdr = 0.0;
 static double pdr_after = 0.0;
 static double last_indicated_pdr = 0.0;
-static uint16_t iso_interval = 0;
 static bool LED_ON = true;
-
-static uint8_t probing_txp = MAX_TXP;
 
 /* ------------------------------------------------------ */
 /* LEDs */
@@ -158,7 +163,7 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 
 	/* Set MAX TX power */
 	init_ble_hci_vsc_tx_pwr();
-	int err = ble_hci_vsc_set_tx_pwr(probing_txp);
+	int err = ble_hci_vsc_set_tx_pwr(ACL_TXP);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
@@ -170,7 +175,7 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 
 static K_SEM_DEFINE(txp_finish_sem, 0, 1);
 
-static uint32_t txp_work_set_txp = MAX_TXP;
+static uint32_t txp_work_set_txp = ACL_TXP;
 
 void txp_set_work(struct k_work *item)
 {
@@ -211,7 +216,7 @@ void acl_indication_finished2(struct bt_conn *conn,
 }
 
 static uint32_t lastExecTs = 0;
-static uint8_t currentTXP = MAX_TXP; // start with max TXP
+static uint8_t currentTXP = ACL_TXP; // start with max TXP
 
 static uint16_t txp_delay_values_high[10] = {0};
 static uint16_t txp_delay_values_low[10] = {0};
@@ -254,7 +259,7 @@ RING_BUF_DECLARE(PacketBuffer, PACKET_BUFFER_SIZE * DATA_SIZE_BYTE);
 
 static uint8_t last_indicated_opcode = 0;
 
-void watchdog_txp_worker(struct k_work *item)
+void indicate_work_handler(struct k_work *item)
 {
 	/* Fetch ACL connection handle */
 	uint16_t acl_handle = 0;
@@ -355,13 +360,11 @@ void watchdog_txp_worker(struct k_work *item)
 
 	last_indicated_pdr = pdr;
 }
-K_WORK_DEFINE(watchdog_txp_work, watchdog_txp_worker);
+K_WORK_DEFINE(indicate_work, indicate_work_handler);
 
 void acl_indicate(double pdr)
 {
-	// if (abs(last_indicated_pdr - pdr) > 2) {
-		k_work_submit(&watchdog_txp_work);
-	// }
+	k_work_submit(&indicate_work);
 }
 
 /* ------------------------------------------------------ */
@@ -371,9 +374,9 @@ void acl_indicate(double pdr)
 #define NAME_LEN            30
 
 #define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, \
-					   BT_LE_SCAN_OPT_NONE, \
-					   BT_GAP_SCAN_FAST_INTERVAL, \
-					   BT_GAP_SCAN_FAST_WINDOW)
+			BT_LE_SCAN_OPT_NONE, \
+			BT_GAP_SCAN_FAST_INTERVAL, \
+			BT_GAP_SCAN_FAST_WINDOW)
 
 #define PA_RETRY_COUNT 10
 
@@ -382,6 +385,9 @@ static bool         per_adv_lost;
 static bt_addr_le_t per_addr;
 static uint8_t      per_sid;
 static uint16_t     per_interval_ms;
+
+static uint32_t seq_num = 0;
+static uint32_t prev_seq_num = 0;
 
 static K_SEM_DEFINE(sem_per_adv, 0, 1);
 static K_SEM_DEFINE(sem_per_sync, 0, 1);
@@ -425,7 +431,6 @@ static void term_cb(struct bt_le_per_adv_sync *sync,
 static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 		       const struct bt_iso_biginfo *biginfo)
 {
-	iso_interval = biginfo->iso_interval;
 	k_sem_give(&sem_per_big_info);
 }
 
@@ -442,89 +447,31 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 };
 
 // moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
-// uint64_t maverage_values[FIFO_SIZE] = {0}; // all are zero as a start
-// uint64_t maverage_current_position = 0;
-// uint64_t maverage_current_sum = 0;
-// uint64_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
+uint64_t maverage_values[PRR_MAVG_WINDOW_SIZE] = {0}; // all are zero as a start
+uint64_t maverage_current_position = 0;
+uint64_t maverage_current_sum = 0;
+uint64_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
 
-// double RollingmAvg(uint8_t newValue)
-// {
-//          //Subtract the oldest number from the prev sum, add the new number
-//         maverage_current_sum = maverage_current_sum - maverage_values[maverage_current_position] + newValue;
-
-//         //Assign the newValue to the position in the array
-//         maverage_values[maverage_current_position] = newValue;
-
-//         maverage_current_position++;
-        
-//         if (maverage_current_position >= maverage_sample_length) { // Don't go beyond the size of the array...
-//             maverage_current_position = 0;
-//         }
-                
-//         //return the average
-//         return (double)maverage_current_sum * 100.0 / (double)maverage_sample_length;
-// }
-
-// static uint8_t rtn;
-
-// moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
-uint64_t maverage_values2[FIFO_SIZE] = {0}; // all are zero as a start
-uint64_t maverage_current_position2 = 0;
-uint64_t maverage_current_sum2 = 0;
-uint64_t maverage_sample_length2 = sizeof(maverage_values2) / sizeof(maverage_values2[0]);
-
-double RollingmAvg2(uint8_t newValue)
+double RollingmAvg(uint8_t newValue)
 {
          //Subtract the oldest number from the prev sum, add the new number
-        maverage_current_sum2 = maverage_current_sum2 - maverage_values2[maverage_current_position2] + newValue;
+        maverage_current_sum = maverage_current_sum - maverage_values[maverage_current_position] + newValue;
 
         //Assign the newValue to the position in the array
-        maverage_values2[maverage_current_position2] = newValue;
+        maverage_values[maverage_current_position] = newValue;
 
-        maverage_current_position2++;
+        maverage_current_position++;
         
-        if (maverage_current_position2 >= maverage_sample_length2) { // Don't go beyond the size of the array...
-            maverage_current_position2 = 0;
+        if (maverage_current_position >= maverage_sample_length) { // Don't go beyond the size of the array...
+            maverage_current_position = 0;
         }
                 
         //return the average
-        return (double)maverage_current_sum2 * 100.0 / (double)maverage_sample_length2;
+        return (double)maverage_current_sum * 100.0 / (double)maverage_sample_length;
 }
 
-// static bool pdr_timer_started = false;
-static uint32_t seq_num = 0;
-// static uint32_t last_recv_packet_ts = 0;
-
-// static uint32_t prev_crc_error_packets = 0;
-
-// void pdr_watchdog_handler(struct k_timer *dummy)
-// {
-// 	acl_indicate(pdr);
-// 	// k_work_submit(&watchdog_txp_work);
-
-// 	// uint32_t curr = audio_sync_timer_curr_time_get();
-// 	// // printk("curr: %u, last_recv_packet_ts: %u, diff: %u\n", curr, last_recv_packet_ts, curr - last_recv_packet_ts);
-// 	// if (curr - last_recv_packet_ts > 1000000) { // > 1s
-// 	// 	pdr = 0.0;
-// 	// 	prev_crc_error_packets = 0;
-// 	// 	acl_indicate(pdr);
-// 	// 	printk("PDR: %.2f%%\n", pdr);
-// 	// }	
-// }
-// K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
-
-
-// void watchdog_work_start(struct k_work *item)
-// {
-// 	printk("Hello World\n");
-// }
-// K_WORK_DEFINE(watchdog_handler, watchdog_work_start);
-
-static uint32_t last_reading = 0;
-
-void buffer_watchdog_handler(struct k_timer *dummy)
+void buffer_timer_handler(struct k_timer *dummy)
 {
-	// fires 50x per second
 	uint32_t free_slots = ring_buf_space_get(&PacketBuffer);
 
 	// initial buffer fill as stream establishment
@@ -550,61 +497,27 @@ void buffer_watchdog_handler(struct k_timer *dummy)
 
 		gpio_pin_toggle_dt(&led2);
 
-		if (seq_num - 1 != last_reading) {
-			for (uint8_t i = 0; i < seq_num - last_reading; i++) {
-				pdr_after = RollingmAvg2(0);
+		if (seq_num - 1 != prev_seq_num && prev_seq_num < seq_num) {
+			for (uint8_t i = 0; i < seq_num - prev_seq_num; i++) {
+				pdr_after = RollingmAvg(0);
 			}
 		} else {
-			pdr_after = RollingmAvg2(1);
+			pdr_after = RollingmAvg(1);
 		}
 
 		acl_indicate(pdr_after);
 	
-		// printk("Free buffer slots: %u", free_slots / DATA_SIZE_BYTE);
 		printk("Buffer occupied: %u out of %u - prr: %.02f%% - new prr: %.02f%% - seq_num: %u", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, pdr, pdr_after, seq_num);
-		if (seq_num - 1 != last_reading) {
+		if (seq_num - 1 != prev_seq_num) {
 			printk(" - LOST\n");
 		} else {
 			printk("\n");
 		}
 
-		last_reading = seq_num;
+		prev_seq_num = seq_num;
 	}
 }
-K_TIMER_DEFINE(buffer_watchdog, buffer_watchdog_handler, NULL);
-
-static uint32_t prev_seq_num = 0;
-
-// static void read_conn_rssi(uint16_t handle, int8_t *rssi)
-// {
-// 	struct net_buf *buf, *rsp = NULL;
-// 	struct bt_hci_cp_read_rssi *cp;
-// 	struct bt_hci_rp_read_rssi *rp;
-
-// 	int err;
-
-// 	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
-// 	if (!buf) {
-// 		printk("Unable to allocate command buffer\n");
-// 		return;
-// 	}
-
-// 	cp = net_buf_add(buf, sizeof(*cp));
-// 	cp->handle = sys_cpu_to_le16(handle);
-
-// 	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
-// 	if (err) {
-// 		uint8_t reason = rsp ?
-// 			((struct bt_hci_rp_read_rssi *)rsp->data)->status : 0;
-// 		printk("Read RSSI err: %d reason 0x%02x\n", err, reason);
-// 		return;
-// 	}
-
-// 	rp = (void *)rsp->data;
-// 	*rssi = rp->rssi;
-
-// 	net_buf_unref(rsp);
-// }
+K_TIMER_DEFINE(buffer_timer, buffer_timer_handler, NULL);
 
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
@@ -619,7 +532,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			uint8_t data = buf->data[i];
 		}
 		seq_num = sys_get_le32(count_arr);
-		// rtn = buf->data[4];
 
 		ring_buf_put(&PacketBuffer, buf->data, DATA_SIZE_BYTE);
 
@@ -637,7 +549,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 		// uint32_t curr = audio_sync_timer_curr_time_get();
 		// uint32_t packet_delta = abs(last_recv_packet_ts - curr);
-		// uint32_t iso_interval_us = iso_interval * 1.25 * 1000.0;
+		// uint32_t iso_interval_us = sdu_interval * 1.25 * 1000.0;
 		// uint8_t lost_packets = (double)packet_delta / (double)iso_interval_us;
 		// last_recv_packet_ts = curr;
 		// // printk("lost packets:  %u, packet_delta: %u, Packet ID: %u - iso_interval_us: %u\n", lost_packets, packet_delta, seq_num, iso_interval_us);
@@ -662,7 +574,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		// }
 	
 		// acl_indicate(pdr);
-		prev_seq_num = seq_num;
+		// prev_seq_num = seq_num;
 		
 		// if (LED_ON) {
 		// 	if (pdr > 20) {
@@ -699,16 +611,12 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 static void iso_connected(struct bt_iso_chan *chan)
 {
-	// printk("ISO Channel %p connected\n", chan);
-	// iso_just_established = true;
 	k_sem_give(&sem_big_sync);
 }
 
 static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 {
 	gpio_pin_toggle_dt(&led1);
-	// printk("ISO Channel %p disconnected with reason 0x%02x\n",
-	    //    chan, reason);
 
 	if (reason != BT_HCI_ERR_OP_CANCELLED_BY_HOST) {
 		k_sem_give(&sem_big_sync_lost);
@@ -815,9 +723,8 @@ void main(void)
 	bt_le_scan_cb_register(&scan_callbacks);
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
 
-	/* Start PDR Watchdog timer */
-	// k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS * 3), K_MSEC(PDR_WATCHDOG_FREQ_MS));
-	k_timer_start(&buffer_watchdog, K_NO_WAIT, K_MSEC(20));
+	/* Start buffer timer */
+	k_timer_start(&buffer_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
 
 	do {
 		per_adv_lost = false;
@@ -847,7 +754,7 @@ void main(void)
 		}
 		printk("success.\n");
 
-		// printk("Creating Periodic Advertising Sync...");
+		printk("Creating Periodic Advertising Sync...");
 		bt_addr_le_copy(&sync_create_param.addr, &per_addr);
 		sync_create_param.options = 0;
 		sync_create_param.sid = per_sid;
@@ -859,14 +766,14 @@ void main(void)
 			printk("failed (err %d)\n", err);
 			return;
 		}
-		// printk("success.\n");
+		printk("success.\n");
 
-		// printk("Waiting for periodic sync...\n");
+		printk("Waiting for periodic sync...\n");
 		err = k_sem_take(&sem_per_sync, K_MSEC(sem_timeout));
 		if (err) {
 			printk("failed (err %d)\n", err);
 
-			printk("Deleting Periodic Advertising Sync...");
+			printk("Deleting Periodic Advertising Sync...\n");
 			err = bt_le_per_adv_sync_delete(sync);
 			if (err) {
 				printk("failed (err %d)\n", err);
@@ -874,9 +781,9 @@ void main(void)
 			}
 			continue;
 		}
-		// printk("Periodic sync established.\n");
+		printk("Periodic sync established.\n");
 
-		// printk("Waiting for BIG info...\n");
+		printk("Waiting for BIG info...\n");
 		err = k_sem_take(&sem_per_big_info, K_MSEC(sem_timeout));
 		if (err) {
 			printk("failed (err %d)\n", err);
@@ -885,7 +792,7 @@ void main(void)
 				continue;
 			}
 
-			printk("Deleting Periodic Advertising Sync...");
+			printk("Deleting Periodic Advertising Sync...\n");
 			err = bt_le_per_adv_sync_delete(sync);
 			if (err) {
 				printk("failed (err %d)\n", err);
@@ -893,21 +800,18 @@ void main(void)
 			}
 			continue;
 		}
-		// printk("Periodic sync established.\n");
+		printk("Periodic sync established.\n");
 
 big_sync_create:
-		// printk("Create BIG Sync...\n");
 		err = bt_iso_big_sync(sync, &big_sync_param, &big);
 		if (err) {
 			printk("failed (err %d)\n", err);
 			return;
 		}
-		// printk("success.\n");
 
-		// printk("Waiting for BIG sync...\n");
 		err = k_sem_take(&sem_big_sync, TIMEOUT_SYNC_CREATE);
 		if (err) {
-			printk("failed (err %d)\n", err);
+			printk("BIG Sync failed (err %d)\n", err);
 
 			printk("BIG Sync Terminate...");
 			err = bt_iso_big_terminate(big);
@@ -919,24 +823,17 @@ big_sync_create:
 
 			goto per_sync_lost_check;
 		}
-		// printk("BIG sync established.\n");
 
-		// printk("Waiting for BIG sync lost...\n");
 		err = k_sem_take(&sem_big_sync_lost, K_FOREVER);
 		if (err) {
-			printk("failed (err %d)\n", err);
+			printk("BIG Sync Lost failed (err %d)\n", err);
 			return;
 		}
-		// printk("BIG sync lost.\n");
 
 per_sync_lost_check:
-		// printk("Check for periodic sync lost...\n");
 		err = k_sem_take(&sem_per_sync_lost, K_NO_WAIT);
 		if (err) {
-			/* Periodic Sync active, go back to creating BIG Sync */
-			// k_timer_start(&pdr_watchdog, K_NO_WAIT, K_MSEC(PDR_WATCHDOG_FREQ_MS)); // start timer again
 			goto big_sync_create;
 		}
-		// printk("Periodic sync lost.\n");
 	} while (true);
 }
