@@ -436,7 +436,7 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 
 static void recv_cb(struct bt_le_per_adv_sync *sync, const struct bt_le_per_adv_sync_recv_info *info, struct net_buf_simple *buf)
 {
-	printk("rssi: %d, tx_power: %d\n", info->rssi, info->tx_power);
+	printk("rssi: %d, tx_power index: %d\n", info->rssi, get_hci_vsc_tx_pwr_idx(info->tx_power));
 }
 
 static struct bt_le_per_adv_sync_cb sync_callbacks = {

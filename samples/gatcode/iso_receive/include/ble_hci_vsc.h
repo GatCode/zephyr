@@ -68,6 +68,13 @@ enum ble_hci_vs_led_function_mode {
 };
 
 /**
+ * @brief Returns the appropriate txp vsc index
+ * 
+ * @return txp index
+ */
+uint8_t get_hci_vsc_tx_pwr_idx(int8_t txp);
+
+/**
  * @brief Initializes the available_vs_tx_pwr_settings options.
  */
 void init_ble_hci_vsc_tx_pwr();
