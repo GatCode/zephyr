@@ -32,9 +32,9 @@
 
 #define MAX_TXP 13 // set ACL TX power to max (+3dBm)
 
-#define PACKET_BUFFER_SIZE 100 // = 2s
-#define PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW 25 // must be min 12 slots to ensure no issues
-#define PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH 30 // must be min 12 slots to ensure no issues
+#define PACKET_BUFFER_SIZE 40 // = 1s
+#define PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW 20 // must be min 12 slots to ensure no issues - 50% = 7 packets
+#define PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH 33 // must be min 12 slots to ensure no issue - 50% = 7 packets
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -431,7 +431,7 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 
 static void recv_cb(struct bt_le_per_adv_sync *sync, const struct bt_le_per_adv_sync_recv_info *info, struct net_buf_simple *buf)
 {
-	printk("rssi: %d\n", info->rssi);
+	// printk("rssi: %d\n", info->rssi);
 }
 
 static struct bt_le_per_adv_sync_cb sync_callbacks = {
@@ -442,30 +442,30 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 };
 
 // moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
-uint64_t maverage_values[FIFO_SIZE] = {0}; // all are zero as a start
-uint64_t maverage_current_position = 0;
-uint64_t maverage_current_sum = 0;
-uint64_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
+// uint64_t maverage_values[FIFO_SIZE] = {0}; // all are zero as a start
+// uint64_t maverage_current_position = 0;
+// uint64_t maverage_current_sum = 0;
+// uint64_t maverage_sample_length = sizeof(maverage_values) / sizeof(maverage_values[0]);
 
-double RollingmAvg(uint8_t newValue)
-{
-         //Subtract the oldest number from the prev sum, add the new number
-        maverage_current_sum = maverage_current_sum - maverage_values[maverage_current_position] + newValue;
+// double RollingmAvg(uint8_t newValue)
+// {
+//          //Subtract the oldest number from the prev sum, add the new number
+//         maverage_current_sum = maverage_current_sum - maverage_values[maverage_current_position] + newValue;
 
-        //Assign the newValue to the position in the array
-        maverage_values[maverage_current_position] = newValue;
+//         //Assign the newValue to the position in the array
+//         maverage_values[maverage_current_position] = newValue;
 
-        maverage_current_position++;
+//         maverage_current_position++;
         
-        if (maverage_current_position >= maverage_sample_length) { // Don't go beyond the size of the array...
-            maverage_current_position = 0;
-        }
+//         if (maverage_current_position >= maverage_sample_length) { // Don't go beyond the size of the array...
+//             maverage_current_position = 0;
+//         }
                 
-        //return the average
-        return (double)maverage_current_sum * 100.0 / (double)maverage_sample_length;
-}
+//         //return the average
+//         return (double)maverage_current_sum * 100.0 / (double)maverage_sample_length;
+// }
 
-static uint8_t rtn;
+// static uint8_t rtn;
 
 // moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
 uint64_t maverage_values2[FIFO_SIZE] = {0}; // all are zero as a start
@@ -493,32 +493,32 @@ double RollingmAvg2(uint8_t newValue)
 
 // static bool pdr_timer_started = false;
 static uint32_t seq_num = 0;
-static uint32_t last_recv_packet_ts = 0;
+// static uint32_t last_recv_packet_ts = 0;
 
-static uint32_t prev_crc_error_packets = 0;
+// static uint32_t prev_crc_error_packets = 0;
 
-void pdr_watchdog_handler(struct k_timer *dummy)
-{
-	acl_indicate(pdr);
-	// k_work_submit(&watchdog_txp_work);
+// void pdr_watchdog_handler(struct k_timer *dummy)
+// {
+// 	acl_indicate(pdr);
+// 	// k_work_submit(&watchdog_txp_work);
 
-	// uint32_t curr = audio_sync_timer_curr_time_get();
-	// // printk("curr: %u, last_recv_packet_ts: %u, diff: %u\n", curr, last_recv_packet_ts, curr - last_recv_packet_ts);
-	// if (curr - last_recv_packet_ts > 1000000) { // > 1s
-	// 	pdr = 0.0;
-	// 	prev_crc_error_packets = 0;
-	// 	acl_indicate(pdr);
-	// 	printk("PDR: %.2f%%\n", pdr);
-	// }	
-}
-K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
+// 	// uint32_t curr = audio_sync_timer_curr_time_get();
+// 	// // printk("curr: %u, last_recv_packet_ts: %u, diff: %u\n", curr, last_recv_packet_ts, curr - last_recv_packet_ts);
+// 	// if (curr - last_recv_packet_ts > 1000000) { // > 1s
+// 	// 	pdr = 0.0;
+// 	// 	prev_crc_error_packets = 0;
+// 	// 	acl_indicate(pdr);
+// 	// 	printk("PDR: %.2f%%\n", pdr);
+// 	// }	
+// }
+// K_TIMER_DEFINE(pdr_watchdog, pdr_watchdog_handler, NULL);
 
 
-void watchdog_work_start(struct k_work *item)
-{
-	printk("Hello World\n");
-}
-K_WORK_DEFINE(watchdog_handler, watchdog_work_start);
+// void watchdog_work_start(struct k_work *item)
+// {
+// 	printk("Hello World\n");
+// }
+// K_WORK_DEFINE(watchdog_handler, watchdog_work_start);
 
 static uint32_t last_reading = 0;
 
@@ -557,66 +557,58 @@ void buffer_watchdog_handler(struct k_timer *dummy)
 		} else {
 			pdr_after = RollingmAvg2(1);
 		}
+
+		acl_indicate(pdr_after);
 	
 		// printk("Free buffer slots: %u", free_slots / DATA_SIZE_BYTE);
-		// printk("Buffer occupied: %u out of %u - prr: %.02f%% - new prr: %.02f%%\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, pdr, pdr_after);
-
+		printk("Buffer occupied: %u out of %u - prr: %.02f%% - new prr: %.02f%% - seq_num: %u", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, pdr, pdr_after, seq_num);
+		if (seq_num - 1 != last_reading) {
+			printk(" - LOST\n");
+		} else {
+			printk("\n");
+		}
 
 		last_reading = seq_num;
 	}
-
-
-
-	
-	
-
-	// k_work_submit(&watchdog_handler);
 }
 K_TIMER_DEFINE(buffer_watchdog, buffer_watchdog_handler, NULL);
 
-void recv_packet_handler(struct k_timer *dummy)
-{
-	// currently unused
-}
-K_TIMER_DEFINE(recv_packet, recv_packet_handler, NULL);
-
 static uint32_t prev_seq_num = 0;
 
-static void read_conn_rssi(uint16_t handle, int8_t *rssi)
-{
-	struct net_buf *buf, *rsp = NULL;
-	struct bt_hci_cp_read_rssi *cp;
-	struct bt_hci_rp_read_rssi *rp;
+// static void read_conn_rssi(uint16_t handle, int8_t *rssi)
+// {
+// 	struct net_buf *buf, *rsp = NULL;
+// 	struct bt_hci_cp_read_rssi *cp;
+// 	struct bt_hci_rp_read_rssi *rp;
 
-	int err;
+// 	int err;
 
-	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
-	if (!buf) {
-		printk("Unable to allocate command buffer\n");
-		return;
-	}
+// 	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
+// 	if (!buf) {
+// 		printk("Unable to allocate command buffer\n");
+// 		return;
+// 	}
 
-	cp = net_buf_add(buf, sizeof(*cp));
-	cp->handle = sys_cpu_to_le16(handle);
+// 	cp = net_buf_add(buf, sizeof(*cp));
+// 	cp->handle = sys_cpu_to_le16(handle);
 
-	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
-	if (err) {
-		uint8_t reason = rsp ?
-			((struct bt_hci_rp_read_rssi *)rsp->data)->status : 0;
-		printk("Read RSSI err: %d reason 0x%02x\n", err, reason);
-		return;
-	}
+// 	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
+// 	if (err) {
+// 		uint8_t reason = rsp ?
+// 			((struct bt_hci_rp_read_rssi *)rsp->data)->status : 0;
+// 		printk("Read RSSI err: %d reason 0x%02x\n", err, reason);
+// 		return;
+// 	}
 
-	rp = (void *)rsp->data;
-	*rssi = rp->rssi;
+// 	rp = (void *)rsp->data;
+// 	*rssi = rp->rssi;
 
-	net_buf_unref(rsp);
-}
+// 	net_buf_unref(rsp);
+// }
 
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
-	// printk("ALRIGHT\n");
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 
@@ -627,34 +619,34 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			uint8_t data = buf->data[i];
 		}
 		seq_num = sys_get_le32(count_arr);
-		rtn = buf->data[4];
+		// rtn = buf->data[4];
 
 		ring_buf_put(&PacketBuffer, buf->data, DATA_SIZE_BYTE);
 
-		// if (buf->len > DATA_SIZE_BYTE) { // DOUBLE BUFFERING ACTIVATED
-		// 	for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
-		// 		if(i < 4) {
-		// 			count_arr[i] = buf->data[DATA_SIZE_BYTE + i];
-		// 		}
-		// 		uint8_t data = buf->data[DATA_SIZE_BYTE + i];
-		// 	}
-		// 	seq_num = sys_get_le32(count_arr);
-
-		// 	ring_buf_put(&PacketBuffer, buf->data + DATA_SIZE_BYTE, DATA_SIZE_BYTE);
-		// }
-
-		uint32_t curr = audio_sync_timer_curr_time_get();
-		uint32_t packet_delta = abs(last_recv_packet_ts - curr);
-		uint32_t iso_interval_us = iso_interval * 1.25 * 1000.0;
-		uint8_t lost_packets = (double)packet_delta / (double)iso_interval_us;
-		last_recv_packet_ts = curr;
-		// printk("lost packets:  %u, packet_delta: %u, Packet ID: %u - iso_interval_us: %u\n", lost_packets, packet_delta, seq_num, iso_interval_us);
-		if (lost_packets > 1) {
-			for (uint8_t i = 0; i < lost_packets; i++) {
-				pdr = RollingmAvg(0);
+		if (buf->len > DATA_SIZE_BYTE) { // DOUBLE BUFFERING ACTIVATED
+			for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
+				if(i < 4) {
+					count_arr[i] = buf->data[DATA_SIZE_BYTE + i];
+				}
+				uint8_t data = buf->data[DATA_SIZE_BYTE + i];
 			}
+			seq_num = sys_get_le32(count_arr);
+
+			ring_buf_put(&PacketBuffer, buf->data + DATA_SIZE_BYTE, DATA_SIZE_BYTE);
 		}
-		pdr = RollingmAvg(1);
+
+		// uint32_t curr = audio_sync_timer_curr_time_get();
+		// uint32_t packet_delta = abs(last_recv_packet_ts - curr);
+		// uint32_t iso_interval_us = iso_interval * 1.25 * 1000.0;
+		// uint8_t lost_packets = (double)packet_delta / (double)iso_interval_us;
+		// last_recv_packet_ts = curr;
+		// // printk("lost packets:  %u, packet_delta: %u, Packet ID: %u - iso_interval_us: %u\n", lost_packets, packet_delta, seq_num, iso_interval_us);
+		// if (lost_packets > 1) {
+		// 	for (uint8_t i = 0; i < lost_packets; i++) {
+		// 		pdr = RollingmAvg(0);
+		// 	}
+		// }
+		// pdr = RollingmAvg(1);
 
 		// int8_t rssi = 0;
 		// // uint16_t handle = 0;
@@ -669,7 +661,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		// 	printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
 		// }
 	
-		acl_indicate(pdr);
+		// acl_indicate(pdr);
 		prev_seq_num = seq_num;
 		
 		// if (LED_ON) {
@@ -824,7 +816,7 @@ void main(void)
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
 
 	/* Start PDR Watchdog timer */
-	k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS * 3), K_MSEC(PDR_WATCHDOG_FREQ_MS));
+	// k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS * 3), K_MSEC(PDR_WATCHDOG_FREQ_MS));
 	k_timer_start(&buffer_watchdog, K_NO_WAIT, K_MSEC(20));
 
 	do {
@@ -942,7 +934,7 @@ per_sync_lost_check:
 		err = k_sem_take(&sem_per_sync_lost, K_NO_WAIT);
 		if (err) {
 			/* Periodic Sync active, go back to creating BIG Sync */
-			k_timer_start(&pdr_watchdog, K_MSEC(PDR_WATCHDOG_FREQ_MS), K_MSEC(PDR_WATCHDOG_FREQ_MS)); // start timer again
+			// k_timer_start(&pdr_watchdog, K_NO_WAIT, K_MSEC(PDR_WATCHDOG_FREQ_MS)); // start timer again
 			goto big_sync_create;
 		}
 		// printk("Periodic sync lost.\n");
