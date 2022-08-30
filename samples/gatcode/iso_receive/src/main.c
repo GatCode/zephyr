@@ -38,6 +38,10 @@
 #define PACKET_BUFFER_SIZE 40 // 50 = 1s
 #define PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW 20 // must be min 13 slots to ensure no issues - 50% = 7 packets
 #define PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH 33 // must be min 13 slots to ensure no issue - 50% = 7 packets
+#define ALGO_MAX_THROUGHPUT (1000 / (SDU_INTERVAL_US / 1000)) * DATA_SIZE_BYTE * 8 / 1000
+#define ALGO_HARD_LIMIT 16 // >= 16kbps are needed for LC3
+#define ALGO_SOFT_LIMIT_1 ALGO_MAX_THROUGHPUT * 0.5
+#define ALGO_SOFT_LIMIT_2 ALGO_MAX_THROUGHPUT * 0.8
 
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
@@ -46,6 +50,7 @@ static bool LED_ON = true;
 static double prr = 0.0;
 static int8_t per_adv_rssi = 0;
 static uint8_t per_adv_txp_idx = 0;
+static uint8_t link_quality_idx_proposal = 0;
 
 /* ------------------------------------------------------ */
 /* LEDs */
@@ -173,6 +178,12 @@ static bool iso_just_established = true;
 RING_BUF_DECLARE(PacketBuffer, PACKET_BUFFER_SIZE * DATA_SIZE_BYTE);
 
 static uint8_t last_indicated_opcode = 0;
+static uint8_t last_indicated_link_quality_idx_proposal = 0;
+
+uint32_t get_current_kbps()
+{
+	return (prr / 100) * ALGO_MAX_THROUGHPUT;
+}
 
 void indicate_work_handler(struct k_work *item)
 {
@@ -202,8 +213,8 @@ void indicate_work_handler(struct k_work *item)
 		new_opc = 12; // ignore
 	}
 
-	/* Create Indication */
-	#define CONST_IND_DATA_SIZE 7
+	/* Prepare Indication */
+	#define CONST_IND_DATA_SIZE 2
 	uint8_t ind_data_size = CONST_IND_DATA_SIZE;
 	static uint8_t ind_data[CONST_IND_DATA_SIZE];
 
@@ -213,15 +224,37 @@ void indicate_work_handler(struct k_work *item)
 		last_indicated_opcode = new_opc;
 	}
 
-	uint32_t mantissa = (uint32_t)(prr * 100);
-	uint8_t exponent = (uint8_t)-2;
+	/* Adaptation Algorithm */
+	uint32_t kbps = get_current_kbps();
+	if (per_adv_rssi < -80) {
+		link_quality_idx_proposal = 10;
+	} else {
+		link_quality_idx_proposal = 0;
+	}
+	// if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
+	// 	// increase
+	// 	if ((curr - last_decreased_ts > 1000 && curr - last_decreased_ts > 5000) || kbps < ALGO_HARD_LIMIT) {
+	// 		params_idx = params_idx < 2 ? params_idx + 1 : 2;
+	// 		last_switch_ts = curr;
+	// 	}
+	// } else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
+	// 	// ignore
+	// } else {
+	// 	if (curr - last_switch_ts > 5000 && curr - last_decreased_ts > 5000) { // > 10s
+	// 		// decrease
+	// 		params_idx = params_idx > 0 ? params_idx - 1 : 0;
+	// 		last_decreased_ts = curr;
+	// 	}
+	// }
 
-	ind_data[0] = 0;
-	sys_put_le24(mantissa, (uint8_t *)&ind_data[1]);
-	ind_data[4] = exponent;
-	ind_data[5] = abs(per_adv_rssi);
-	ind_data[6] = new_opc;
+	if (last_indicated_link_quality_idx_proposal == link_quality_idx_proposal && ind_data_size != CONST_IND_DATA_SIZE) {
+		return;
+	}
+	last_indicated_link_quality_idx_proposal = link_quality_idx_proposal;
 
+	/* Create Indication */
+	ind_data[0] = link_quality_idx_proposal;
+	ind_data[1] = new_opc;
 	ind_params.attr = &hts_svc.attrs[2];
 	ind_params.data = &ind_data;
 	ind_params.len = sizeof(uint8_t) * ind_data_size;
@@ -444,7 +477,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 static void iso_connected(struct bt_iso_chan *chan)
 {
-	iso_just_established = true;
 	k_sem_give(&sem_big_sync);
 }
 

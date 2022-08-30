@@ -34,20 +34,9 @@
 #define ADJ_PRIORITY 20
 
 /* ------------------------------------------------------ */
-/* Defines Algorithm */
-/* ------------------------------------------------------ */
-#define ENABLE_RANGE_EXTENSION_ALGORITHM true
-
-#define ALGO_MAX_THROUGHPUT (1000 / (SDU_INTERVAL_US / 1000)) * DATA_SIZE_BYTE * 8 / 1000
-#define ALGO_HARD_LIMIT 16 // >= 16kbps are needed for LC3
-#define ALGO_SOFT_LIMIT_1 ALGO_MAX_THROUGHPUT * 0.5
-#define ALGO_SOFT_LIMIT_2 ALGO_MAX_THROUGHPUT * 0.8
-
-/* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
-static double prr = 0.0;
-static int8_t acl_rssi = 0;
+static uint8_t link_quality_idx_proposal = 0;
 uint8_t param_setting = 0;
 static bool LED_ON = true;
 
@@ -204,13 +193,10 @@ static uint8_t notify_func(struct bt_conn *conn,
 		return BT_GATT_ITER_STOP;
 	}
 
-	uint32_t mantissa = sys_get_le24(&((uint8_t *)data)[1]);
-	int8_t exponent = ((uint8_t *)data)[4];
-	prr = (double)mantissa * pow(10, exponent);
-	acl_rssi = -((uint8_t *)data)[5];
+	link_quality_idx_proposal = ((uint8_t *)data)[0];
 
-	if (length >= 7) { // Opcode Received
-		uint8_t curr_opcode = ((uint8_t *)data)[6];
+	if (length >= 2) { // Opcode Received
+		uint8_t curr_opcode = ((uint8_t *)data)[1];
 		if (curr_opcode == 10) { // buffer reached B
 			buffer_reached_B = true;
 		} else if (curr_opcode == 11) { // buffer reached A
@@ -221,7 +207,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 		}
 	}
 
-	printk("Received PRR: %.2f%% - ACL RSSI: %d\n", prr, acl_rssi);
+	printk("link_quality_idx_proposal: %u\n", link_quality_idx_proposal);
 	
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -421,11 +407,6 @@ static struct bt_iso_big_create_param big_create_param = {
 K_THREAD_STACK_DEFINE(adj_stack_area, STACKSIZE);
 static struct k_thread adj_thread;
 
-uint32_t get_current_kbps()
-{
-	return (prr / 100) * ALGO_MAX_THROUGHPUT;
-}
-
 struct broadcast_parameters
 {
     uint8_t txp;
@@ -433,7 +414,6 @@ struct broadcast_parameters
 };
 static struct broadcast_parameters params[3] = {{0,2}, {0,4}, {1,8}};
 static uint8_t params_idx = 0;
-static uint32_t last_switch_ts = 0;
 static uint32_t last_decreased_ts = 0;
 
 void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
@@ -487,24 +467,6 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 			k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
 			// printk("REVERT TO NORMAL SPEED!\n");
 		}
-
-		// uint32_t kbps = get_current_kbps();
-
-		// if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
-		// 	// increase
-		// 	if ((curr - last_decreased_ts > 1000 && curr - last_decreased_ts > 5000) || kbps < ALGO_HARD_LIMIT) {
-		// 		params_idx = params_idx < 2 ? params_idx + 1 : 2;
-		// 		last_switch_ts = curr;
-		// 	}
-		// } else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
-		// 	// ignore
-		// } else {
-		// 	if (curr - last_switch_ts > 5000 && curr - last_decreased_ts > 5000) { // > 10s
-		// 		// decrease
-		// 		params_idx = params_idx > 0 ? params_idx - 1 : 0;
-		// 		last_decreased_ts = curr;
-		// 	}
-		// }
 
 		// increase / decrease
 		else if (curr - last_decreased_ts > 2000) { //(param_setting != params_idx) {
@@ -570,31 +532,31 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 			param_setting = params_idx;
 		}
 		
-		if (LED_ON) {
-			if (prr > 20) {
-				gpio_pin_set_dt(&led1, 1);
-			} else {
-				gpio_pin_set_dt(&led1, 0);
-			}
+		// if (LED_ON) {
+		// 	if (prr > 20) {
+		// 		gpio_pin_set_dt(&led1, 1);
+		// 	} else {
+		// 		gpio_pin_set_dt(&led1, 0);
+		// 	}
 
-			if (prr > 40) {
-				gpio_pin_set_dt(&led2, 1);
-			} else {
-				gpio_pin_set_dt(&led2, 0);
-			}
+		// 	if (prr > 40) {
+		// 		gpio_pin_set_dt(&led2, 1);
+		// 	} else {
+		// 		gpio_pin_set_dt(&led2, 0);
+		// 	}
 
-			if (prr > 60) {
-				gpio_pin_set_dt(&led3, 1);
-			} else {
-				gpio_pin_set_dt(&led3, 0);
-			}
+		// 	if (prr > 60) {
+		// 		gpio_pin_set_dt(&led3, 1);
+		// 	} else {
+		// 		gpio_pin_set_dt(&led3, 0);
+		// 	}
 
-			if (prr > 80) {
-				gpio_pin_set_dt(&led4, 1);
-			} else {
-				gpio_pin_set_dt(&led4, 0);
-			}
-		}
+		// 	if (prr > 80) {
+		// 		gpio_pin_set_dt(&led4, 1);
+		// 	} else {
+		// 		gpio_pin_set_dt(&led4, 0);
+		// 	}
+		// }
 	}
 }
 
