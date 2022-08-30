@@ -47,10 +47,8 @@
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
-static double pdr = 0.0;
-static double pdr_after = 0.0;
-static double last_indicated_pdr = 0.0;
 static bool LED_ON = true;
+static double prr = 0.0;
 
 /* ------------------------------------------------------ */
 /* LEDs */
@@ -280,7 +278,7 @@ void indicate_work_handler(struct k_work *item)
 	uint32_t mantissa;
 	uint8_t exponent;
 
-	mantissa = (uint32_t)(pdr_after * 100);
+	mantissa = (uint32_t)(prr * 100);
 	exponent = (uint8_t)-2;
 
 	htm[0] = 0;
@@ -293,7 +291,6 @@ void indicate_work_handler(struct k_work *item)
 	ind_params.len = sizeof(htm);
 	ind_params.func = &acl_indication_finished1;
 	(void)bt_gatt_indicate(NULL, &ind_params);
-	last_indicated_pdr = pdr_after;
 
 	uint32_t free_slots = ring_buf_space_get(&PacketBuffer) / DATA_SIZE_BYTE;
 	static uint8_t htm2;
@@ -322,47 +319,10 @@ void indicate_work_handler(struct k_work *item)
 	(void)bt_gatt_indicate(NULL, &ind_params2);
 
 	last_indicated_opcode = htm2;
-
-	// /* Probe with lower TXP */
-	// err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
-	// if (err) {
-	// 	printk("failed (err %d)\n", err);
-	// 	return;
-	// }
-
-	// err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, currentTXP - 1);
-	// if (err) {
-	// 	printk("Failed to set tx power (err %d)\n", err);
-	// 	return;
-	// }
-
-	// static uint8_t htm2;
-	// htm2 = 1;
-
-	// probing2_departure = k_uptime_get_32();
-	// ind_params2.attr = &hts_svc.attrs[2];
-	// ind_params2.data = &htm2;
-	// ind_params2.len = sizeof(htm2);
-	// ind_params2.func = &acl_indication_finished2;
-	// (void)bt_gatt_indicate(NULL, &ind_params2);
-
-	// err = k_sem_take(&sem_probing_finished_2, K_FOREVER);
-	// if (err) {
-	// 	printk("failed (err %d)\n", err);
-	// 	return;
-	// }
-
-	// /* Check if it's safe to downgrade the TXP */
-	// uint8_t highReading = probing1_arrival-probing1_departure;
-	// uint8_t lowReading = probing2_arrival-probing2_departure;
-	// printk("Higher: %u, Lower: %u, H stable: %u, L stable: %u\n", highReading, lowReading, txp_readings_stable(highReading, true), txp_readings_stable(highReading, false));
-
-
-	last_indicated_pdr = pdr;
 }
 K_WORK_DEFINE(indicate_work, indicate_work_handler);
 
-void acl_indicate(double pdr)
+void acl_indicate()
 {
 	k_work_submit(&indicate_work);
 }
@@ -388,6 +348,9 @@ static uint16_t     per_interval_ms;
 
 static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
+
+static int8_t per_adv_rssi = 0;
+static uint8_t per_adv_txp_idx = 0;
 
 static K_SEM_DEFINE(sem_per_adv, 0, 1);
 static K_SEM_DEFINE(sem_per_sync, 0, 1);
@@ -436,7 +399,8 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 
 static void recv_cb(struct bt_le_per_adv_sync *sync, const struct bt_le_per_adv_sync_recv_info *info, struct net_buf_simple *buf)
 {
-	printk("rssi: %d, tx_power index: %d\n", info->rssi, get_hci_vsc_tx_pwr_idx(info->tx_power));
+	per_adv_rssi = info->rssi;
+	per_adv_txp_idx = get_hci_vsc_tx_pwr_idx(info->tx_power);
 }
 
 static struct bt_le_per_adv_sync_cb sync_callbacks = {
@@ -499,22 +463,24 @@ void buffer_timer_handler(struct k_timer *dummy)
 
 		if (seq_num - 1 != prev_seq_num && prev_seq_num < seq_num) {
 			for (uint8_t i = 0; i < seq_num - prev_seq_num; i++) {
-				pdr_after = RollingmAvg(0);
+				prr = RollingmAvg(0);
 			}
 		} else {
-			pdr_after = RollingmAvg(1);
+			prr = RollingmAvg(1);
 		}
 
-		acl_indicate(pdr_after);
-	
-		// printk("Buffer occupied: %u out of %u - prr: %.02f%% - new prr: %.02f%% - seq_num: %u", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, pdr, pdr_after, seq_num);
-		// if (seq_num - 1 != prev_seq_num) {
-		// 	printk(" - LOST\n");
-		// } else {
-		// 	printk("\n");
-		// }
+		acl_indicate(prr);
+
+		printk("Buffer occupied: %u out of %u - prr: %.02f%% - seq_num: %u - rssi: %d, tx_power index: %d", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, prr, seq_num, per_adv_rssi, per_adv_txp_idx);
+		if (seq_num - 1 != prev_seq_num) {
+			printk(" - LOST\n");
+		} else {
+			printk("\n");
+		}
 
 		prev_seq_num = seq_num;
+	} else {
+		prr = RollingmAvg(0);
 	}
 }
 K_TIMER_DEFINE(buffer_timer, buffer_timer_handler, NULL);
@@ -546,35 +512,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 			ring_buf_put(&PacketBuffer, buf->data + DATA_SIZE_BYTE, DATA_SIZE_BYTE);
 		}
-
-		// uint32_t curr = audio_sync_timer_curr_time_get();
-		// uint32_t packet_delta = abs(last_recv_packet_ts - curr);
-		// uint32_t iso_interval_us = sdu_interval * 1.25 * 1000.0;
-		// uint8_t lost_packets = (double)packet_delta / (double)iso_interval_us;
-		// last_recv_packet_ts = curr;
-		// // printk("lost packets:  %u, packet_delta: %u, Packet ID: %u - iso_interval_us: %u\n", lost_packets, packet_delta, seq_num, iso_interval_us);
-		// if (lost_packets > 1) {
-		// 	for (uint8_t i = 0; i < lost_packets; i++) {
-		// 		pdr = RollingmAvg(0);
-		// 	}
-		// }
-		// pdr = RollingmAvg(1);
-
-		// int8_t rssi = 0;
-		// // uint16_t handle = 0;
-		// // bt_hci_get_conn_handle(chan->iso, &handle);
-		// // read_conn_rssi(handle, &rssi);
-		// // printk("rssi: %d\n", rssi);
-
-		
-		// if (seq_num - 1 != prev_seq_num) {
-		// 	printk("PDR: %.2f%% - seq: %u - LOST\n", pdr, seq_num);
-		// } else {
-		// 	printk("PDR: %.2f%% - seq: %u\n", pdr, seq_num);
-		// }
-	
-		// acl_indicate(pdr);
-		// prev_seq_num = seq_num;
 		
 		// if (LED_ON) {
 		// 	if (pdr > 20) {
@@ -601,11 +538,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		// 		gpio_pin_set_dt(&led4, 0);
 		// 	}
 		// }
-
-		// uint32_t info_ts = info->ts;
-		// uint32_t curr = audio_sync_timer_curr_time_get();
-		// uint32_t delta = curr - info_ts;
-		// k_timer_start(&recv_packet, K_USEC(delta), K_NO_WAIT);
 	}
 }
 
