@@ -28,11 +28,6 @@
 #define ACL_PRIORITY 10
 
 /* ------------------------------------------------------ */
-/* Defines R3 Concept */
-/* ------------------------------------------------------ */
-#define ACL_TXP 13 // +3dBm
-
-/* ------------------------------------------------------ */
 /* PRR Calculation */
 /* ------------------------------------------------------ */
 #define PRR_MAVG_WINDOW_SIZE 50
@@ -49,6 +44,8 @@
 /* ------------------------------------------------------ */
 static bool LED_ON = true;
 static double prr = 0.0;
+static int8_t per_adv_rssi = 0;
+static uint8_t per_adv_txp_idx = 0;
 
 /* ------------------------------------------------------ */
 /* LEDs */
@@ -93,8 +90,7 @@ static struct bt_conn *acl_conn;
 		BT_GAP_ADV_FAST_INT_MAX_1, NULL)
 
 static struct bt_gatt_indicate_params ind_params;
-static struct bt_gatt_indicate_params ind_params1;
-static struct bt_gatt_indicate_params ind_params2;
+
 static K_SEM_DEFINE(acl_connected, 0, 1);
 
 static const struct bt_data ad[] = {
@@ -161,7 +157,7 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 
 	/* Set MAX TX power */
 	init_ble_hci_vsc_tx_pwr();
-	int err = ble_hci_vsc_set_tx_pwr(ACL_TXP);
+	int err = ble_hci_vsc_set_tx_pwr(13);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
@@ -172,85 +168,6 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 }
 
 static K_SEM_DEFINE(txp_finish_sem, 0, 1);
-
-static uint32_t txp_work_set_txp = ACL_TXP;
-
-void txp_set_work(struct k_work *item)
-{
-	// probe with current txp
-	int err = ble_hci_vsc_set_tx_pwr(txp_work_set_txp); // +3dBm
-	if (err) {
-		printk("Failed to set tx power (err %d)\n", err);
-		return;
-	}
-
-	k_sem_give(&txp_finish_sem);
-}
-K_WORK_DEFINE(txp_work, txp_set_work);
-
-static uint32_t probing1_departure = 0;
-static uint32_t probing1_arrival = 0;
-static uint32_t probing2_departure = 0;
-static uint32_t probing2_arrival = 0;
-
-static K_SEM_DEFINE(sem_probing_finished_1, 0, 1);
-static K_SEM_DEFINE(sem_probing_finished_2, 0, 1);
-
-void acl_indication_finished1(struct bt_conn *conn,
-					struct bt_gatt_indicate_params *params,
-					uint8_t err)
-{
-	probing1_arrival = k_uptime_get_32();
-	k_sem_give(&sem_probing_finished_1);
-}
-
-
-void acl_indication_finished2(struct bt_conn *conn,
-					struct bt_gatt_indicate_params *params,
-					uint8_t err)
-{
-	probing2_arrival = k_uptime_get_32();
-	k_sem_give(&sem_probing_finished_2);
-}
-
-static uint32_t lastExecTs = 0;
-static uint8_t currentTXP = ACL_TXP; // start with max TXP
-
-static uint16_t txp_delay_values_high[10] = {0};
-static uint16_t txp_delay_values_low[10] = {0};
-static uint64_t txp_delay_current_position_high = 0;
-static uint64_t txp_delay_current_position_low = 0;
-
-bool txp_readings_stable(uint8_t txp_reading, bool high_reading)
-{
-	if (high_reading) {
-		txp_delay_values_high[txp_delay_current_position_high] = txp_reading;
-		txp_delay_current_position_high++;
-		if (txp_delay_current_position_high >= sizeof(txp_delay_values_high) / sizeof(txp_delay_values_high[0])) {
-			txp_delay_current_position_high = 0;
-		}
-	} else {
-		txp_delay_values_low[txp_delay_current_position_low] = txp_reading;
-		txp_delay_current_position_low++;
-		if (txp_delay_current_position_low >= sizeof(txp_delay_values_low) / sizeof(txp_delay_values_low[0])) {
-			txp_delay_current_position_low = 0;
-		}
-	}
-
-	for (uint8_t i = 0; i < 10; i++) {
-		if (high_reading) {
-			if (txp_delay_values_high[i] != txp_delay_values_high[0]) {
-				return false;
-			}
-		} else {
-			if (txp_delay_values_low[i] != txp_delay_values_low[0]) {
-				return false;
-			}
-		}
-	}
-		
-	return true;
-}
 
 static bool iso_just_established = true;
 RING_BUF_DECLARE(PacketBuffer, PACKET_BUFFER_SIZE * DATA_SIZE_BYTE);
@@ -267,58 +184,48 @@ void indicate_work_handler(struct k_work *item)
 		return;
 	}
 
-	/* Probe current TXP and Indicate */
-	err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, currentTXP); // +3dBm
+	/* Set TXP */
+	err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, per_adv_txp_idx);
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;
 	}
 
-	static uint8_t htm[5];
-	uint32_t mantissa;
-	uint8_t exponent;
-
-	mantissa = (uint32_t)(prr * 100);
-	exponent = (uint8_t)-2;
-
-	htm[0] = 0;
-	sys_put_le24(mantissa, (uint8_t *)&htm[1]);
-	htm[4] = exponent;
-
-	probing1_departure = k_uptime_get_32();
-	ind_params.attr = &hts_svc.attrs[2];
-	ind_params.data = &htm;
-	ind_params.len = sizeof(htm);
-	ind_params.func = &acl_indication_finished1;
-	(void)bt_gatt_indicate(NULL, &ind_params);
-
+	/* Determine Opcode */
+	uint8_t new_opc = 0;
 	uint32_t free_slots = ring_buf_space_get(&PacketBuffer) / DATA_SIZE_BYTE;
-	static uint8_t htm2;
-
 	if (PACKET_BUFFER_SIZE - free_slots > PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH) {
-		htm2 = 10; // ready for downshift
+		new_opc = 10; // ready for downshift
 	} else if (PACKET_BUFFER_SIZE - free_slots > PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW) {
-		htm2 = 11; // normal buffering speed - ready for next adjustment
+		new_opc = 11; // normal buffering speed - ready for next adjustment
 	} else {
-		htm2 = 12; // ignore
+		new_opc = 12; // ignore
 	}
 
-	if (last_indicated_opcode == htm2) {
-		return; // only indicate changes
-	}
-	
-	err = k_sem_take(&sem_probing_finished_1, K_FOREVER);
-	if (err) {
-		printk("failed (err %d)\n", err);
-		return;
+	/* Create Indication */
+	#define CONST_IND_DATA_SIZE 7
+	uint8_t ind_data_size = CONST_IND_DATA_SIZE;
+	static uint8_t ind_data[CONST_IND_DATA_SIZE];
+
+	if (last_indicated_opcode == new_opc) { // don't indicate the same opcode twice
+		ind_data_size = ind_data_size - 1;
+	} else {
+		last_indicated_opcode = new_opc;
 	}
 
-	ind_params2.attr = &hts_svc.attrs[2];
-	ind_params2.data = &htm2;
-	ind_params2.len = sizeof(htm2);
-	(void)bt_gatt_indicate(NULL, &ind_params2);
+	uint32_t mantissa = (uint32_t)(prr * 100);
+	uint8_t exponent = (uint8_t)-2;
 
-	last_indicated_opcode = htm2;
+	ind_data[0] = 0;
+	sys_put_le24(mantissa, (uint8_t *)&ind_data[1]);
+	ind_data[4] = exponent;
+	ind_data[5] = abs(per_adv_rssi);
+	ind_data[6] = new_opc;
+
+	ind_params.attr = &hts_svc.attrs[2];
+	ind_params.data = &ind_data;
+	ind_params.len = sizeof(uint8_t) * ind_data_size;
+	(void)bt_gatt_indicate(NULL, &ind_params);
 }
 K_WORK_DEFINE(indicate_work, indicate_work_handler);
 
@@ -348,9 +255,6 @@ static uint16_t     per_interval_ms;
 
 static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
-
-static int8_t per_adv_rssi = 0;
-static uint8_t per_adv_txp_idx = 0;
 
 static K_SEM_DEFINE(sem_per_adv, 0, 1);
 static K_SEM_DEFINE(sem_per_sync, 0, 1);
@@ -449,7 +353,7 @@ void buffer_timer_handler(struct k_timer *dummy)
 	
 	if (!ring_buf_is_empty(&PacketBuffer)) {
 		uint8_t data[DATA_SIZE_BYTE];
-		ring_buf_get(&PacketBuffer, &data, DATA_SIZE_BYTE);
+		ring_buf_get(&PacketBuffer, (uint8_t*)&data, DATA_SIZE_BYTE);
 
 		uint8_t count_arr[4];
 		for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
@@ -471,17 +375,16 @@ void buffer_timer_handler(struct k_timer *dummy)
 
 		acl_indicate(prr);
 
-		printk("Buffer occupied: %u out of %u - prr: %.02f%% - seq_num: %u - rssi: %d, tx_power index: %d", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, prr, seq_num, per_adv_rssi, per_adv_txp_idx);
 		if (seq_num - 1 != prev_seq_num) {
-			printk(" - LOST\n");
-		} else {
-			printk("\n");
+			printk("LOST - ");
 		}
 
 		prev_seq_num = seq_num;
 	} else {
 		prr = RollingmAvg(0);
 	}
+
+	printk("Buffer occupied: %u out of %u - prr: %.02f%% - seq_num: %u - rssi: %d, tx_power index: %d\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, prr, seq_num, per_adv_rssi, per_adv_txp_idx);
 }
 K_TIMER_DEFINE(buffer_timer, buffer_timer_handler, NULL);
 
@@ -495,7 +398,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			if(i < 4) {
 				count_arr[i] = buf->data[i];
 			}
-			uint8_t data = buf->data[i];
 		}
 		seq_num = sys_get_le32(count_arr);
 
@@ -506,7 +408,6 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 				if(i < 4) {
 					count_arr[i] = buf->data[DATA_SIZE_BYTE + i];
 				}
-				uint8_t data = buf->data[DATA_SIZE_BYTE + i];
 			}
 			seq_num = sys_get_le32(count_arr);
 
@@ -543,6 +444,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 
 static void iso_connected(struct bt_iso_chan *chan)
 {
+	iso_just_established = true;
 	k_sem_give(&sem_big_sync);
 }
 

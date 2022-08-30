@@ -47,6 +47,7 @@
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static double prr = 0.0;
+static int8_t acl_rssi = 0;
 uint8_t param_setting = 0;
 static bool LED_ON = true;
 
@@ -84,7 +85,6 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t
 static struct bt_uuid_16 uuid = BT_UUID_INIT_16(0);
 static struct bt_gatt_discover_params discover_params;
 static struct bt_gatt_subscribe_params subscribe_params;
-static uint32_t last_recv_packet_ts = 0;
 
 #define DEVICE_NAME_ACL "nRF5340"
 #define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
@@ -198,22 +198,19 @@ static uint8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
 			   const void *data, uint16_t length)
 {
-	double value_recv;
-	uint32_t mantissa;
-	int8_t exponent;
-
 	if (!data) {
 		printk("[UNSUBSCRIBED]\n");
 		params->value_handle = 0U;
 		return BT_GATT_ITER_STOP;
 	}
 
-	if (length > 4) { // PRR
-		mantissa = sys_get_le24(&((uint8_t *)data)[1]);
-		exponent = ((uint8_t *)data)[4];
-		prr = (double)mantissa * pow(10, exponent);
-	} else { // OPCODES
-		uint8_t curr_opcode = ((uint8_t *)data)[0];
+	uint32_t mantissa = sys_get_le24(&((uint8_t *)data)[1]);
+	int8_t exponent = ((uint8_t *)data)[4];
+	prr = (double)mantissa * pow(10, exponent);
+	acl_rssi = -((uint8_t *)data)[5];
+
+	if (length >= 7) { // Opcode Received
+		uint8_t curr_opcode = ((uint8_t *)data)[6];
 		if (curr_opcode == 10) { // buffer reached B
 			buffer_reached_B = true;
 		} else if (curr_opcode == 11) { // buffer reached A
@@ -222,11 +219,9 @@ static uint8_t notify_func(struct bt_conn *conn,
 			buffer_reached_A = false;
 			buffer_reached_B = false;
 		}
-
-		last_recv_packet_ts = k_uptime_get_32();
 	}
 
-	printk("Received PRR: %.2f%%\n", prr);
+	printk("Received PRR: %.2f%% - ACL RSSI: %d\n", prr, acl_rssi);
 	
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -365,12 +360,12 @@ void send_handler(struct k_timer *self)
 		memcpy(iso_data_double_buffer, iso_data, DATA_SIZE_BYTE);
 		memcpy(iso_data_double_buffer + DATA_SIZE_BYTE, iso_data_second, DATA_SIZE_BYTE);
 		net_buf_add_mem(buf, iso_data_double_buffer, sizeof(iso_data_double_buffer));
-		printk("Sent seq_num: %u\n", seq_num - 1);
-		printk("Sent seq_num: %u\n", seq_num);
+		// printk("Sent seq_num: %u\n", seq_num - 1);
+		// printk("Sent seq_num: %u\n", seq_num);
 	} else {
 		sys_put_le32(++seq_num, iso_data);
 		net_buf_add_mem(buf, iso_data, sizeof(iso_data));
-		printk("Sent seq_num: %u\n", seq_num);
+		// printk("Sent seq_num: %u\n", seq_num);
 	}
 
 	int ret = bt_iso_chan_send(&bis_iso_chan, buf);
