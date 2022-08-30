@@ -759,7 +759,7 @@ void main(void)
 		sync_create_param.options = 0;
 		sync_create_param.sid = per_sid;
 		sync_create_param.skip = 0;
-		sync_create_param.timeout = (per_interval_ms * PA_RETRY_COUNT) / 10;
+		sync_create_param.timeout = 10000; //(per_interval_ms * PA_RETRY_COUNT) / 10;
 		sem_timeout = per_interval_ms * PA_RETRY_COUNT;
 		err = bt_le_per_adv_sync_create(&sync_create_param, &sync);
 		if (err) {
