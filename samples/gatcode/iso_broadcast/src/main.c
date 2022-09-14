@@ -48,6 +48,7 @@
 /* ------------------------------------------------------ */
 static uint8_t iso_receiver_rssi = 0;
 static uint8_t acl_rssi = 0;
+static uint8_t prr = 0;
 uint8_t param_setting = 0;
 static bool LED_ON = true;
 static const struct isochronous_parameter_lut init_iso_lut_setting = iso_lut[DYN_ADA_ALGO_START_SETTING_INDEX];
@@ -212,6 +213,7 @@ void work_scan_start(struct k_work *item)
 K_WORK_DEFINE(start_scan_work, work_scan_start);
 
 static bool double_sending_rate_activated = false;
+static bool  refill_needed = false;
 static bool buffer_reached_A = false;
 static bool buffer_reached_B = false;
 
@@ -257,19 +259,24 @@ static uint8_t notify_func(struct bt_conn *conn,
 	}
 
 	iso_receiver_rssi = RollingMAvg8Bit(&rssi_mavg, ((uint8_t *)data)[0]);
+	prr = ((uint8_t *)data)[1];
 
 	int8_t rssi = 0;
  	uint16_t handle = 0;
  	bt_hci_get_conn_handle(conn, &handle);
  	read_conn_rssi(handle, &rssi);
-	acl_rssi = RollingMAvg8Bit(&acl_rssi_mavg, (uint8_t)-rssi);;
+	acl_rssi = RollingMAvg8Bit(&acl_rssi_mavg, (uint8_t)-rssi);
 
-	if (length >= 2) { // Opcode Received
-		uint8_t curr_opcode = ((uint8_t *)data)[1];
+	if (length >= 3) { // Opcode Received
+		uint8_t curr_opcode = ((uint8_t *)data)[2];
 		if (curr_opcode == 10) { // buffer reached B
 			buffer_reached_B = true;
 		} else if (curr_opcode == 11) { // buffer reached A
 			buffer_reached_A = true;
+		} else if (curr_opcode == 12) { // refill needed
+			refill_needed = true;
+			buffer_reached_A = false;
+			buffer_reached_B = false;
 		} else {
 			buffer_reached_A = false;
 			buffer_reached_B = false;
@@ -475,9 +482,9 @@ static struct bt_iso_big_create_param big_create_param = {
 /* ------------------------------------------------------ */
 /* LUT + DYN ADAPTATION ALGO */
 /* ------------------------------------------------------ */
-bool is_lut_identical(struct isochronous_parameter_lut l1, struct isochronous_parameter_lut l2)
+bool is_lut_identical(struct isochronous_parameter_lut *l1, struct isochronous_parameter_lut *l2)
 {
-	return l1.txp == l2.txp && l1.rtn == l2.rtn;
+	return (l1->txp == l2->txp) && (l1->rtn == l2->rtn);
 }
 
 uint8_t get_index_of_lut_setting(struct isochronous_parameter_lut lut)
@@ -492,12 +499,22 @@ uint8_t get_index_of_lut_setting(struct isochronous_parameter_lut lut)
 	return 0;
 }
 
+uint8_t get_rssi_offset_from_baseline(uint8_t current_txp)
+{
+	return current_txp - iso_lut[0].txp;
+}
+
+static uint32_t last_adjusted_ts = 0;
+
 void select_best_lut_value()
 {
+	// prr
 	// iso_receiver_rssi
 	// acl_rssi
 	// curr_iso_lut_setting.txp
 	// curr_iso_lut_setting.rtn
+
+	uint32_t curr = k_uptime_get_32();
 
 	uint8_t lut_size = sizeof(iso_lut) / sizeof(iso_lut[0]);
 	uint8_t curr_lut_setting_idx = get_index_of_lut_setting(curr_iso_lut_setting);
@@ -513,24 +530,55 @@ void select_best_lut_value()
 	int8_t possible_rssi_move_upshift = higher_setting.txp - current_setting.txp; // go higher
 
 	/* Expected RSSI Values after Up or Downshift */
+	uint8_t rssi_offset = get_rssi_offset_from_baseline(curr_iso_lut_setting.txp); // iso_receiver_rssi doesn't chane - calc needed
+
 	uint8_t iso_recv_rssi_after_downshift = iso_receiver_rssi + possible_rssi_move_downshift;
 	uint8_t acl_recv_rssi_after_downshift = acl_rssi + possible_rssi_move_downshift;
 	uint8_t iso_recv_rssi_after_upshift = iso_receiver_rssi + possible_rssi_move_upshift;
 	uint8_t acl_recv_rssi_after_upshift = acl_rssi + possible_rssi_move_upshift;
 
-	// printk("L: %u | C: %u | H: %u | possible_rssi_loss: %d | possible_rssi_gain: %d\n", get_index_of_lut_setting(lower_setting), curr_lut_setting_idx, get_index_of_lut_setting(higher_setting), possible_rssi_loss, possible_rssi_gain);
+	uint8_t rssi_after_downshift = (iso_recv_rssi_after_downshift - rssi_offset + acl_recv_rssi_after_downshift) / 2;
+	uint8_t rssi_after_upshift = (iso_recv_rssi_after_upshift - rssi_offset + acl_recv_rssi_after_upshift) / 2;
+	uint8_t rssi = (iso_receiver_rssi - rssi_offset + acl_rssi) / 2; // MEAN RSSI OF ISO and ACL
 
-	if (curr_lut_setting_idx == lut_size - 1) {
-		curr_lut_setting_idx = 0;
-	} else {
-		curr_lut_setting_idx++;
+	uint8_t rssi_threshold = 60;
+
+	// if (prr < 95) {
+	// 	curr_lut_setting_idx = lut_size - 1; // MAX SETTING
+	// } else if ((rssi > rssi_threshold || prr < 99) && (curr - last_adjusted_ts) > 50000) {
+	// 	curr_lut_setting_idx = MIN(curr_lut_setting_idx + 1, lut_size - 1); // HIGHER
+	// } else if (prr > 99 && rssi_after_downshift < rssi_threshold && (curr - last_adjusted_ts) > 5000) {
+	// 	curr_lut_setting_idx = MAX(curr_lut_setting_idx - 1, 0); // LOWER
+	// }
+
+	// TODO: Calculate Trend - if trend falls - increase setting - only if flat optimize power
+	// TODO: Calculate Trend for RSSI too - detect movement
+
+	if (prr < 95) {
+		curr_lut_setting_idx = lut_size - 1; // MAX SETTING
+	} if ((rssi > rssi_threshold || prr < 99) && (curr - last_adjusted_ts) > 50000) {
+		curr_lut_setting_idx = MIN(curr_lut_setting_idx + 1, lut_size - 1); // HIGHER
+	} else if (prr > 96 && prr < 99) {
+		// DO NOTHING
+	} else if (prr > 99 && rssi_after_downshift < rssi_threshold && (curr - last_adjusted_ts) > 5000) {
+		curr_lut_setting_idx = MAX(curr_lut_setting_idx - 1, 0); // LOWER
 	}
+	
+	// if (rssi > 80) {
+	// 	curr_lut_setting_idx = MIN(curr_lut_setting_idx++, lut_size);
+	// 	// curr_lut_setting_idx = 5;
+	// }
+
+	/* Enable for testing purposes */
+	// if (curr_lut_setting_idx == lut_size - 1) {
+	// 	curr_lut_setting_idx = 0;
+	// } else {
+	// 	curr_lut_setting_idx++;
+	// }
 	curr_iso_lut_setting = iso_lut[curr_lut_setting_idx];
 
-
-	// double possible_delta_prr_loss = curr_iso_lut_setting.delta_prr - 
-
-	// printk("iso_receiver_rssi: -%u | acl_rssi: -%u\n", iso_receiver_rssi, acl_rssi);
+	printk("rssi: -%u | iso_receiver_rssi: -%u | acl_rssi: -%u | PRR: %u | curr_lut_setting_idx: %u\n", rssi, iso_receiver_rssi - rssi_offset, acl_rssi, prr, curr_lut_setting_idx);
+	// PRR must be > 94% - LC3plus can't handle more than 6% loss!
 }
 
 /* ------------------------------------------------------ */
@@ -538,7 +586,6 @@ void select_best_lut_value()
 /* ------------------------------------------------------ */
 K_THREAD_STACK_DEFINE(adj_stack_area, STACKSIZE);
 static struct k_thread adj_thread;
-// static uint32_t last_decreased_ts = 0;
 
 void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 {
@@ -547,6 +594,8 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 	ARG_UNUSED(dummy3);
 
 	int err;
+
+	k_sleep(K_MSEC(1000)); // Start just a bit later to avoid race conditions
 
 	while(1) {
 		uint32_t curr = k_uptime_get_32();
@@ -598,69 +647,69 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 #endif
 
 		// increase / decrease
-		// if (!is_lut_identical(curr_iso_lut_setting, prev_iso_lut_setting)) { // (curr - last_decreased_ts > 2000) { //(param_setting != params_idx) {
-		// 	// last_decreased_ts = curr;
-		// 	// printk("params_idx %u\n", params_idx);
-		// 	printk("ISO LUT CHANGEEEEEEEEEEEEEEEEE\n");
+		if (!is_lut_identical(&curr_iso_lut_setting, &prev_iso_lut_setting) || refill_needed) {
+			last_adjusted_ts = curr;
+			refill_needed = false;
+			printk("ISO LUT CHANGEEEEEEEEEEEEEEEEE\n");
 
-		// 	k_timer_stop(&send_timer);
-		// 	err = k_sem_take(&sem_send_handler_stopped, K_FOREVER);
-		// 	if (err) {
-		// 		printk("sem_big_term failed (err %d)\n", err);
-		// 		return;
-		// 	}
-		// 	// k_timer_status_sync(&send_timer); // wait until stopped
+			k_timer_stop(&send_timer);
+			err = k_sem_take(&sem_send_handler_stopped, K_FOREVER);
+			if (err) {
+				printk("sem_big_term failed (err %d)\n", err);
+				return;
+			}
+			// k_timer_status_sync(&send_timer); // wait until stopped
 
-		// 	err = bt_iso_big_terminate(big);
-		// 	if (err) {
-		// 		printk("bt_iso_big_terminate failed (err %d)\n", err);
-		// 		return;
-		// 	}
+			err = bt_iso_big_terminate(big);
+			if (err) {
+				printk("bt_iso_big_terminate failed (err %d)\n", err);
+				return;
+			}
 
-		// 	err = k_sem_take(&sem_big_term, K_FOREVER);
-		// 	if (err) {
-		// 		printk("sem_big_term failed (err %d)\n", err);
-		// 		return;
-		// 	}
+			err = k_sem_take(&sem_big_term, K_FOREVER);
+			if (err) {
+				printk("sem_big_term failed (err %d)\n", err);
+				return;
+			}
 
-		// 	err = bt_le_ext_adv_stop(adv);
-		// 	if (err) {
-		// 		printk("Failed to start extended advertising (err %d)\n", err);
-		// 		return;
-		// 	}
+			err = bt_le_ext_adv_stop(adv);
+			if (err) {
+				printk("Failed to start extended advertising (err %d)\n", err);
+				return;
+			}
 
-		// 	int err = ble_hci_vsc_set_tx_pwr(curr_iso_lut_setting.txp);
-		// 	if (err) {
-		// 		printk("Failed to set tx power (err %d)\n", err);
-		// 		return;
-		// 	}
+			int err = ble_hci_vsc_set_tx_pwr(get_hci_vsc_tx_pwr_idx(curr_iso_lut_setting.txp));
+			if (err) {
+				printk("Failed to set tx power (err %d)\n", err);
+				return;
+			}
 
-		// 	bis[0]->qos->tx->rtn =curr_iso_lut_setting.rtn;
+			bis[0]->qos->tx->rtn =curr_iso_lut_setting.rtn;
 
-		// 	bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
-		// 	double_sending_rate_activated = true; // set global flag
+			bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
+			double_sending_rate_activated = true; // set global flag
 
-		// 	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
-		// 	if (err) {
-		// 		printk("Failed to start extended advertising (err %d)\n", err);
-		// 		return;
-		// 	}
+			err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+			if (err) {
+				printk("Failed to start extended advertising (err %d)\n", err);
+				return;
+			}
 
-		// 	err = bt_iso_big_create(adv, &big_create_param, &big);
-		// 	if (err) {
-		// 		printk("bt_iso_big_create failed (err %d)\n", err);
-		// 		return;
-		// 	}
+			err = bt_iso_big_create(adv, &big_create_param, &big);
+			if (err) {
+				printk("bt_iso_big_create failed (err %d)\n", err);
+				return;
+			}
 
-		// 	err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-		// 	if (err) {
-		// 		printk("sem_big_cmplt failed (err %d)\n", err);
-		// 		return;
-		// 	}
+			err = k_sem_take(&sem_big_cmplt, K_FOREVER);
+			if (err) {
+				printk("sem_big_cmplt failed (err %d)\n", err);
+				return;
+			}
 
-		// 	k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
-		// 	prev_iso_lut_setting = curr_iso_lut_setting;
-		// }
+			k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
+			prev_iso_lut_setting = curr_iso_lut_setting;
+		}
 		
 		// if (LED_ON) {
 		// 	if (prr > 20) {
@@ -749,6 +798,8 @@ void main(void)
 
 	/* Start ACL Scanning */
 	k_work_submit(&start_scan_work);
+
+	// TODO: Start with highest TXP for per adv? - will this ensure per adc are always at max txp???
 
 	#define BT_LE_EXT_ADV_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_TX_POWER, \

@@ -30,7 +30,7 @@
 /* ------------------------------------------------------ */
 /* PRR Calculation */
 /* ------------------------------------------------------ */
-#define PRR_MAVG_WINDOW_SIZE 50
+#define PRR_MAVG_WINDOW_SIZE 250
 
 /* ------------------------------------------------------ */
 /* Defines Algorithm */
@@ -50,6 +50,7 @@ static bool LED_ON = true;
 static double prr = 0.0;
 static int8_t per_adv_rssi = 0;
 static uint8_t per_adv_txp_idx = 0;
+static int8_t per_adv_txp = 0;
 static uint8_t acl_rssi = 0;
 
 /* ------------------------------------------------------ */
@@ -208,12 +209,14 @@ void indicate_work_handler(struct k_work *item)
 		new_opc = 10; // ready for downshift
 	} else if (PACKET_BUFFER_SIZE - free_slots > PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW) {
 		new_opc = 11; // normal buffering speed - ready for next adjustment
+	} else if (PACKET_BUFFER_SIZE - free_slots < 14) {
+		new_opc = 12; // buffer is critical - let's suggest refill
 	} else {
-		new_opc = 12; // ignore
+		new_opc = 13; // ignore
 	}
 
 	/* Prepare Indication */
-	#define CONST_IND_DATA_SIZE 2
+	#define CONST_IND_DATA_SIZE 3
 	uint8_t ind_data_size = CONST_IND_DATA_SIZE;
 	static uint8_t ind_data[CONST_IND_DATA_SIZE];
 
@@ -227,7 +230,8 @@ void indicate_work_handler(struct k_work *item)
 
 	/* Create Indication */
 	ind_data[0] = acl_rssi;
-	ind_data[1] = new_opc;
+	ind_data[1] = (uint8_t)prr;
+	ind_data[2] = new_opc;
 	ind_params.attr = &hts_svc.attrs[2];
 	ind_params.data = &ind_data;
 	ind_params.len = sizeof(uint8_t) * ind_data_size;
@@ -311,7 +315,8 @@ static void recv_cb(struct bt_le_per_adv_sync *sync, const struct bt_le_per_adv_
 {
 	per_adv_rssi = info->rssi;
 	per_adv_txp_idx = get_hci_vsc_tx_pwr_idx(info->tx_power);
-}
+	per_adv_txp = info->tx_power;
+} 
 
 static struct bt_le_per_adv_sync_cb sync_callbacks = {
 	.synced = sync_cb,
@@ -390,7 +395,7 @@ void buffer_timer_handler(struct k_timer *dummy)
 		prr = RollingmAvg(0);
 	}
 
-	printk("Buffer occupied: %u out of %u - prr: %.02f%% - seq_num: %u - rssi: %d, tx_power index: %d\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, prr, seq_num, per_adv_rssi, per_adv_txp_idx);
+	printk("Buffer occupied: %u out of %u - prr: %.02f%% - seq_num: %u - rssi: %d, tx_power index: %d, per_adv_txp: %d\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, prr, seq_num, per_adv_rssi, per_adv_txp_idx, per_adv_txp);
 }
 K_TIMER_DEFINE(buffer_timer, buffer_timer_handler, NULL);
 
