@@ -23,8 +23,8 @@
 /* ------------------------------------------------------ */
 /* Defines R3 Concept */
 /* ------------------------------------------------------ */
-#define RTN 2 // also permanent rtn if algo not activated
-#define TXP 0 // -.- see available_vs_tx_pwr_settings for settings
+#define RTN 8 // also permanent rtn if algo not activated
+#define TXP 2 // -.- see available_vs_tx_pwr_settings for settings
 
 /* ------------------------------------------------------ */
 /* Defines Threads (main thread = prio 0) */
@@ -36,7 +36,7 @@
 /* ------------------------------------------------------ */
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
-static uint8_t link_quality_idx_proposal = 0;
+static uint8_t iso_receiver_rssi = 0;
 uint8_t param_setting = 0;
 static bool LED_ON = true;
 
@@ -193,7 +193,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 		return BT_GATT_ITER_STOP;
 	}
 
-	link_quality_idx_proposal = ((uint8_t *)data)[0];
+	iso_receiver_rssi = ((uint8_t *)data)[0];
 
 	if (length >= 2) { // Opcode Received
 		uint8_t curr_opcode = ((uint8_t *)data)[1];
@@ -207,7 +207,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 		}
 	}
 
-	printk("link_quality_idx_proposal: %u\n", link_quality_idx_proposal);
+	printk("iso_receiver_rssi: -%u\n", iso_receiver_rssi);
 	
 	return BT_GATT_ITER_CONTINUE;
 }

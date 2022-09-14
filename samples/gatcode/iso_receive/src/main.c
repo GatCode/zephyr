@@ -50,7 +50,7 @@ static bool LED_ON = true;
 static double prr = 0.0;
 static int8_t per_adv_rssi = 0;
 static uint8_t per_adv_txp_idx = 0;
-static uint8_t link_quality_idx_proposal = 0;
+static uint8_t acl_rssi = 0;
 
 /* ------------------------------------------------------ */
 /* LEDs */
@@ -178,7 +178,6 @@ static bool iso_just_established = true;
 RING_BUF_DECLARE(PacketBuffer, PACKET_BUFFER_SIZE * DATA_SIZE_BYTE);
 
 static uint8_t last_indicated_opcode = 0;
-static uint8_t last_indicated_link_quality_idx_proposal = 0;
 
 uint32_t get_current_kbps()
 {
@@ -224,36 +223,10 @@ void indicate_work_handler(struct k_work *item)
 		last_indicated_opcode = new_opc;
 	}
 
-	/* Adaptation Algorithm */
-	uint32_t kbps = get_current_kbps();
-	if (per_adv_rssi < -80) {
-		link_quality_idx_proposal = 10;
-	} else {
-		link_quality_idx_proposal = 0;
-	}
-	// if (kbps < ALGO_MAX_THROUGHPUT * 0.90) {
-	// 	// increase
-	// 	if ((curr - last_decreased_ts > 1000 && curr - last_decreased_ts > 5000) || kbps < ALGO_HARD_LIMIT) {
-	// 		params_idx = params_idx < 2 ? params_idx + 1 : 2;
-	// 		last_switch_ts = curr;
-	// 	}
-	// } else if (kbps < ALGO_MAX_THROUGHPUT * (0.90 + 0.09)) {
-	// 	// ignore
-	// } else {
-	// 	if (curr - last_switch_ts > 5000 && curr - last_decreased_ts > 5000) { // > 10s
-	// 		// decrease
-	// 		params_idx = params_idx > 0 ? params_idx - 1 : 0;
-	// 		last_decreased_ts = curr;
-	// 	}
-	// }
-
-	if (last_indicated_link_quality_idx_proposal == link_quality_idx_proposal && ind_data_size != CONST_IND_DATA_SIZE) {
-		return;
-	}
-	last_indicated_link_quality_idx_proposal = link_quality_idx_proposal;
+	acl_rssi = (uint8_t)-per_adv_rssi; // convert to uint8_t
 
 	/* Create Indication */
-	ind_data[0] = link_quality_idx_proposal;
+	ind_data[0] = acl_rssi;
 	ind_data[1] = new_opc;
 	ind_params.attr = &hts_svc.attrs[2];
 	ind_params.data = &ind_data;

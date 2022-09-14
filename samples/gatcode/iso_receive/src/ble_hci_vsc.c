@@ -91,6 +91,11 @@ uint8_t get_hci_vsc_tx_pwr_idx(int8_t txp)
 	}
 }
 
+uint8_t get_txp_value_by_index(uint8_t txp_idx)
+{
+	return available_vs_tx_pwr_settings[txp_idx].tx_power;
+}
+
 int ble_hci_vsc_set_radio_high_pwr_mode(bool high_power_mode)
 {
 	int ret;

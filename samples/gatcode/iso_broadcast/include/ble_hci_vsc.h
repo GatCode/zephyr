@@ -68,6 +68,20 @@ enum ble_hci_vs_led_function_mode {
 };
 
 /**
+ * @brief Returns the appropriate txp vsc index
+ * 
+ * @return txp index
+ */
+uint8_t get_hci_vsc_tx_pwr_idx(int8_t txp);
+
+/**
+ * @brief Returns the appropriate txp value
+ * 
+ * @return txp value
+ */
+uint8_t get_txp_value_by_index(uint8_t txp_idx);
+
+/**
  * @brief Initializes the available_vs_tx_pwr_settings options.
  */
 void init_ble_hci_vsc_tx_pwr();
@@ -120,5 +134,14 @@ int ble_hci_vsc_set_tx_pwr(uint8_t pwr_setting_index);
  * @return 0 for success, error otherwise.
  */
 int ble_hci_vsc_set_conn_tx_pwr(uint16_t conn_handle, enum ble_hci_vs_tx_power tx_power);
+
+/**
+ * @brief Set TX power for specific connection
+ * @param conn_handle Specific connection handle for TX power setting
+ * @param pwr_setting_index TX power setting index - see available_vs_tx_pwr_settings.
+ *
+ * @return 0 for success, error otherwise.
+ */
+int ble_hci_vsc_set_conn_tx_pwr_index(uint16_t conn_handle, uint8_t pwr_setting_index);
 
 #endif /* _BLE_HCI_VSC_H_ */
