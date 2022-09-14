@@ -47,6 +47,7 @@
 /* Importatnt Globals */
 /* ------------------------------------------------------ */
 static uint8_t iso_receiver_rssi = 0;
+static uint8_t acl_rssi = 0;
 uint8_t param_setting = 0;
 static bool LED_ON = true;
 static const struct isochronous_parameter_lut init_iso_lut_setting = iso_lut[DYN_ADA_ALGO_START_SETTING_INDEX];
@@ -115,6 +116,7 @@ uint8_t RollingMAvg8Bit(MAVG *mavg, uint8_t newValue)
 }
 
 static MAVG rssi_mavg;
+static MAVG acl_rssi_mavg;
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -209,27 +211,40 @@ void work_scan_start(struct k_work *item)
 
 K_WORK_DEFINE(start_scan_work, work_scan_start);
 
-static double pow(double x, double y)
-{
-	double result = 1;
-
-	if (y < 0) {
-		y = -y;
-		while (y--) {
-			result /= x;
-		}
-	} else {
-		while (y--) {
-			result *= x;
-		}
-	}
-
-	return result;
-}
-
 static bool double_sending_rate_activated = false;
 static bool buffer_reached_A = false;
 static bool buffer_reached_B = false;
+
+static void read_conn_rssi(uint16_t handle, int8_t *rssi)
+ {
+ 	struct net_buf *buf, *rsp = NULL;
+ 	struct bt_hci_cp_read_rssi *cp;
+ 	struct bt_hci_rp_read_rssi *rp;
+
+ 	int err;
+
+ 	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
+ 	if (!buf) {
+ 		printk("Unable to allocate command buffer\n");
+ 		return;
+ 	}
+
+ 	cp = net_buf_add(buf, sizeof(*cp));
+ 	cp->handle = sys_cpu_to_le16(handle);
+
+ 	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
+ 	if (err) {
+ 		uint8_t reason = rsp ?
+ 			((struct bt_hci_rp_read_rssi *)rsp->data)->status : 0;
+ 		printk("Read RSSI err: %d reason 0x%02x\n", err, reason);
+ 		return;
+ 	}
+
+ 	rp = (void *)rsp->data;
+ 	*rssi = rp->rssi;
+
+ 	net_buf_unref(rsp);
+ }
 
 static uint8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
@@ -242,6 +257,12 @@ static uint8_t notify_func(struct bt_conn *conn,
 	}
 
 	iso_receiver_rssi = RollingMAvg8Bit(&rssi_mavg, ((uint8_t *)data)[0]);
+
+	int8_t rssi = 0;
+ 	uint16_t handle = 0;
+ 	bt_hci_get_conn_handle(conn, &handle);
+ 	read_conn_rssi(handle, &rssi);
+	acl_rssi = RollingMAvg8Bit(&acl_rssi_mavg, (uint8_t)-rssi);;
 
 	if (length >= 2) { // Opcode Received
 		uint8_t curr_opcode = ((uint8_t *)data)[1];
@@ -452,11 +473,64 @@ static struct bt_iso_big_create_param big_create_param = {
 };
 
 /* ------------------------------------------------------ */
-/* Helper */
+/* LUT + DYN ADAPTATION ALGO */
 /* ------------------------------------------------------ */
 bool is_lut_identical(struct isochronous_parameter_lut l1, struct isochronous_parameter_lut l2)
 {
 	return l1.txp == l2.txp && l1.rtn == l2.rtn;
+}
+
+uint8_t get_index_of_lut_setting(struct isochronous_parameter_lut lut)
+{
+	for (uint8_t i = 0; i < (sizeof(iso_lut) / sizeof(iso_lut[0])); i++)
+	{
+		if (iso_lut[i].txp == lut.txp && iso_lut[i].rtn == lut.rtn) {
+			return i;
+		}
+	}
+	
+	return 0;
+}
+
+void select_best_lut_value()
+{
+	// iso_receiver_rssi
+	// acl_rssi
+	// curr_iso_lut_setting.txp
+	// curr_iso_lut_setting.rtn
+
+	uint8_t lut_size = sizeof(iso_lut) / sizeof(iso_lut[0]);
+	uint8_t curr_lut_setting_idx = get_index_of_lut_setting(curr_iso_lut_setting);
+
+	struct isochronous_parameter_lut lower_setting = iso_lut[curr_lut_setting_idx > 0 ? curr_lut_setting_idx - 1 : 0];
+	struct isochronous_parameter_lut higher_setting = iso_lut[curr_lut_setting_idx < lut_size - 1 ? curr_lut_setting_idx + 1 : lut_size - 1];
+
+	struct isochronous_parameter_lut current_setting = curr_iso_lut_setting;
+	double possible_delta_prr_loss = current_setting.delta_prr - lower_setting.delta_prr;
+	double possible_delta_prr_gain = lower_setting.delta_prr - current_setting.delta_prr;
+
+	int8_t possible_rssi_move_downshift = lower_setting.txp - current_setting.txp; // go lower
+	int8_t possible_rssi_move_upshift = higher_setting.txp - current_setting.txp; // go higher
+
+	/* Expected RSSI Values after Up or Downshift */
+	uint8_t iso_recv_rssi_after_downshift = iso_receiver_rssi + possible_rssi_move_downshift;
+	uint8_t acl_recv_rssi_after_downshift = acl_rssi + possible_rssi_move_downshift;
+	uint8_t iso_recv_rssi_after_upshift = iso_receiver_rssi + possible_rssi_move_upshift;
+	uint8_t acl_recv_rssi_after_upshift = acl_rssi + possible_rssi_move_upshift;
+
+	// printk("L: %u | C: %u | H: %u | possible_rssi_loss: %d | possible_rssi_gain: %d\n", get_index_of_lut_setting(lower_setting), curr_lut_setting_idx, get_index_of_lut_setting(higher_setting), possible_rssi_loss, possible_rssi_gain);
+
+	if (curr_lut_setting_idx == lut_size - 1) {
+		curr_lut_setting_idx = 0;
+	} else {
+		curr_lut_setting_idx++;
+	}
+	curr_iso_lut_setting = iso_lut[curr_lut_setting_idx];
+
+
+	// double possible_delta_prr_loss = curr_iso_lut_setting.delta_prr - 
+
+	// printk("iso_receiver_rssi: -%u | acl_rssi: -%u\n", iso_receiver_rssi, acl_rssi);
 }
 
 /* ------------------------------------------------------ */
@@ -517,82 +591,76 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 			k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
 		}
 
-		printk("iso_receiver_rssi: -%u\n", iso_receiver_rssi);
-
 #ifdef DYN_ADA
-		if (iso_receiver_rssi > 50) {
-			curr_iso_lut_setting = iso_lut[3];
-		} else {
-			curr_iso_lut_setting = iso_lut[0];
-		}
+		select_best_lut_value();
 #else
 		// .rtn = RTN,
 #endif
 
 		// increase / decrease
-		if (!is_lut_identical(curr_iso_lut_setting, prev_iso_lut_setting)) { // (curr - last_decreased_ts > 2000) { //(param_setting != params_idx) {
-			// last_decreased_ts = curr;
-			// printk("params_idx %u\n", params_idx);
-			printk("ISO LUT CHANGEEEEEEEEEEEEEEEEE\n");
+		// if (!is_lut_identical(curr_iso_lut_setting, prev_iso_lut_setting)) { // (curr - last_decreased_ts > 2000) { //(param_setting != params_idx) {
+		// 	// last_decreased_ts = curr;
+		// 	// printk("params_idx %u\n", params_idx);
+		// 	printk("ISO LUT CHANGEEEEEEEEEEEEEEEEE\n");
 
-			k_timer_stop(&send_timer);
-			err = k_sem_take(&sem_send_handler_stopped, K_FOREVER);
-			if (err) {
-				printk("sem_big_term failed (err %d)\n", err);
-				return;
-			}
-			// k_timer_status_sync(&send_timer); // wait until stopped
+		// 	k_timer_stop(&send_timer);
+		// 	err = k_sem_take(&sem_send_handler_stopped, K_FOREVER);
+		// 	if (err) {
+		// 		printk("sem_big_term failed (err %d)\n", err);
+		// 		return;
+		// 	}
+		// 	// k_timer_status_sync(&send_timer); // wait until stopped
 
-			err = bt_iso_big_terminate(big);
-			if (err) {
-				printk("bt_iso_big_terminate failed (err %d)\n", err);
-				return;
-			}
+		// 	err = bt_iso_big_terminate(big);
+		// 	if (err) {
+		// 		printk("bt_iso_big_terminate failed (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			err = k_sem_take(&sem_big_term, K_FOREVER);
-			if (err) {
-				printk("sem_big_term failed (err %d)\n", err);
-				return;
-			}
+		// 	err = k_sem_take(&sem_big_term, K_FOREVER);
+		// 	if (err) {
+		// 		printk("sem_big_term failed (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			err = bt_le_ext_adv_stop(adv);
-			if (err) {
-				printk("Failed to start extended advertising (err %d)\n", err);
-				return;
-			}
+		// 	err = bt_le_ext_adv_stop(adv);
+		// 	if (err) {
+		// 		printk("Failed to start extended advertising (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			int err = ble_hci_vsc_set_tx_pwr(curr_iso_lut_setting.txp);
-			if (err) {
-				printk("Failed to set tx power (err %d)\n", err);
-				return;
-			}
+		// 	int err = ble_hci_vsc_set_tx_pwr(curr_iso_lut_setting.txp);
+		// 	if (err) {
+		// 		printk("Failed to set tx power (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			bis[0]->qos->tx->rtn =curr_iso_lut_setting.rtn;
+		// 	bis[0]->qos->tx->rtn =curr_iso_lut_setting.rtn;
 
-			bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
-			double_sending_rate_activated = true; // set global flag
+		// 	bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
+		// 	double_sending_rate_activated = true; // set global flag
 
-			err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
-			if (err) {
-				printk("Failed to start extended advertising (err %d)\n", err);
-				return;
-			}
+		// 	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+		// 	if (err) {
+		// 		printk("Failed to start extended advertising (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			err = bt_iso_big_create(adv, &big_create_param, &big);
-			if (err) {
-				printk("bt_iso_big_create failed (err %d)\n", err);
-				return;
-			}
+		// 	err = bt_iso_big_create(adv, &big_create_param, &big);
+		// 	if (err) {
+		// 		printk("bt_iso_big_create failed (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-			if (err) {
-				printk("sem_big_cmplt failed (err %d)\n", err);
-				return;
-			}
+		// 	err = k_sem_take(&sem_big_cmplt, K_FOREVER);
+		// 	if (err) {
+		// 		printk("sem_big_cmplt failed (err %d)\n", err);
+		// 		return;
+		// 	}
 
-			k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
-			prev_iso_lut_setting = curr_iso_lut_setting;
-		}
+		// 	k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
+		// 	prev_iso_lut_setting = curr_iso_lut_setting;
+		// }
 		
 		// if (LED_ON) {
 		// 	if (prr > 20) {
@@ -668,6 +736,9 @@ void main(void)
 	/* Initialize the moving average filter */
 	static uint64_t rssi_mavg_values[RSSI_MAVG_WINDOW_SIZE] = {0};
 	init_mavg(&rssi_mavg, rssi_mavg_values, RSSI_MAVG_WINDOW_SIZE);
+
+	static uint64_t acl_rssi_mavg_values[RSSI_MAVG_WINDOW_SIZE] = {0};
+	init_mavg(&acl_rssi_mavg, acl_rssi_mavg_values, RSSI_MAVG_WINDOW_SIZE);
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
