@@ -506,6 +506,31 @@ uint8_t get_rssi_offset_from_baseline(uint8_t current_txp)
 
 static uint32_t last_adjusted_ts = 0;
 
+#define RSSI_STABLE_WINDOW_SIZE 250 // TODO: trend window size
+#define RSSI_STABLE_TOLERANCE 1 // TODO: trend window size
+
+static uint8_t rssi_stable_values[RSSI_STABLE_WINDOW_SIZE] = {0};
+static uint64_t rssi_stable_current_position = 0;
+bool is_rssi_stable(uint8_t newValue)
+{
+	rssi_stable_values[rssi_stable_current_position] = newValue;
+	rssi_stable_current_position++;
+	if (rssi_stable_current_position >= RSSI_STABLE_WINDOW_SIZE) { // Don't go beyond the size of the array...
+		rssi_stable_current_position = 0;
+	}
+
+	uint8_t base = rssi_stable_values[0];
+	for (uint8_t i = 0; i < RSSI_STABLE_WINDOW_SIZE; i++) {
+		if (abs(rssi_stable_values[i] - base) > RSSI_STABLE_TOLERANCE) {
+			return false;
+		}
+	}
+	
+	return true;
+}
+
+// TODO: don't use the trend - just see if the last 100 frames are within 5 rssi point or so
+
 void select_best_lut_value()
 {
 	// prr
@@ -554,15 +579,18 @@ void select_best_lut_value()
 	// TODO: Calculate Trend - if trend falls - increase setting - only if flat optimize power
 	// TODO: Calculate Trend for RSSI too - detect movement
 
+
 	if (prr < 95) {
 		curr_lut_setting_idx = lut_size - 1; // MAX SETTING
-	} if ((rssi > rssi_threshold || prr < 99) && (curr - last_adjusted_ts) > 50000) {
+	} if ((!is_rssi_stable(acl_rssi) && prr < 99) || ((rssi > rssi_threshold || prr < 97) && (curr - last_adjusted_ts) > 50000)) {
 		curr_lut_setting_idx = MIN(curr_lut_setting_idx + 1, lut_size - 1); // HIGHER
 	} else if (prr > 96 && prr < 99) {
 		// DO NOTHING
-	} else if (prr > 99 && rssi_after_downshift < rssi_threshold && (curr - last_adjusted_ts) > 5000) {
+	} else if (prr > 99 && rssi_after_downshift < rssi_threshold && (curr - last_adjusted_ts) > 5000 && is_rssi_stable(acl_rssi)) {
 		curr_lut_setting_idx = MAX(curr_lut_setting_idx - 1, 0); // LOWER
 	}
+
+
 	
 	// if (rssi > 80) {
 	// 	curr_lut_setting_idx = MIN(curr_lut_setting_idx++, lut_size);
@@ -577,7 +605,7 @@ void select_best_lut_value()
 	// }
 	curr_iso_lut_setting = iso_lut[curr_lut_setting_idx];
 
-	printk("rssi: -%u | iso_receiver_rssi: -%u | acl_rssi: -%u | PRR: %u | curr_lut_setting_idx: %u\n", rssi, iso_receiver_rssi - rssi_offset, acl_rssi, prr, curr_lut_setting_idx);
+	printk("rssi: -%u | iso_receiver_rssi: -%u | acl_rssi: -%u | PRR: %u | curr_lut_setting_idx: %u | is_rssi_stable: %u\n", rssi, iso_receiver_rssi - rssi_offset, acl_rssi, prr, curr_lut_setting_idx, is_rssi_stable(rssi));
 	// PRR must be > 94% - LC3plus can't handle more than 6% loss!
 }
 
