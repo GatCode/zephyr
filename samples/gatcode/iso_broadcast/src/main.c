@@ -10,6 +10,22 @@
 #include <zephyr/sys/byteorder.h>
 #include <ble_hci_vsc.h>
 #include <stdlib.h>
+#include <lut.h>
+
+/* ------------------------------------------------------ */
+/* ALGO TOGGLE - only comment in one */
+/* ------------------------------------------------------ */
+#define DYN_ADA
+// #define NAIVE_1 // conservative
+// #define NAIVE_2 // aggressive
+
+/* ------------------------------------------------------ */
+/* Defines R3 Concept */
+/* ------------------------------------------------------ */
+#define RTN 8 // also permanent rtn ifndef DYN_ADA
+#define TXP 2 // also permanent txp ifndef DYN_ADA
+
+#define DYN_ADA_ALGO_START_SETTING_INDEX 0 // -16dBm / 0RTN
 
 /* ------------------------------------------------------ */
 /* Defines Iso */
@@ -19,12 +35,6 @@
 #define SDU_INTERVAL_US 20000 // 5ms min due to ISO_Interval must be multiple of 1.25ms && > NSE * Sub_Interval
 #define TRANSPORT_LATENCY_MS 20 // 5ms-4s
 #define BROADCAST_ENQUEUE_COUNT 2U // guarantee always data to send
-
-/* ------------------------------------------------------ */
-/* Defines R3 Concept */
-/* ------------------------------------------------------ */
-#define RTN 8 // also permanent rtn if algo not activated
-#define TXP 2 // -.- see available_vs_tx_pwr_settings for settings
 
 /* ------------------------------------------------------ */
 /* Defines Threads (main thread = prio 0) */
@@ -39,6 +49,9 @@
 static uint8_t iso_receiver_rssi = 0;
 uint8_t param_setting = 0;
 static bool LED_ON = true;
+static const struct isochronous_parameter_lut init_iso_lut_setting = iso_lut[DYN_ADA_ALGO_START_SETTING_INDEX];
+static struct isochronous_parameter_lut curr_iso_lut_setting = iso_lut[DYN_ADA_ALGO_START_SETTING_INDEX];
+static struct isochronous_parameter_lut prev_iso_lut_setting = iso_lut[DYN_ADA_ALGO_START_SETTING_INDEX];
 
 /* ------------------------------------------------------ */
 /* LEDs */
@@ -67,6 +80,41 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t
 	gpio_pin_set_dt(&led3, 0);
 	gpio_pin_set_dt(&led4, 0);
 }
+
+/* ------------------------------------------------------ */
+/* Windowed Moving Average */
+/* ------------------------------------------------------ */
+// moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
+
+#define RSSI_MAVG_WINDOW_SIZE 10 // ~ 200ms
+
+typedef struct {
+	uint64_t *maverage_values;
+	uint64_t maverage_current_position;
+	uint64_t maverage_current_sum;
+	uint64_t maverage_sample_length;
+} MAVG;
+
+void init_mavg(MAVG *mavg, uint64_t *maverage_values, uint8_t window_size)
+{
+	mavg->maverage_values = maverage_values;
+	mavg->maverage_current_position = 0;
+	mavg->maverage_current_sum = 0;
+	mavg->maverage_sample_length = window_size;
+}
+
+uint8_t RollingMAvg8Bit(MAVG *mavg, uint8_t newValue)
+{
+	mavg->maverage_current_sum = mavg->maverage_current_sum - ((uint64_t*)mavg->maverage_values)[mavg->maverage_current_position] + newValue;
+	((uint64_t*)mavg->maverage_values)[mavg->maverage_current_position] = newValue;
+	mavg->maverage_current_position++;
+	if (mavg->maverage_current_position >= mavg->maverage_sample_length) { // Don't go beyond the size of the array...
+		mavg->maverage_current_position = 0;
+	}
+	return mavg->maverage_current_sum / mavg->maverage_sample_length;
+}
+
+static MAVG rssi_mavg;
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -193,7 +241,7 @@ static uint8_t notify_func(struct bt_conn *conn,
 		return BT_GATT_ITER_STOP;
 	}
 
-	iso_receiver_rssi = ((uint8_t *)data)[0];
+	iso_receiver_rssi = RollingMAvg8Bit(&rssi_mavg, ((uint8_t *)data)[0]);
 
 	if (length >= 2) { // Opcode Received
 		uint8_t curr_opcode = ((uint8_t *)data)[1];
@@ -206,8 +254,6 @@ static uint8_t notify_func(struct bt_conn *conn,
 			buffer_reached_B = false;
 		}
 	}
-
-	printk("iso_receiver_rssi: -%u\n", iso_receiver_rssi);
 	
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -377,7 +423,11 @@ static struct bt_iso_chan_ops iso_ops = {
 
 static struct bt_iso_chan_io_qos iso_tx_qos = {
 	.sdu = DATA_SIZE_BYTE,
+#ifdef DYN_ADA
+	.rtn = init_iso_lut_setting.rtn,
+#else
 	.rtn = RTN,
+#endif
 	.phy = BT_GAP_LE_PHY_2M,
 };
 
@@ -402,19 +452,19 @@ static struct bt_iso_big_create_param big_create_param = {
 };
 
 /* ------------------------------------------------------ */
+/* Helper */
+/* ------------------------------------------------------ */
+bool is_lut_identical(struct isochronous_parameter_lut l1, struct isochronous_parameter_lut l2)
+{
+	return l1.txp == l2.txp && l1.rtn == l2.rtn;
+}
+
+/* ------------------------------------------------------ */
 /* Adjustment Algorithm */
 /* ------------------------------------------------------ */
 K_THREAD_STACK_DEFINE(adj_stack_area, STACKSIZE);
 static struct k_thread adj_thread;
-
-struct broadcast_parameters
-{
-    uint8_t txp;
-    uint8_t rtn;
-};
-static struct broadcast_parameters params[3] = {{0,2}, {0,4}, {1,8}};
-static uint8_t params_idx = 0;
-static uint32_t last_decreased_ts = 0;
+// static uint32_t last_decreased_ts = 0;
 
 void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 {
@@ -465,13 +515,25 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 			}
 
 			k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
-			// printk("REVERT TO NORMAL SPEED!\n");
 		}
 
+		printk("iso_receiver_rssi: -%u\n", iso_receiver_rssi);
+
+#ifdef DYN_ADA
+		if (iso_receiver_rssi > 50) {
+			curr_iso_lut_setting = iso_lut[3];
+		} else {
+			curr_iso_lut_setting = iso_lut[0];
+		}
+#else
+		// .rtn = RTN,
+#endif
+
 		// increase / decrease
-		else if (curr - last_decreased_ts > 2000) { //(param_setting != params_idx) {
-			last_decreased_ts = curr;
+		if (!is_lut_identical(curr_iso_lut_setting, prev_iso_lut_setting)) { // (curr - last_decreased_ts > 2000) { //(param_setting != params_idx) {
+			// last_decreased_ts = curr;
 			// printk("params_idx %u\n", params_idx);
+			printk("ISO LUT CHANGEEEEEEEEEEEEEEEEE\n");
 
 			k_timer_stop(&send_timer);
 			err = k_sem_take(&sem_send_handler_stopped, K_FOREVER);
@@ -499,13 +561,13 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 				return;
 			}
 
-			// int err = ble_hci_vsc_set_tx_pwr(params[params_idx].txp);
-			// if (err) {
-			// 	printk("Failed to set tx power (err %d)\n", err);
-			// 	return;
-			// }
+			int err = ble_hci_vsc_set_tx_pwr(curr_iso_lut_setting.txp);
+			if (err) {
+				printk("Failed to set tx power (err %d)\n", err);
+				return;
+			}
 
-			// bis[0]->qos->tx->rtn = params[params_idx].rtn;
+			bis[0]->qos->tx->rtn =curr_iso_lut_setting.rtn;
 
 			bis[0]->qos->tx->sdu = 2 * DATA_SIZE_BYTE; // double speed
 			double_sending_rate_activated = true; // set global flag
@@ -529,7 +591,7 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 			}
 
 			k_timer_start(&send_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
-			param_setting = params_idx;
+			prev_iso_lut_setting = curr_iso_lut_setting;
 		}
 		
 		// if (LED_ON) {
@@ -603,6 +665,10 @@ void main(void)
 	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
 	gpio_add_callback(button.port, &button_cb_data);
 
+	/* Initialize the moving average filter */
+	static uint64_t rssi_mavg_values[RSSI_MAVG_WINDOW_SIZE] = {0};
+	init_mavg(&rssi_mavg, rssi_mavg_values, RSSI_MAVG_WINDOW_SIZE);
+
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
 	if (err) {
@@ -621,7 +687,11 @@ void main(void)
 
 	/* Set initial TX power */
 	init_ble_hci_vsc_tx_pwr();
+#ifdef DYN_ADA
+	err = ble_hci_vsc_set_tx_pwr(get_hci_vsc_tx_pwr_idx(init_iso_lut_setting.txp));
+#else
 	err = ble_hci_vsc_set_tx_pwr(TXP);
+#endif
 	if (err) {
 		printk("Failed to set tx power (err %d)\n", err);
 		return;

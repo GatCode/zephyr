@@ -5,7 +5,7 @@ struct isochronous_parameter_lut {
     double delta_cost;
 };
 
-static struct isochronous_parameter_lut iso_lut[13] = {
+static const struct isochronous_parameter_lut iso_lut[13] = {
     {-16, 0, 0.0, 0.0},
     {-8, 0, 34.24032258064516, 1.9064436976689692},
     {-4, 0, 83.17599825632084, 3.427435394649092},
