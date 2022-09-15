@@ -30,14 +30,14 @@
 /* ------------------------------------------------------ */
 /* PRR Calculation */
 /* ------------------------------------------------------ */
-#define PRR_MAVG_WINDOW_SIZE 250
+#define PRR_MAVG_WINDOW_SIZE 100
 
 /* ------------------------------------------------------ */
 /* Defines Algorithm */
 /* ------------------------------------------------------ */
-#define PACKET_BUFFER_SIZE 40 // 50 = 1s
-#define PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW 20 // must be min 13 slots to ensure no issues - 50% = 7 packets
-#define PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH 33 // must be min 13 slots to ensure no issue - 50% = 7 packets
+#define PACKET_BUFFER_SIZE 50 // 50 = 1s
+#define PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW 26 // must be min 13 slots to ensure no issues - 50% = 7 packets
+#define PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH 39 // must be min 13 slots to ensure no issue - 50% = 7 packets
 #define ALGO_MAX_THROUGHPUT (1000 / (SDU_INTERVAL_US / 1000)) * DATA_SIZE_BYTE * 8 / 1000
 #define ALGO_HARD_LIMIT 16 // >= 16kbps are needed for LC3
 #define ALGO_SOFT_LIMIT_1 ALGO_MAX_THROUGHPUT * 0.5
@@ -209,7 +209,7 @@ void indicate_work_handler(struct k_work *item)
 		new_opc = 10; // ready for downshift
 	} else if (PACKET_BUFFER_SIZE - free_slots > PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW) {
 		new_opc = 11; // normal buffering speed - ready for next adjustment
-	} else if (PACKET_BUFFER_SIZE - free_slots < 14) {
+	} else if (PACKET_BUFFER_SIZE - free_slots < 20) {
 		new_opc = 12; // buffer is critical - let's suggest refill
 	} else {
 		new_opc = 13; // ignore
@@ -384,7 +384,7 @@ void buffer_timer_handler(struct k_timer *dummy)
 			prr = RollingmAvg(1);
 		}
 
-		acl_indicate(prr);
+		// acl_indicate(prr);
 
 		if (seq_num - 1 != prev_seq_num) {
 			printk("LOST - ");
@@ -394,6 +394,8 @@ void buffer_timer_handler(struct k_timer *dummy)
 	} else {
 		prr = RollingmAvg(0);
 	}
+
+	acl_indicate(prr);
 
 	printk("Buffer occupied: %u out of %u - prr: %.02f%% - seq_num: %u - rssi: %d, tx_power index: %d, per_adv_txp: %d\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, prr, seq_num, per_adv_rssi, per_adv_txp_idx, per_adv_txp);
 }
@@ -462,9 +464,7 @@ static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 {
 	gpio_pin_toggle_dt(&led1);
 
-	if (reason != BT_HCI_ERR_OP_CANCELLED_BY_HOST) {
-		k_sem_give(&sem_big_sync_lost);
-	}
+	k_sem_give(&sem_big_sync_lost);
 }
 
 static struct bt_iso_chan_ops iso_ops = {
@@ -652,6 +652,7 @@ big_sync_create:
 			printk("failed (err %d)\n", err);
 			return;
 		}
+		printk("BIG Sync Created\n");
 
 		err = k_sem_take(&sem_big_sync, TIMEOUT_SYNC_CREATE);
 		if (err) {
@@ -667,12 +668,14 @@ big_sync_create:
 
 			goto per_sync_lost_check;
 		}
+		printk("BIG Sync Received\n");
 
 		err = k_sem_take(&sem_big_sync_lost, K_FOREVER);
 		if (err) {
 			printk("BIG Sync Lost failed (err %d)\n", err);
 			return;
 		}
+		printk("BIG Sync Lost\n");
 
 per_sync_lost_check:
 		err = k_sem_take(&sem_per_sync_lost, K_NO_WAIT);

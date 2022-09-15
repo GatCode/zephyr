@@ -505,6 +505,7 @@ uint8_t get_rssi_offset_from_baseline(uint8_t current_txp)
 }
 
 static uint32_t last_adjusted_ts = 0;
+static uint64_t status = 0;
 
 #define RSSI_STABLE_WINDOW_SIZE 250 // TODO: trend window size
 #define RSSI_STABLE_TOLERANCE 1 // TODO: trend window size
@@ -568,6 +569,9 @@ void select_best_lut_value()
 
 	uint8_t rssi_threshold = 60;
 
+
+	rssi = acl_rssi; // TODO: HACK - Remove
+
 	// if (prr < 95) {
 	// 	curr_lut_setting_idx = lut_size - 1; // MAX SETTING
 	// } else if ((rssi > rssi_threshold || prr < 99) && (curr - last_adjusted_ts) > 50000) {
@@ -579,18 +583,41 @@ void select_best_lut_value()
 	// TODO: Calculate Trend - if trend falls - increase setting - only if flat optimize power
 	// TODO: Calculate Trend for RSSI too - detect movement
 
-
-	if (prr < 95) {
-		curr_lut_setting_idx = lut_size - 1; // MAX SETTING
-	} if ((!is_rssi_stable(acl_rssi) && prr < 99) || ((rssi > rssi_threshold || prr < 97) && (curr - last_adjusted_ts) > 50000)) {
-		curr_lut_setting_idx = MIN(curr_lut_setting_idx + 1, lut_size - 1); // HIGHER
-	} else if (prr > 96 && prr < 99) {
-		// DO NOTHING
-	} else if (prr > 99 && rssi_after_downshift < rssi_threshold && (curr - last_adjusted_ts) > 5000 && is_rssi_stable(acl_rssi)) {
-		curr_lut_setting_idx = MAX(curr_lut_setting_idx - 1, 0); // LOWER
+	if ((curr - last_adjusted_ts) > 1000) {
+		if (prr < 95) {
+			if (rssi > 60) { 
+				curr_lut_setting_idx = MIN(curr_lut_setting_idx + 3, lut_size - 1); // INCREASE FASTEST
+			} if (rssi > 50) { 
+				curr_lut_setting_idx = MIN(curr_lut_setting_idx + 2, lut_size - 1); // INCREASE FASTER
+			} else {
+				curr_lut_setting_idx = MIN(curr_lut_setting_idx + 1, lut_size - 1); // INCREASE NORMAL
+			}
+			status = 0;
+		} else if (prr < (95 + 5)) {
+			// DO NOTHING
+		} else {
+			if (status < 50) {
+				status++;
+			} else {
+				if (acl_recv_rssi_after_downshift < 80) { // not reliable anymore if rssi > 87
+					curr_lut_setting_idx = MAX(curr_lut_setting_idx - 1, 0); // DECREASE
+				}
+			}
+		}
 	}
 
+	// if ((prr < 95 || rssi > 80) && (curr - last_adjusted_ts) > 1000) { // already lost 3 packets - go to max
+	// 	// curr_lut_setting_idx = lut_size - 1; // MAX SETTING
+	// 	curr_lut_setting_idx = MIN(curr_lut_setting_idx + 1, lut_size - 1); // HIGHER
+	// } if ((rssi > rssi_threshold || prr < 99) && (curr - last_adjusted_ts) > 5000) {
+	// 	curr_lut_setting_idx = MIN(curr_lut_setting_idx + 1, lut_size - 1); // HIGHER
+	// } else {
+	// 	if (prr > 99 && rssi_after_downshift < rssi_threshold && (curr - last_adjusted_ts) > 5000) {
+	// 		curr_lut_setting_idx = MAX(curr_lut_setting_idx - 1, 0); // LOWER
+	// 	}
 
+	// 	// DO NOTHING
+	// }
 	
 	// if (rssi > 80) {
 	// 	curr_lut_setting_idx = MIN(curr_lut_setting_idx++, lut_size);
@@ -638,6 +665,12 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 			}
 			// k_timer_status_sync(&send_timer); // wait until stopped
 
+			err = bt_le_ext_adv_stop(adv);
+			if (err) {
+				printk("Failed to start extended advertising (err %d)\n", err);
+				return;
+			}
+
 			err = bt_iso_big_terminate(big);
 			if (err) {
 				printk("bt_iso_big_terminate failed (err %d)\n", err);
@@ -652,6 +685,12 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 
 			bis[0]->qos->tx->sdu = DATA_SIZE_BYTE;
 			double_sending_rate_activated = false;
+
+			err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+			if (err) {
+				printk("Failed to start extended advertising (err %d)\n", err);
+				return;
+			}
 
 			err = bt_iso_big_create(adv, &big_create_param, &big);
 			if (err) {
@@ -688,6 +727,12 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 			}
 			// k_timer_status_sync(&send_timer); // wait until stopped
 
+			err = bt_le_ext_adv_stop(adv);
+			if (err) {
+				printk("Failed to start extended advertising (err %d)\n", err);
+				return;
+			}
+
 			err = bt_iso_big_terminate(big);
 			if (err) {
 				printk("bt_iso_big_terminate failed (err %d)\n", err);
@@ -697,12 +742,6 @@ void adj_thread_handler(void *dummy1, void *dummy2, void *dummy3)
 			err = k_sem_take(&sem_big_term, K_FOREVER);
 			if (err) {
 				printk("sem_big_term failed (err %d)\n", err);
-				return;
-			}
-
-			err = bt_le_ext_adv_stop(adv);
-			if (err) {
-				printk("Failed to start extended advertising (err %d)\n", err);
 				return;
 			}
 
