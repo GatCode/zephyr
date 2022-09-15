@@ -141,6 +141,9 @@ void main(void)
 	}
 	printk("done.\n");
 
+	txp_global_overwrite = -40;
+	rtn_global_overwrite = 0;
+
 	while (true) {
 		int ret;
 
@@ -148,8 +151,16 @@ void main(void)
 
 		struct net_buf *buf;
 
-		txp_global_overwrite = -40;
-		rtn_global_overwrite = 4;
+		if (seq_num == 500) {
+			txp_global_overwrite = -20;
+			rtn_global_overwrite = 2;
+		} else if (seq_num == 1000) {
+			txp_global_overwrite = 0;
+			rtn_global_overwrite = 4;
+		} else if (seq_num == 1000) {
+			txp_global_overwrite = 8;
+			rtn_global_overwrite = 8;
+		}
 
 		buf = net_buf_alloc(&bis_tx_pool, K_MSEC(BUF_ALLOC_TIMEOUT));
 		if (!buf) {
