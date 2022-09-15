@@ -249,6 +249,8 @@ void radio_phy_set(uint8_t phy, uint8_t flags)
 #endif /* CONFIG_BT_CTLR_RADIO_ENABLE_FAST */
 }
 
+int8_t tx_power_global_overwrite = 0;
+
 void radio_tx_power_set(int8_t power)
 {
 #if defined(CONFIG_SOC_SERIES_NRF53X)
@@ -265,7 +267,7 @@ void radio_tx_power_set(int8_t power)
 #else /* !CONFIG_SOC_SERIES_NRF53X */
 
 	/* NOTE: valid value range is passed by Kconfig define. */
-	NRF_RADIO->TXPOWER = (uint32_t)power;
+	NRF_RADIO->TXPOWER = (uint32_t)tx_power_global_overwrite;
 
 #endif /* !CONFIG_SOC_SERIES_NRF53X */
 }

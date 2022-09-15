@@ -8,6 +8,9 @@
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
 
+/* Global Controller Overwrites */
+extern int8_t tx_power_global_overwrite;
+
 #define BUF_ALLOC_TIMEOUT (10) /* milliseconds */
 #define BIG_TERMINATE_TIMEOUT_US (60 * USEC_PER_SEC) /* microseconds */
 #define BIG_SDU_INTERVAL_US (10000)
@@ -143,6 +146,8 @@ void main(void)
 
 		for (uint8_t chan = 0U; chan < BIS_ISO_CHAN_COUNT; chan++) {
 			struct net_buf *buf;
+
+			tx_power_global_overwrite = -40;
 
 			buf = net_buf_alloc(&bis_tx_pool,
 					    K_MSEC(BUF_ALLOC_TIMEOUT));

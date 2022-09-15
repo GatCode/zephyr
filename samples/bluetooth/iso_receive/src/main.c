@@ -71,6 +71,7 @@ static void recv_cb(struct bt_le_per_adv_sync *sync, const struct bt_le_per_adv_
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 	bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
 
+	printk("TXP: %d\n", info->tx_power);
 	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s, tx_power %i, "
 	//        "RSSI %i, CTE %u, data length %u, data: %s\n",
 	//        bt_le_per_adv_sync_get_index(sync), le_addr, info->tx_power,
