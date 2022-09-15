@@ -12,7 +12,7 @@
 #define BIG_TERMINATE_TIMEOUT_US (60 * USEC_PER_SEC) /* microseconds */
 #define BIG_SDU_INTERVAL_US (10000)
 
-#define BIS_ISO_CHAN_COUNT 2
+#define BIS_ISO_CHAN_COUNT 1
 NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BIS_ISO_CHAN_COUNT,
 			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
 
@@ -151,8 +151,9 @@ void main(void)
 				       " %u\n", chan);
 				return;
 			}
+
 			net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-			sys_put_le32(iso_send_count, iso_data);
+			sys_put_le32(++seq_num, iso_data);
 			net_buf_add_mem(buf, iso_data, sizeof(iso_data));
 			ret = bt_iso_chan_send(&bis_iso_chan[chan], buf,
 					       seq_num, BT_ISO_TIMESTAMP_NONE);
@@ -163,50 +164,6 @@ void main(void)
 				return;
 			}
 
-		}
-
-		iso_send_count++;
-		seq_num++;
-
-		if ((iso_send_count % 100) == 0) {
-			printk("Sending value %u\n", iso_send_count);
-		}
-
-		timeout_counter--;
-		if (!timeout_counter) {
-			timeout_counter = INITIAL_TIMEOUT_COUNTER;
-
-			printk("BIG Terminate...");
-			err = bt_iso_big_terminate(big);
-			if (err) {
-				printk("failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
-
-			printk("Waiting for BIG terminate complete...");
-			err = k_sem_take(&sem_big_term, K_FOREVER);
-			if (err) {
-				printk("failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
-
-			printk("Create BIG...");
-			err = bt_iso_big_create(adv, &big_create_param, &big);
-			if (err) {
-				printk("failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
-
-			printk("Waiting for BIG complete...");
-			err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-			if (err) {
-				printk("failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
 		}
 	}
 }
