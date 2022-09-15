@@ -408,6 +408,8 @@ static void isr_tx_normal(void *param)
 	isr_tx_common(param, isr_tx_normal, lll_isr_done);
 }
 
+uint8_t rtn_global_overwrite = 0;
+
 static void isr_tx_common(void *param,
 			  radio_isr_cb_t isr_tx,
 			  radio_isr_cb_t isr_done)
@@ -421,6 +423,10 @@ static void isr_tx_common(void *param,
 	uint8_t bis;
 
 	lll = param;
+	lll->irc = rtn_global_overwrite + 1;
+	lll->ptc = lll->irc;
+	lll->nse = lll->bn * lll->irc;
+
 	/* FIXME: Sequential or Interleaved BIS subevents decision */
 	/* Sequential Tx complete flow pseudo code */
 	if (lll->bn_curr < lll->bn) {

@@ -9,11 +9,12 @@
 #include <zephyr/sys/byteorder.h>
 
 /* Global Controller Overwrites */
-extern int8_t tx_power_global_overwrite;
+extern int8_t txp_global_overwrite;
+extern uint8_t rtn_global_overwrite;
 
 #define BUF_ALLOC_TIMEOUT (10) /* milliseconds */
 #define BIG_TERMINATE_TIMEOUT_US (60 * USEC_PER_SEC) /* microseconds */
-#define BIG_SDU_INTERVAL_US (10000)
+#define BIG_SDU_INTERVAL_US (20000)
 
 #define BIS_ISO_CHAN_COUNT 1
 NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BIS_ISO_CHAN_COUNT,
@@ -49,7 +50,7 @@ static struct bt_iso_chan_ops iso_ops = {
 
 static struct bt_iso_chan_io_qos iso_tx_qos = {
 	.sdu = sizeof(uint32_t), /* bytes */
-	.rtn = 1,
+	.rtn = 8,
 	.phy = BT_GAP_LE_PHY_2M,
 };
 
@@ -71,7 +72,7 @@ static struct bt_iso_big_create_param big_create_param = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_channels = bis,
 	.interval = BIG_SDU_INTERVAL_US, /* in microseconds */
-	.latency = 10, /* in milliseconds */
+	.latency = 20, /* in milliseconds */
 	.packing = 0, /* 0 - sequential, 1 - interleaved */
 	.framing = 0, /* 0 - unframed, 1 - framed */
 };
@@ -147,7 +148,8 @@ void main(void)
 		for (uint8_t chan = 0U; chan < BIS_ISO_CHAN_COUNT; chan++) {
 			struct net_buf *buf;
 
-			tx_power_global_overwrite = -40;
+			txp_global_overwrite = -40;
+			rtn_global_overwrite = 8;
 
 			buf = net_buf_alloc(&bis_tx_pool,
 					    K_MSEC(BUF_ALLOC_TIMEOUT));
