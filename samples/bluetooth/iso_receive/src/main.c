@@ -111,7 +111,7 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			" counter value %u", chan, info->flags, info->seq_num,
 			info->ts, buf->len, seq_num);
 
-		if (seq_num != prev_seq_num + 1) {
+		if (seq_num != prev_seq_num + 1 && seq_num != prev_seq_num) {
 			printk(" - LOST\n");
 		} else {
 			printk("\n");

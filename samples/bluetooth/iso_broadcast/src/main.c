@@ -1,45 +1,48 @@
-/*
- * Copyright (c) 2021 Nordic Semiconductor ASA
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
 
+/* ------------------------------------------------------ */
+/* Basic Definitions */
+/* ------------------------------------------------------ */
+#define MAX_RTN 8
+#define SDU_INTERVAL_US 20000
+#define TRANSPORT_LATENCY_MS 20
+
+/* ------------------------------------------------------ */
 /* Global Controller Overwrites */
+/* ------------------------------------------------------ */
 extern int8_t txp_global_overwrite;
 extern uint8_t rtn_global_overwrite;
 
+/* ------------------------------------------------------ */
+/* Important Globals */
+/* ------------------------------------------------------ */
+static uint32_t seq_num;
+
+
+
+
+/* ------------------------------------------------------ */
+/* ISO Stuff */
+/* ------------------------------------------------------ */
 #define BUF_ALLOC_TIMEOUT (10) /* milliseconds */
 #define BIG_TERMINATE_TIMEOUT_US (60 * USEC_PER_SEC) /* microseconds */
-#define BIG_SDU_INTERVAL_US (20000)
-
 #define BIS_ISO_CHAN_COUNT 1
-NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BIS_ISO_CHAN_COUNT,
-			  BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
+
+NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BIS_ISO_CHAN_COUNT, BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
 
 static K_SEM_DEFINE(sem_big_cmplt, 0, 1);
 static K_SEM_DEFINE(sem_big_term, 0, 1);
 
-#define INITIAL_TIMEOUT_COUNTER (BIG_TERMINATE_TIMEOUT_US / BIG_SDU_INTERVAL_US)
-
-static uint32_t seq_num;
-
 static void iso_connected(struct bt_iso_chan *chan)
 {
-	printk("ISO Channel %p connected\n", chan);
-
 	seq_num = 0U;
-
 	k_sem_give(&sem_big_cmplt);
 }
 
 static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 {
-	printk("ISO Channel %p disconnected with reason 0x%02x\n",
-	       chan, reason);
 	k_sem_give(&sem_big_term);
 }
 
@@ -49,37 +52,35 @@ static struct bt_iso_chan_ops iso_ops = {
 };
 
 static struct bt_iso_chan_io_qos iso_tx_qos = {
-	.sdu = sizeof(uint32_t), /* bytes */
-	.rtn = 8,
+	.sdu = sizeof(uint32_t),
+	.rtn = MAX_RTN,
 	.phy = BT_GAP_LE_PHY_2M,
 };
 
 static struct bt_iso_chan_qos bis_iso_qos = {
-	.tx = &iso_tx_qos,
+	.tx = &iso_tx_qos
 };
 
-static struct bt_iso_chan bis_iso_chan[] = {
-	{ .ops = &iso_ops, .qos = &bis_iso_qos, },
-	{ .ops = &iso_ops, .qos = &bis_iso_qos, },
+static struct bt_iso_chan bis_iso_chan = {
+	.ops = &iso_ops,
+	.qos = &bis_iso_qos
 };
 
-static struct bt_iso_chan *bis[] = {
-	&bis_iso_chan[0],
-	&bis_iso_chan[1],
+static struct bt_iso_chan *bis[BIS_ISO_CHAN_COUNT] = {
+	&bis_iso_chan
 };
 
 static struct bt_iso_big_create_param big_create_param = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_channels = bis,
-	.interval = BIG_SDU_INTERVAL_US, /* in microseconds */
-	.latency = 20, /* in milliseconds */
-	.packing = 0, /* 0 - sequential, 1 - interleaved */
-	.framing = 0, /* 0 - unframed, 1 - framed */
+	.interval = SDU_INTERVAL_US,
+	.latency = TRANSPORT_LATENCY_MS,
+	.packing = BT_ISO_PACKING_SEQUENTIAL,
+	.framing = BT_ISO_FRAMING_UNFRAMED,
 };
 
 void main(void)
 {
-	uint32_t timeout_counter = INITIAL_TIMEOUT_COUNTER;
 	struct bt_le_ext_adv *adv;
 	struct bt_iso_big *big;
 	int err;
@@ -145,32 +146,24 @@ void main(void)
 
 		k_sleep(K_USEC(big_create_param.interval));
 
-		for (uint8_t chan = 0U; chan < BIS_ISO_CHAN_COUNT; chan++) {
-			struct net_buf *buf;
+		struct net_buf *buf;
 
-			txp_global_overwrite = -40;
-			rtn_global_overwrite = 8;
+		txp_global_overwrite = -40;
+		rtn_global_overwrite = 4;
 
-			buf = net_buf_alloc(&bis_tx_pool,
-					    K_MSEC(BUF_ALLOC_TIMEOUT));
-			if (!buf) {
-				printk("Data buffer allocate timeout on channel"
-				       " %u\n", chan);
-				return;
-			}
-
-			net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-			sys_put_le32(++seq_num, iso_data);
-			net_buf_add_mem(buf, iso_data, sizeof(iso_data));
-			ret = bt_iso_chan_send(&bis_iso_chan[chan], buf,
-					       seq_num, BT_ISO_TIMESTAMP_NONE);
-			if (ret < 0) {
-				printk("Unable to broadcast data on channel %u"
-				       " : %d", chan, ret);
-				net_buf_unref(buf);
-				return;
-			}
-
+		buf = net_buf_alloc(&bis_tx_pool, K_MSEC(BUF_ALLOC_TIMEOUT));
+		if (!buf) {
+			return;
 		}
+
+		net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+		sys_put_le32(++seq_num, iso_data);
+		net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+		ret = bt_iso_chan_send(&bis_iso_chan, buf, seq_num, BT_ISO_TIMESTAMP_NONE);
+		if (ret < 0) {
+			printk("Unable to broadcast data\n");
+			net_buf_unref(buf);
+			return;
+		}		
 	}
 }
