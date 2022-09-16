@@ -30,8 +30,8 @@ static uint32_t seq_num;
 
 NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BIS_ISO_CHAN_COUNT, BT_ISO_SDU_BUF_SIZE(CONFIG_BT_ISO_TX_MTU), 8, NULL);
 
-static K_SEM_DEFINE(sem_big_cmplt, 0, 1);
-static K_SEM_DEFINE(sem_big_term, 0, 1);
+static K_SEM_DEFINE(sem_big_cmplt, 0, BIS_ISO_CHAN_COUNT);
+static K_SEM_DEFINE(sem_big_term, 0, BIS_ISO_CHAN_COUNT);
 
 struct net_buf *buf;
 uint8_t iso_data[DATA_SIZE_BYTE] = { 0 };
@@ -147,17 +147,96 @@ void main(void)
 		return;
 	}
 
-	printk("Waiting for BIG complete...");
-	err = k_sem_take(&sem_big_cmplt, K_FOREVER);
-	if (err) {
-		printk("failed (err %d)\n", err);
-		return;
+	for (uint8_t chan = 0U; chan < BIS_ISO_CHAN_COUNT; chan++) {
+		printk("Waiting for BIG complete chan %u...\n", chan);
+		err = k_sem_take(&sem_big_cmplt, K_FOREVER);
+		if (err) {
+			printk("failed (err %d)\n", err);
+			return;
+		}
+		printk("BIG create complete chan %u.\n", chan);
 	}
-	printk("done.\n");
 
 	txp_global_overwrite = -20;
 	rtn_global_overwrite = 2;
 
-	/* Start ISO Stream */
-	iso_sent(&bis_iso_chan);
+		k_sleep(K_USEC(big_create_param.interval));
+
+		for (uint8_t chan = 0U; chan < BIS_ISO_CHAN_COUNT; chan++) {
+			struct net_buf *buf;
+
+			buf = net_buf_alloc(&bis_tx_pool,
+					    K_MSEC(BUF_ALLOC_TIMEOUT));
+			if (!buf) {
+				printk("Data buffer allocate timeout on channel"
+				       " %u\n", chan);
+				return;
+			}
+			net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+			sys_put_le32(iso_send_count, iso_data);
+			net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+			ret = bt_iso_chan_send(&bis_iso_chan[chan], buf,
+					       seq_num, BT_ISO_TIMESTAMP_NONE);
+			if (ret < 0) {
+				printk("Unable to broadcast data on channel %u"
+				       " : %d", chan, ret);
+				net_buf_unref(buf);
+				return;
+			}
+
+		}
+
+		iso_send_count++;
+		seq_num++;
+
+		if ((iso_send_count % 100) == 0) {
+			printk("Sending value %u\n", iso_send_count);
+		}
+
+		timeout_counter--;
+		if (!timeout_counter) {
+			timeout_counter = INITIAL_TIMEOUT_COUNTER;
+
+			printk("BIG Terminate...");
+			err = bt_iso_big_terminate(big);
+			if (err) {
+				printk("failed (err %d)\n", err);
+				return;
+			}
+			printk("done.\n");
+
+			for (uint8_t chan = 0U; chan < BIS_ISO_CHAN_COUNT;
+			     chan++) {
+				printk("Waiting for BIG terminate complete"
+				       " chan %u...\n", chan);
+				err = k_sem_take(&sem_big_term, K_FOREVER);
+				if (err) {
+					printk("failed (err %d)\n", err);
+					return;
+				}
+				printk("BIG terminate complete chan %u.\n",
+				       chan);
+			}
+
+			printk("Create BIG...");
+			err = bt_iso_big_create(adv, &big_create_param, &big);
+			if (err) {
+				printk("failed (err %d)\n", err);
+				return;
+			}
+			printk("done.\n");
+
+			for (uint8_t chan = 0U; chan < BIS_ISO_CHAN_COUNT;
+			     chan++) {
+				printk("Waiting for BIG complete chan %u...\n",
+				       chan);
+				err = k_sem_take(&sem_big_cmplt, K_FOREVER);
+				if (err) {
+					printk("failed (err %d)\n", err);
+					return;
+				}
+				printk("BIG create complete chan %u.\n", chan);
+			}
+		}
+	}
 }

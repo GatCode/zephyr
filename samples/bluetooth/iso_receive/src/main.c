@@ -31,6 +31,8 @@ static uint32_t prev_seq_num = 0;
 
 #define PA_RETRY_COUNT 6
 
+#define BIS_ISO_CHAN_COUNT 2
+
 static bool         per_adv_found;
 static bool         per_adv_lost;
 static bt_addr_le_t per_addr;
@@ -41,8 +43,8 @@ static K_SEM_DEFINE(sem_per_adv, 0, 1);
 static K_SEM_DEFINE(sem_per_sync, 0, 1);
 static K_SEM_DEFINE(sem_per_sync_lost, 0, 1);
 static K_SEM_DEFINE(sem_per_big_info, 0, 1);
-static K_SEM_DEFINE(sem_big_sync, 0, 1);
-static K_SEM_DEFINE(sem_big_sync_lost, 0, 1);
+static K_SEM_DEFINE(sem_big_sync, 0, BIS_ISO_CHAN_COUNT);
+static K_SEM_DEFINE(sem_big_sync_lost, 0, BIS_ISO_CHAN_COUNT);
 
 static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_simple *buf)
 {
@@ -133,17 +135,21 @@ static struct bt_iso_chan_ops iso_ops = {
 
 static struct bt_iso_chan_io_qos iso_rx_qos;
 
-static struct bt_iso_chan_qos bis_iso_qos = {
-	.rx = &iso_rx_qos
+static struct bt_iso_chan_qos bis_iso_qos[] = {
+	{ .rx = &iso_rx_qos[0], },
+	{ .rx = &iso_rx_qos[1], },
 };
 
-static struct bt_iso_chan bis_iso_chan = {
-	.ops = &iso_ops,
-	.qos = &bis_iso_qos
+static struct bt_iso_chan bis_iso_chan[] = {
+	{ .ops = &iso_ops,
+	  .qos = &bis_iso_qos[0], },
+	{ .ops = &iso_ops,
+	  .qos = &bis_iso_qos[1], },
 };
 
-static struct bt_iso_chan *bis[BIS_ISO_CHAN_COUNT] = {
-	&bis_iso_chan,
+static struct bt_iso_chan *bis[] = {
+	&bis_iso_chan[0],
+	&bis_iso_chan[1],
 };
 
 static struct bt_iso_big_sync_param big_sync_param = {
@@ -264,8 +270,14 @@ big_sync_create:
 		}
 		printk("success.\n");
 
-		printk("Waiting for BIG sync...\n");
-		err = k_sem_take(&sem_big_sync, TIMEOUT_SYNC_CREATE);
+		for (uint8_t chan = 0U; chan < BIS_ISO_CHAN_COUNT; chan++) {
+			printk("Waiting for BIG sync chan %u...\n", chan);
+			err = k_sem_take(&sem_big_sync, TIMEOUT_SYNC_CREATE);
+			if (err) {
+				break;
+			}
+			printk("BIG sync chan %u successful.\n", chan);
+		}
 		if (err) {
 			printk("failed (err %d)\n", err);
 
@@ -281,11 +293,27 @@ big_sync_create:
 		}
 		printk("BIG sync established.\n");
 
-		printk("Waiting for BIG sync lost...\n");
-		err = k_sem_take(&sem_big_sync_lost, K_FOREVER);
-		if (err) {
-			printk("failed (err %d)\n", err);
-			return;
+#if defined(HAS_LED)
+		printk("Stop blinking LED.\n");
+		blink = false;
+		/* If this fails, we'll exit early in the handler because blink
+		 * is false.
+		 */
+		k_work_cancel_delayable(&blink_work);
+
+		/* Keep LED on */
+		led_is_on = true;
+		gpio_pin_set_dt(&led_gpio, (int)led_is_on);
+#endif /* HAS_LED */
+
+		for (uint8_t chan = 0U; chan < BIS_ISO_CHAN_COUNT; chan++) {
+			printk("Waiting for BIG sync lost chan %u...\n", chan);
+			err = k_sem_take(&sem_big_sync_lost, K_FOREVER);
+			if (err) {
+				printk("failed (err %d)\n", err);
+				return;
+			}
+			printk("BIG sync lost chan %u.\n", chan);
 		}
 		printk("BIG sync lost.\n");
 
