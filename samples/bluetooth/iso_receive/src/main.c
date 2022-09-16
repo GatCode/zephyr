@@ -5,6 +5,8 @@
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
 
 /* ------------------------------------------------------ */
 /* Global Controller Overwrites */
@@ -16,6 +18,91 @@ extern int8_t txp_global_overwrite;
 /* ------------------------------------------------------ */
 static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
+
+/* ------------------------------------------------------ */
+/* Defines Threads (main thread = prio 0) */
+/* ------------------------------------------------------ */
+#define STACKSIZE 1024
+#define ACL_PRIORITY 10
+
+/* ------------------------------------------------------ */
+/* ACL */
+/* ------------------------------------------------------ */
+K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
+static struct k_thread thread_acl_data;
+static struct bt_conn *acl_conn;
+
+#define DEVICE_NAME_ACL "nRF52840"
+#define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
+
+#define BT_LE_ADV_FAST_CONN \
+		BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, BT_GAP_ADV_FAST_INT_MIN_1, \
+		BT_GAP_ADV_FAST_INT_MAX_1, NULL)
+
+static struct bt_gatt_indicate_params ind_params;
+
+static K_SEM_DEFINE(acl_connected, 0, 1);
+
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME_ACL, DEVICE_NAME_ACL_LEN),
+};
+
+static void htmc_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value)
+{
+	// currently unused
+}
+
+BT_GATT_SERVICE_DEFINE(hts_svc,
+	BT_GATT_PRIMARY_SERVICE(BT_UUID_HTS),
+	BT_GATT_CHARACTERISTIC(BT_UUID_HTS_MEASUREMENT, BT_GATT_CHRC_INDICATE,
+			       BT_GATT_PERM_NONE, NULL, NULL, NULL),
+	BT_GATT_CCC(htmc_ccc_cfg_changed,
+		    BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+);
+
+static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
+{
+	if (err) {
+		printk("ACL Connection failed (err 0x%02x)\n", err);
+	} else {
+		acl_conn = conn;
+		printk("ACL Connected\n");
+		k_sem_give(&acl_connected);
+	}
+}
+
+static void acl_disconnected_cb(struct bt_conn *conn, uint8_t reason)
+{
+	printk("ACL Disconnected (reason 0x%02x)\n", reason);
+	k_thread_start(&thread_acl_data);
+}
+
+static struct bt_conn_cb conn_callbacks = {
+	.connected = acl_connected_cb,
+	.disconnected = acl_disconnected_cb,
+};
+
+void work_adv_start(struct k_work *item)
+{
+	int ret = bt_le_adv_start(BT_LE_ADV_FAST_CONN, ad, ARRAY_SIZE(ad), NULL, 0);
+
+	if (ret) {
+		printk("ACL advertising failed to start (ret %d)\n", ret);
+	}
+}
+K_WORK_DEFINE(adv_work, work_adv_start);
+
+void acl_thread(void *dummy1, void *dummy2, void *dummy3)
+{
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
+
+	txp_global_overwrite = 8;
+	bt_conn_cb_register(&conn_callbacks);
+	k_work_submit(&adv_work);
+}
 
 /* ------------------------------------------------------ */
 /* ISO Stuff */
@@ -168,6 +255,20 @@ void main(void)
 	err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+
+	/* Start ACL */
+	k_thread_create(&thread_acl_data, thread_acl_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+			acl_thread, NULL, NULL, NULL,
+			ACL_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_acl_data, "acl_thread");
+	k_thread_start(&thread_acl_data);
+
+	err = k_sem_take(&acl_connected, K_FOREVER);
+	if (err) {
+		printk("failed (err %d)\n", err);
 		return;
 	}
 
