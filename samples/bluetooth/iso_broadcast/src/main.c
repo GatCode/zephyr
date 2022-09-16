@@ -8,6 +8,7 @@
 #define MAX_RTN 8
 #define SDU_INTERVAL_US 20000
 #define TRANSPORT_LATENCY_MS 20
+#define DATA_SIZE_BYTE 50
 
 /* ------------------------------------------------------ */
 /* Global Controller Overwrites */
@@ -19,9 +20,6 @@ extern uint8_t rtn_global_overwrite;
 /* Important Globals */
 /* ------------------------------------------------------ */
 static uint32_t seq_num;
-
-
-
 
 /* ------------------------------------------------------ */
 /* ISO Stuff */
@@ -35,6 +33,10 @@ NET_BUF_POOL_FIXED_DEFINE(bis_tx_pool, BIS_ISO_CHAN_COUNT, BT_ISO_SDU_BUF_SIZE(C
 static K_SEM_DEFINE(sem_big_cmplt, 0, 1);
 static K_SEM_DEFINE(sem_big_term, 0, 1);
 
+struct net_buf *buf;
+uint8_t iso_data[DATA_SIZE_BYTE] = { 0 };
+static struct bt_iso_chan bis_iso_chan;
+
 static void iso_connected(struct bt_iso_chan *chan)
 {
 	seq_num = 0U;
@@ -46,13 +48,30 @@ static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 	k_sem_give(&sem_big_term);
 }
 
+static void iso_sent(struct bt_iso_chan *chan)
+{
+	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
+	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+	sys_put_le32(++seq_num, iso_data);
+	iso_data[4] = (uint8_t)txp_global_overwrite;
+	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+
+	int ret = bt_iso_chan_send(&bis_iso_chan, buf, seq_num, BT_ISO_TIMESTAMP_NONE);
+	if (ret < 0) {
+		printk("Unable to broadcast data: %d", ret);
+		net_buf_unref(buf);
+		return;
+	}
+}
+
 static struct bt_iso_chan_ops iso_ops = {
-	.connected	= iso_connected,
-	.disconnected	= iso_disconnected,
+	.connected = iso_connected,
+	.disconnected = iso_disconnected,
+	.sent = iso_sent,
 };
 
 static struct bt_iso_chan_io_qos iso_tx_qos = {
-	.sdu = sizeof(uint32_t),
+	.sdu = DATA_SIZE_BYTE,
 	.rtn = MAX_RTN,
 	.phy = BT_GAP_LE_PHY_2M,
 };
@@ -84,11 +103,6 @@ void main(void)
 	struct bt_le_ext_adv *adv;
 	struct bt_iso_big *big;
 	int err;
-
-	uint32_t iso_send_count = 0;
-	uint8_t iso_data[sizeof(iso_send_count)] = { 0 };
-
-	printk("Starting ISO Broadcast Demo\n");
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
@@ -141,40 +155,9 @@ void main(void)
 	}
 	printk("done.\n");
 
-	txp_global_overwrite = -40;
-	rtn_global_overwrite = 0;
+	txp_global_overwrite = -20;
+	rtn_global_overwrite = 2;
 
-	while (true) {
-		int ret;
-
-		k_sleep(K_USEC(big_create_param.interval));
-
-		struct net_buf *buf;
-
-		if (seq_num == 500) {
-			txp_global_overwrite = -20;
-			rtn_global_overwrite = 2;
-		} else if (seq_num == 1000) {
-			txp_global_overwrite = 0;
-			rtn_global_overwrite = 4;
-		} else if (seq_num == 1000) {
-			txp_global_overwrite = 8;
-			rtn_global_overwrite = 8;
-		}
-
-		buf = net_buf_alloc(&bis_tx_pool, K_MSEC(BUF_ALLOC_TIMEOUT));
-		if (!buf) {
-			return;
-		}
-
-		net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-		sys_put_le32(++seq_num, iso_data);
-		net_buf_add_mem(buf, iso_data, sizeof(iso_data));
-		ret = bt_iso_chan_send(&bis_iso_chan, buf, seq_num, BT_ISO_TIMESTAMP_NONE);
-		if (ret < 0) {
-			printk("Unable to broadcast data\n");
-			net_buf_unref(buf);
-			return;
-		}		
-	}
+	/* Start ISO Stream */
+	iso_sent(&bis_iso_chan);
 }

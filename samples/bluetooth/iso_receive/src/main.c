@@ -1,9 +1,3 @@
-/*
- * Copyright (c) 2021 Nordic Semiconductor ASA
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
@@ -12,8 +6,23 @@
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
 
+/* ------------------------------------------------------ */
+/* Global Controller Overwrites */
+/* ------------------------------------------------------ */
+extern int8_t txp_global_overwrite;
+
+/* ------------------------------------------------------ */
+/* Important Globals */
+/* ------------------------------------------------------ */
+static uint32_t seq_num = 0;
+static uint32_t prev_seq_num = 0;
+
+/* ------------------------------------------------------ */
+/* ISO Stuff */
+/* ------------------------------------------------------ */
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
-#define NAME_LEN            30
+#define NAME_LEN 30
+#define BIS_ISO_CHAN_COUNT 1
 
 #define BT_LE_SCAN_CUSTOM BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_ACTIVE, \
 							BT_LE_SCAN_OPT_NONE, \
@@ -63,21 +72,6 @@ static void term_cb(struct bt_le_per_adv_sync *sync, const struct bt_le_per_adv_
 	k_sem_give(&sem_per_sync_lost);
 }
 
-static void recv_cb(struct bt_le_per_adv_sync *sync, const struct bt_le_per_adv_sync_recv_info *info, struct net_buf_simple *buf)
-{
-	char le_addr[BT_ADDR_LE_STR_LEN];
-	char data_str[129];
-
-	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-	bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
-
-	printk("TXP: %d\n", info->tx_power);
-	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s, tx_power %i, "
-	//        "RSSI %i, CTE %u, data length %u, data: %s\n",
-	//        bt_le_per_adv_sync_get_index(sync), le_addr, info->tx_power,
-	//        info->rssi, info->cte_type, buf->len, data_str);
-}
-
 static void biginfo_cb(struct bt_le_per_adv_sync *sync, const struct bt_iso_biginfo *biginfo)
 {
 	k_sem_give(&sem_per_big_info);
@@ -86,30 +80,24 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync, const struct bt_iso_bigi
 static struct bt_le_per_adv_sync_cb sync_callbacks = {
 	.synced = sync_cb,
 	.term = term_cb,
-	.recv = recv_cb,
 	.biginfo = biginfo_cb,
 };
-
-#define BIS_ISO_CHAN_COUNT 1
-static uint32_t seq_num = 0;
-static uint32_t prev_seq_num = 0;
 
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
-		for(uint8_t i = 0; i < 20; i++) {
-			if(i < 4) {
-				count_arr[i] = buf->data[i];
-			}
+		for(uint8_t i = 0; i < 4; i++) {
+			count_arr[i] = buf->data[i];
 		}
 		seq_num = sys_get_le32(count_arr);
+		txp_global_overwrite = (int8_t)buf->data[4];
 
 		// str_len = bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
 		printk("Incoming data channel %p flags 0x%x seq_num %u ts %u len %u: "
-			" counter value %u", chan, info->flags, info->seq_num,
-			info->ts, buf->len, seq_num);
+			" counter value %u txp %d", chan, info->flags, info->seq_num,
+			info->ts, buf->len, seq_num, txp_global_overwrite);
 
 		if (seq_num != prev_seq_num + 1 && seq_num != prev_seq_num) {
 			printk(" - LOST\n");
@@ -162,8 +150,8 @@ static struct bt_iso_big_sync_param big_sync_param = {
 	.bis_channels = bis,
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_bitfield = (BIT_MASK(BIS_ISO_CHAN_COUNT) << 1),
-	.mse = 1,
-	.sync_timeout = 100, /* in 10 ms units */
+	.mse = 31,
+	.sync_timeout = 100, /* in 10 ms units */ // BT_ISO_SYNC_TIMEOUT_MAX
 };
 
 void main(void)
