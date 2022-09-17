@@ -5778,7 +5778,7 @@ int hci_iso_handle(struct net_buf *buf, struct net_buf **evt)
 
 		stream->pkt_seq_num++;
 
-		if (ll_iso_tx_mem_enqueue(stream_handle, tx, NULL)) {
+		if (ll_iso_tx_mem_enqueue(handle, tx, NULL)) {
 			BT_ERR("Invalid ISO Tx Enqueue");
 			ll_iso_tx_mem_release(tx);
 			return -EINVAL;
