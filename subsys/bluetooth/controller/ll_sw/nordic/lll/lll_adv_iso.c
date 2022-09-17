@@ -253,7 +253,7 @@ static int prepare_cb_common(struct lll_prepare_param *p)
 	memq_link_t *link;
 
 	stream_handle = lll->stream_handle[lll->bis_curr - 1U];
-	handle = stream_handle + BT_CTLR_ADV_ISO_STREAM_HANDLE_BASE;
+	handle = ADV_ISO_STREAM2CONN_HANDLE(stream_handle);
 	stream = ull_adv_iso_lll_stream_get(stream_handle);
 	LL_ASSERT(stream);
 
@@ -508,7 +508,7 @@ static void isr_tx_common(void *param,
 		 * stream_handle = lll->stream_handle[lll->bis_curr - 1U];
 		 */
 		stream_handle = 0U;
-		handle = stream_handle + BT_CTLR_ADV_ISO_STREAM_HANDLE_BASE;
+		handle = ADV_ISO_STREAM2CONN_HANDLE(stream_handle);
 		stream = ull_adv_iso_lll_stream_get(stream_handle);
 		LL_ASSERT(stream);
 

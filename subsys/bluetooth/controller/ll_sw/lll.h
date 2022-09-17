@@ -149,8 +149,14 @@ enum {
 #else /* !CONFIG_BT_MAX_CONN */
 #define BT_CTLR_ADV_ISO_STREAM_HANDLE_BASE 0
 #endif /* !CONFIG_BT_MAX_CONN */
+#define ADV_ISO_CONN2STREAM_HANDLE(conn_handle) \
+	((conn_handle) - (BT_CTLR_ADV_ISO_STREAM_HANDLE_BASE))
+#define ADV_ISO_STREAM2CONN_HANDLE(stream_handle) \
+	((stream_handle) + (BT_CTLR_ADV_ISO_STREAM_HANDLE_BASE))
 #else /* !CONFIG_BT_CTLR_ADV_ISO */
 #define BT_CTLR_ADV_ISO_STREAM_MAX 0
+#define ADV_ISO_CONN2STREAM_HANDLE(conn_handle) 0
+#define ADV_ISO_STREAM2CONN_HANDLE(stream_handle) 0
 #endif /* CONFIG_BT_CTLR_ADV_ISO */
 
 /* Define the ISO Synchronized Receiver Stream Handle base value */
