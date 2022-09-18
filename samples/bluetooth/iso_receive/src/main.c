@@ -258,19 +258,19 @@ void main(void)
 		return;
 	}
 
-	// /* Start ACL */
-	// k_thread_create(&thread_acl_data, thread_acl_stack_area,
-	// 		K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
-	// 		acl_thread, NULL, NULL, NULL,
-	// 		ACL_PRIORITY, 0, K_FOREVER);
-	// k_thread_name_set(&thread_acl_data, "acl_thread");
-	// k_thread_start(&thread_acl_data);
+	/* Start ACL */
+	k_thread_create(&thread_acl_data, thread_acl_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
+			acl_thread, NULL, NULL, NULL,
+			ACL_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_acl_data, "acl_thread");
+	k_thread_start(&thread_acl_data);
 
-	// err = k_sem_take(&acl_connected, K_FOREVER);
-	// if (err) {
-	// 	printk("failed (err %d)\n", err);
-	// 	return;
-	// }
+	err = k_sem_take(&acl_connected, K_FOREVER);
+	if (err) {
+		printk("failed (err %d)\n", err);
+		return;
+	}
 
 	printk("Scan callbacks register...");
 	bt_le_scan_cb_register(&scan_callbacks);
