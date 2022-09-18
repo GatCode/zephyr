@@ -37,13 +37,18 @@ static struct bt_gatt_subscribe_params subscribe_params;
 #define DEVICE_NAME_ACL "nRF52840"
 #define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
 
-#define CONFIG_BLE_ACL_CONN_INTERVAL 80 // 40ms
+#define CONFIG_BLE_ACL_CONN_INTERVAL 8 // * 1.25 - 40ms
 #define CONFIG_BLE_ACL_SLAVE_LATENCY 0
 #define CONFIG_BLE_ACL_SUP_TIMEOUT 100
 
 #define BT_LE_CONN_PARAM_MULTI \
-		BT_LE_CONN_PARAM(16, 16, \
+		BT_LE_CONN_PARAM(CONFIG_BLE_ACL_CONN_INTERVAL, CONFIG_BLE_ACL_CONN_INTERVAL, \
 		CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
+
+#define BT_CONN_LE_CREATE_CONN_CUSTOM \
+	BT_CONN_LE_CREATE_PARAM(BT_CONN_LE_OPT_NONE, \
+				BT_GAP_SCAN_SLOW_INTERVAL_1, \
+				BT_GAP_SCAN_SLOW_INTERVAL_1)
 
 static K_SEM_DEFINE(acl_connected, 0, 1);
 
@@ -60,7 +65,7 @@ static int device_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 	    (strncmp(DEVICE_NAME_ACL, data, DEVICE_NAME_ACL_LEN) == 0)) {
 		bt_le_scan_stop();
 
-		ret = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, BT_LE_CONN_PARAM_MULTI,
+		ret = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN_CUSTOM, BT_LE_CONN_PARAM_MULTI,
 					&conn);
 		if (ret) {
 			printk("Could not init ACL connection\n");
@@ -259,19 +264,19 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 	printk("ACL connected - %s\n", addr);
 
-	/* Start Service Discovery */
-	memcpy(&uuid, BT_UUID_HTS, sizeof(uuid));
-	discover_params.uuid = &uuid.uuid;
-	discover_params.func = discover_func;
-	discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
-	discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
-	discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+	// /* Start Service Discovery */
+	// memcpy(&uuid, BT_UUID_HTS, sizeof(uuid));
+	// discover_params.uuid = &uuid.uuid;
+	// discover_params.func = discover_func;
+	// discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+	// discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+	// discover_params.type = BT_GATT_DISCOVER_PRIMARY;
 
-	int err = bt_gatt_discover(conn, &discover_params);
-	if (err) {
-		printk("ACL discovery failed(err %d)\n", err);
-		return;
-	}
+	// int err = bt_gatt_discover(conn, &discover_params);
+	// if (err) {
+	// 	printk("ACL discovery failed(err %d)\n", err);
+	// 	return;
+	// }
 
 	k_sem_give(&acl_connected);
 }
@@ -383,8 +388,14 @@ void main(void)
 		return;
 	}
 
-	/* Start ACL Scanning */
-	k_work_submit(&start_scan_work);
+	// /* Start ACL Scanning */
+	// k_work_submit(&start_scan_work);
+
+	// err = k_sem_take(&acl_connected, K_FOREVER);
+	// if (err) {
+	// 	printk("failed (err %d)\n", err);
+	// 	return;
+	// }
 
 	// TODO: Start with highest TXP for per adv? - will this ensure per adc are always at max txp???
 

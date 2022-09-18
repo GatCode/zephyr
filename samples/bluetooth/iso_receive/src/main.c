@@ -173,6 +173,7 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
+	// printk("Received ISO Frame with flag: %u\n", info->flags);
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 		for(uint8_t i = 0; i < 4; i++) {
