@@ -11,10 +11,10 @@
 /* ------------------------------------------------------ */
 /* Basic Definitions */
 /* ------------------------------------------------------ */
-#define MAX_RTN 8
+#define MAX_RTN 0
 #define SDU_INTERVAL_US 20000
 #define TRANSPORT_LATENCY_MS 20
-#define DATA_SIZE_BYTE 50
+#define DATA_SIZE_BYTE 30
 
 /* ------------------------------------------------------ */
 /* Global Controller Overwrites */
@@ -37,12 +37,12 @@ static struct bt_gatt_subscribe_params subscribe_params;
 #define DEVICE_NAME_ACL "nRF52840"
 #define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
 
-#define CONFIG_BLE_ACL_CONN_INTERVAL 32 // 40ms
+#define CONFIG_BLE_ACL_CONN_INTERVAL 80 // 40ms
 #define CONFIG_BLE_ACL_SLAVE_LATENCY 0
 #define CONFIG_BLE_ACL_SUP_TIMEOUT 100
 
 #define BT_LE_CONN_PARAM_MULTI \
-		BT_LE_CONN_PARAM(CONFIG_BLE_ACL_CONN_INTERVAL, CONFIG_BLE_ACL_CONN_INTERVAL, \
+		BT_LE_CONN_PARAM(16, 16, \
 		CONFIG_BLE_ACL_SLAVE_LATENCY, CONFIG_BLE_ACL_SUP_TIMEOUT)
 
 static K_SEM_DEFINE(acl_connected, 0, 1);
@@ -390,23 +390,23 @@ void main(void)
 
 	#define BT_LE_EXT_ADV_NCONN_NAME_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME, \
-			BT_GAP_ADV_FAST_INT_MIN_1, \
-			BT_GAP_ADV_FAST_INT_MAX_1, \
+			BT_GAP_ADV_FAST_INT_MIN_2, \
+			BT_GAP_ADV_FAST_INT_MIN_2, \
 			NULL)
 
 	/* Create a non-connectable non-scannable advertising set */
-	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN_NAME, NULL, &adv);
+	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN_NAME_CUSTOM, NULL, &adv);
 	if (err) {
 		printk("Failed to create advertising set (err %d)\n", err);
 		return;
 	}
 
-	#define BT_LE_PER_ADV_CUSTOM BT_LE_PER_ADV_PARAM(BT_GAP_PER_ADV_SLOW_INT_MIN, \
-			BT_GAP_PER_ADV_SLOW_INT_MAX, \
+	#define BT_LE_PER_ADV_CUSTOM BT_LE_PER_ADV_PARAM(BT_GAP_PER_ADV_FAST_INT_MIN_2, \
+			BT_GAP_PER_ADV_FAST_INT_MIN_2, \
 			BT_LE_PER_ADV_OPT_NONE)
 
 	/* Set periodic advertising parameters */
-	err = bt_le_per_adv_set_param(adv, BT_LE_PER_ADV_DEFAULT);
+	err = bt_le_per_adv_set_param(adv, BT_LE_PER_ADV_CUSTOM);
 	if (err) {
 		printk("Failed to set periodic advertising parameters"
 		       " (err %d)\n", err);
@@ -443,7 +443,7 @@ void main(void)
 	printk("done.\n");
 
 	txp_global_overwrite = 8;
-	rtn_global_overwrite = 2;
+	rtn_global_overwrite = 0;
 
 	/* Start ISO Stream */
 	iso_sent(&bis_iso_chan);

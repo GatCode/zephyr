@@ -36,8 +36,8 @@ static struct bt_conn *acl_conn;
 #define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
 
 #define BT_LE_ADV_FAST_CONN \
-		BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, BT_GAP_ADV_FAST_INT_MIN_1, \
-		BT_GAP_ADV_FAST_INT_MAX_1, NULL)
+		BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, BT_GAP_ADV_FAST_INT_MIN_2, \
+		BT_GAP_ADV_FAST_INT_MIN_2, NULL)
 
 static struct bt_gatt_indicate_params ind_params;
 
@@ -266,11 +266,11 @@ void main(void)
 	k_thread_name_set(&thread_acl_data, "acl_thread");
 	k_thread_start(&thread_acl_data);
 
-	err = k_sem_take(&acl_connected, K_FOREVER);
-	if (err) {
-		printk("failed (err %d)\n", err);
-		return;
-	}
+	// err = k_sem_take(&acl_connected, K_FOREVER);
+	// if (err) {
+	// 	printk("failed (err %d)\n", err);
+	// 	return;
+	// }
 
 	printk("Scan callbacks register...");
 	bt_le_scan_cb_register(&scan_callbacks);
