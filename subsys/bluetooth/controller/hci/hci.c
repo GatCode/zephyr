@@ -5719,7 +5719,7 @@ int hci_iso_handle(struct net_buf *buf, struct net_buf **evt)
 		if (handle < BT_CTLR_ADV_ISO_STREAM_HANDLE_BASE) {
 			return -EINVAL;
 		}
-		stream_handle = handle - BT_CTLR_ADV_ISO_STREAM_HANDLE_BASE;
+		stream_handle = ADV_ISO_CONN2STREAM_HANDLE(handle);
 
 		struct lll_adv_iso_stream *stream;
 
@@ -7692,8 +7692,7 @@ static void le_big_complete(struct pdu_data *pdu_data,
 	for (uint8_t i = 0U; i < lll->num_bis; i++) {
 		uint16_t handle;
 
-		handle = BT_CTLR_ADV_ISO_STREAM_HANDLE_BASE +
-			 lll->stream_handle[i];
+		handle = ADV_ISO_STREAM2CONN_HANDLE(lll->stream_handle[i]);
 		sep->handle[i] = sys_cpu_to_le16(handle);
 	}
 }
