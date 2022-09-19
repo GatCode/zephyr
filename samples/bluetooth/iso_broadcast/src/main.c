@@ -11,7 +11,7 @@
 /* ------------------------------------------------------ */
 /* Basic Definitions */
 /* ------------------------------------------------------ */
-#define MAX_RTN 0
+#define MAX_RTN 4
 #define SDU_INTERVAL_US 20000
 #define TRANSPORT_LATENCY_MS 20
 #define DATA_SIZE_BYTE 30
@@ -37,7 +37,7 @@ static struct bt_gatt_subscribe_params subscribe_params;
 #define DEVICE_NAME_ACL "nRF52840"
 #define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
 
-#define CONFIG_BLE_ACL_CONN_INTERVAL 8 // * 1.25 - 40ms
+#define CONFIG_BLE_ACL_CONN_INTERVAL 32 // * 1.25 - 40ms
 #define CONFIG_BLE_ACL_SLAVE_LATENCY 0
 #define CONFIG_BLE_ACL_SUP_TIMEOUT 100
 
@@ -173,32 +173,8 @@ static uint8_t notify_func(struct bt_conn *conn,
 		return BT_GATT_ITER_STOP;
 	}
 
-	printk("Notifivation received!\n");
-
-	// iso_receiver_rssi = RollingMAvg8Bit(&rssi_mavg, ((uint8_t *)data)[0]);
-	// prr = ((uint8_t *)data)[1];
-
-	// int8_t rssi = 0;
- 	// uint16_t handle = 0;
- 	// bt_hci_get_conn_handle(conn, &handle);
- 	// read_conn_rssi(handle, &rssi);
-	// acl_rssi = RollingMAvg8Bit(&acl_rssi_mavg, (uint8_t)-rssi);
-
-	// if (length >= 3) { // Opcode Received
-	// 	uint8_t curr_opcode = ((uint8_t *)data)[2];
-	// 	if (curr_opcode == 10) { // buffer reached B
-	// 		buffer_reached_B = true;
-	// 	} else if (curr_opcode == 11) { // buffer reached A
-	// 		buffer_reached_A = true;
-	// 	} else if (curr_opcode == 12) { // refill needed
-	// 		refill_needed = true;
-	// 		buffer_reached_A = false;
-	// 		buffer_reached_B = false;
-	// 	} else {
-	// 		buffer_reached_A = false;
-	// 		buffer_reached_B = false;
-	// 	}
-	// }
+	uint8_t iso_receiver_rssi = ((uint8_t *)data)[0];
+	printk("RSSI Notification: -%u\n", iso_receiver_rssi);
 	
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -264,19 +240,19 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 	printk("ACL connected - %s\n", addr);
 
-	// /* Start Service Discovery */
-	// memcpy(&uuid, BT_UUID_HTS, sizeof(uuid));
-	// discover_params.uuid = &uuid.uuid;
-	// discover_params.func = discover_func;
-	// discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
-	// discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
-	// discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+	/* Start Service Discovery */
+	memcpy(&uuid, BT_UUID_HTS, sizeof(uuid));
+	discover_params.uuid = &uuid.uuid;
+	discover_params.func = discover_func;
+	discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+	discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+	discover_params.type = BT_GATT_DISCOVER_PRIMARY;
 
-	// int err = bt_gatt_discover(conn, &discover_params);
-	// if (err) {
-	// 	printk("ACL discovery failed(err %d)\n", err);
-	// 	return;
-	// }
+	int err = bt_gatt_discover(conn, &discover_params);
+	if (err) {
+		printk("ACL discovery failed(err %d)\n", err);
+		return;
+	}
 
 	k_sem_give(&acl_connected);
 }
@@ -388,8 +364,8 @@ void main(void)
 		return;
 	}
 
-	// /* Start ACL Scanning */
-	// k_work_submit(&start_scan_work);
+	/* Start ACL Scanning */
+	k_work_submit(&start_scan_work);
 
 	// err = k_sem_take(&acl_connected, K_FOREVER);
 	// if (err) {
@@ -454,7 +430,7 @@ void main(void)
 	printk("done.\n");
 
 	txp_global_overwrite = 8;
-	rtn_global_overwrite = 0;
+	rtn_global_overwrite = 2;
 
 	/* Start ISO Stream */
 	iso_sent(&bis_iso_chan);

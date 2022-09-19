@@ -104,6 +104,70 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 	k_work_submit(&adv_work);
 }
 
+static int8_t per_adv_rssi = 0;
+static uint8_t acl_rssi = 0;
+
+void indicate_work_handler(struct k_work *item)
+{
+	/* Fetch ACL connection handle */
+	uint16_t acl_handle = 0;
+	int err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
+	if (err) {
+		printk("Failed to fetch the ACL connection handle (err %d)\n", err);
+		return;
+	}
+
+	// /* Set TXP */
+	// err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, per_adv_txp_idx);
+	// if (err) {
+	// 	printk("Failed to set tx power (err %d)\n", err);
+	// 	return;
+	// }
+
+	// /* Determine Opcode */
+	// uint8_t new_opc = 0;
+	// uint32_t free_slots = ring_buf_space_get(&PacketBuffer) / DATA_SIZE_BYTE;
+	// if (PACKET_BUFFER_SIZE - free_slots > PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH) {
+	// 	new_opc = 10; // ready for downshift
+	// } else if (PACKET_BUFFER_SIZE - free_slots > PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW) {
+	// 	new_opc = 11; // normal buffering speed - ready for next adjustment
+	// } else if (PACKET_BUFFER_SIZE - free_slots < 20) {
+	// 	new_opc = 12; // buffer is critical - let's suggest refill
+	// } else {
+	// 	new_opc = 13; // ignore
+	// }
+
+	/* Prepare Indication */
+	// #define CONST_IND_DATA_SIZE 3
+	// uint8_t ind_data_size = CONST_IND_DATA_SIZE;
+	// static uint8_t ind_data[CONST_IND_DATA_SIZE];
+
+	// if (last_indicated_opcode == new_opc) { // don't indicate the same opcode twice
+	// 	ind_data_size = ind_data_size - 1;
+	// } else {
+	// 	last_indicated_opcode = new_opc;
+	// }
+
+	static uint8_t ind_data[1];
+
+	acl_rssi = (uint8_t)-per_adv_rssi; // convert to uint8_t
+
+	/* Create Indication */
+	ind_data[0] = acl_rssi;
+	// ind_data[1] = (uint8_t)prr;
+	// ind_data[2] = new_opc;
+	ind_params.attr = &hts_svc.attrs[2];
+	ind_params.data = &ind_data;
+	ind_params.len = sizeof(uint8_t);// * ind_data_size;
+	(void)bt_gatt_indicate(NULL, &ind_params);
+}
+K_WORK_DEFINE(indicate_work, indicate_work_handler);
+
+void acl_indicate()
+{
+	k_work_submit(&indicate_work);
+}
+
 /* ------------------------------------------------------ */
 /* ISO Stuff */
 /* ------------------------------------------------------ */
@@ -164,10 +228,16 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync, const struct bt_iso_bigi
 	k_sem_give(&sem_per_big_info);
 }
 
+static void recv_cb(struct bt_le_per_adv_sync *sync, const struct bt_le_per_adv_sync_recv_info *info, struct net_buf_simple *buf)
+{
+	per_adv_rssi = info->rssi;
+} 
+
 static struct bt_le_per_adv_sync_cb sync_callbacks = {
 	.synced = sync_cb,
 	.term = term_cb,
 	.biginfo = biginfo_cb,
+	.recv = recv_cb,
 };
 
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
@@ -242,6 +312,65 @@ static struct bt_iso_big_sync_param big_sync_param = {
 	.sync_timeout = 100, /* in 10 ms units */ // BT_ISO_SYNC_TIMEOUT_MAX
 };
 
+
+
+
+
+
+
+
+void buffer_timer_handler(struct k_timer *dummy)
+{
+	// uint32_t free_slots = ring_buf_space_get(&PacketBuffer);
+
+	// // initial buffer fill as stream establishment
+	// if (PACKET_BUFFER_SIZE - (free_slots / DATA_SIZE_BYTE) > PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH && iso_just_established) {
+	// 	iso_just_established = false;
+	// } 
+	
+	// if (iso_just_established) {
+	// 	return;
+	// }
+	
+	// if (!ring_buf_is_empty(&PacketBuffer)) {
+	// 	uint8_t data[DATA_SIZE_BYTE];
+	// 	ring_buf_get(&PacketBuffer, (uint8_t*)&data, DATA_SIZE_BYTE);
+
+	// 	uint8_t count_arr[4];
+	// 	for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
+	// 		if(i < 4) {
+	// 			count_arr[i] = data[i];
+	// 		}
+	// 	}
+	// 	seq_num = sys_get_le32(count_arr);
+
+	// 	gpio_pin_toggle_dt(&led2);
+
+	// 	if (seq_num - 1 != prev_seq_num && prev_seq_num < seq_num) {
+	// 		for (uint8_t i = 0; i < seq_num - prev_seq_num; i++) {
+	// 			prr = RollingmAvg(0);
+	// 		}
+	// 	} else {
+	// 		prr = RollingmAvg(1);
+	// 	}
+
+	// 	// acl_indicate(prr);
+
+	// 	if (seq_num - 1 != prev_seq_num) {
+	// 		printk("LOST - ");
+	// 	}
+
+	// 	prev_seq_num = seq_num;
+	// } else {
+	// 	prr = RollingmAvg(0);
+	// }
+
+	acl_indicate(0);
+
+	// printk("Buffer occupied: %u out of %u - prr: %.02f%% - seq_num: %u - rssi: %d, tx_power index: %d, per_adv_txp: %d\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, prr, seq_num, per_adv_rssi, per_adv_txp_idx, per_adv_txp);
+}
+K_TIMER_DEFINE(buffer_timer, buffer_timer_handler, NULL);
+
 void main(void)
 {
 	struct bt_le_per_adv_sync_param sync_create_param;
@@ -280,6 +409,9 @@ void main(void)
 	printk("Periodic Advertising callbacks register...");
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
 	printk("Success.\n");
+
+	/* Start buffer timer */
+	k_timer_start(&buffer_timer, K_NO_WAIT, K_MSEC(1000));
 
 	do {
 		per_adv_lost = false;

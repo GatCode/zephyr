@@ -540,7 +540,7 @@ static void win_offset_calc(struct ll_conn *conn_curr, uint8_t is_select,
 						break;
 					}
 
-					sys_put_le16(offset,
+					sys_put_le16(offset + HAL_TICKER_US_TO_TICKS(10000),
 						     (win_offset +
 						      (sizeof(uint16_t) *
 						       offset_index)));
@@ -579,7 +579,7 @@ static void win_offset_calc(struct ll_conn *conn_curr, uint8_t is_select,
 				break;
 			}
 
-			sys_put_le16(offset, (win_offset + (sizeof(uint16_t) *
+			sys_put_le16(offset + HAL_TICKER_US_TO_TICKS(10000), (win_offset + (sizeof(uint16_t) *
 							    offset_index)));
 			offset_index++;
 
