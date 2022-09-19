@@ -123,41 +123,36 @@ void work_scan_start(struct k_work *item)
 }
 K_WORK_DEFINE(start_scan_work, work_scan_start);
 
-static bool double_sending_rate_activated = false;
-static bool  refill_needed = false;
-static bool buffer_reached_A = false;
-static bool buffer_reached_B = false;
-
 static void read_conn_rssi(uint16_t handle, int8_t *rssi)
- {
- 	struct net_buf *buf, *rsp = NULL;
- 	struct bt_hci_cp_read_rssi *cp;
- 	struct bt_hci_rp_read_rssi *rp;
+{
+	struct net_buf *buf, *rsp = NULL;
+	struct bt_hci_cp_read_rssi *cp;
+	struct bt_hci_rp_read_rssi *rp;
 
- 	int err;
+	int err;
 
- 	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
- 	if (!buf) {
- 		printk("Unable to allocate command buffer\n");
- 		return;
- 	}
+	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
+	if (!buf) {
+		printk("Unable to allocate command buffer\n");
+		return;
+	}
 
- 	cp = net_buf_add(buf, sizeof(*cp));
- 	cp->handle = sys_cpu_to_le16(handle);
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = sys_cpu_to_le16(handle);
 
- 	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
- 	if (err) {
- 		uint8_t reason = rsp ?
- 			((struct bt_hci_rp_read_rssi *)rsp->data)->status : 0;
- 		printk("Read RSSI err: %d reason 0x%02x\n", err, reason);
- 		return;
- 	}
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
+	if (err) {
+		uint8_t reason = rsp ?
+			((struct bt_hci_rp_read_rssi *)rsp->data)->status : 0;
+		printk("Read RSSI err: %d reason 0x%02x\n", err, reason);
+		return;
+	}
 
- 	rp = (void *)rsp->data;
- 	*rssi = rp->rssi;
+	rp = (void *)rsp->data;
+	*rssi = rp->rssi;
 
- 	net_buf_unref(rsp);
- }
+	net_buf_unref(rsp);
+}
 
 static uint8_t notify_func(struct bt_conn *conn,
 			   struct bt_gatt_subscribe_params *params,
@@ -169,8 +164,16 @@ static uint8_t notify_func(struct bt_conn *conn,
 		return BT_GATT_ITER_STOP;
 	}
 
+	uint16_t handle = 0;
+	int err = bt_hci_get_conn_handle(conn, &handle);
+	if (err) {
+		printk("Failed to read ACL connection handle\n");
+	}
+	int8_t rssi = 0;
+	read_conn_rssi(handle, &rssi);
+
 	uint8_t iso_receiver_rssi = ((uint8_t *)data)[0];
-	printk("RSSI Notification: -%u\n", iso_receiver_rssi);
+	printk("ACL RSSI: %d | PER RSSI: -%d\n", rssi, iso_receiver_rssi);
 	
 	return BT_GATT_ITER_CONTINUE;
 }
