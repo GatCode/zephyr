@@ -315,6 +315,14 @@ static void iso_sent(struct bt_iso_chan *chan)
 		net_buf_unref(buf);
 		return;
 	}
+
+	if (seq_num % 1000 > 600) {
+		txp_global_overwrite = 8;
+	} else if (seq_num % 1000 > 300) {
+		txp_global_overwrite = 0;
+	} else {
+		txp_global_overwrite = -40;
+	}
 }
 
 static struct bt_iso_chan_ops iso_ops = {

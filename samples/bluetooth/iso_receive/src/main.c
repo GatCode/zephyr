@@ -396,11 +396,11 @@ void main(void)
 	k_thread_name_set(&thread_acl_data, "acl_thread");
 	k_thread_start(&thread_acl_data);
 
-	// err = k_sem_take(&acl_connected, K_FOREVER);
-	// if (err) {
-	// 	printk("failed (err %d)\n", err);
-	// 	return;
-	// }
+	err = k_sem_take(&acl_connected, K_FOREVER);
+	if (err) {
+		printk("failed (err %d)\n", err);
+		return;
+	}
 
 	printk("Scan callbacks register...");
 	bt_le_scan_cb_register(&scan_callbacks);
