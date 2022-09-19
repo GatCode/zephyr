@@ -374,7 +374,7 @@ static struct bt_iso_big_sync_param big_sync_param = {
 	.num_bis = BIS_ISO_CHAN_COUNT,
 	.bis_bitfield = (BIT_MASK(BIS_ISO_CHAN_COUNT) << 1),
 	.mse = 31,
-	.sync_timeout = 100, /* in 10 ms units */ // BT_ISO_SYNC_TIMEOUT_MAX
+	.sync_timeout = BT_ISO_SYNC_TIMEOUT_MAX,
 };
 
 void main(void)
