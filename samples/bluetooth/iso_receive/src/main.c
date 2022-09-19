@@ -9,6 +9,11 @@
 #include <zephyr/bluetooth/gatt.h>
 
 /* ------------------------------------------------------ */
+/* Basic Definitions */
+/* ------------------------------------------------------ */
+#define SDU_INTERVAL_US 20000
+
+/* ------------------------------------------------------ */
 /* Global Controller Overwrites */
 /* ------------------------------------------------------ */
 extern int8_t txp_global_overwrite;
@@ -411,7 +416,7 @@ void main(void)
 	printk("Success.\n");
 
 	/* Start buffer timer */
-	k_timer_start(&buffer_timer, K_NO_WAIT, K_MSEC(1000));
+	k_timer_start(&buffer_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
 
 	do {
 		per_adv_lost = false;
