@@ -7,10 +7,10 @@
 /* ------------------------------------------------------ */
 /* Basic Definitions */
 /* ------------------------------------------------------ */
-#define MAX_RTN 4
+#define MAX_RTN 8
 #define SDU_INTERVAL_US 20000
 #define TRANSPORT_LATENCY_MS 20
-#define DATA_SIZE_BYTE 30
+#define DATA_SIZE_BYTE 50
 
 /* ------------------------------------------------------ */
 /* Global Controller Overwrites */
@@ -377,10 +377,6 @@ void main(void)
 		return;
 	}
 
-	k_sleep(K_MSEC(2000));
-
-	// TODO: Start with highest TXP for per adv? - will this ensure per adc are always at max txp???
-
 	#define BT_LE_EXT_ADV_NCONN_NAME_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME, \
 			BT_GAP_ADV_FAST_INT_MIN_2, \
@@ -438,7 +434,7 @@ void main(void)
 	printk("done.\n");
 
 	txp_global_overwrite = 8;
-	rtn_global_overwrite = 2;
+	rtn_global_overwrite = 8;
 
 	/* Start ISO Stream */
 	iso_sent(&bis_iso_chan);

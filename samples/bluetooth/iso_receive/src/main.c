@@ -23,6 +23,7 @@ extern int8_t txp_global_overwrite;
 /* ------------------------------------------------------ */
 static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
+static bool buffer_timer_started = false;
 
 /* ------------------------------------------------------ */
 /* Defines Threads (main thread = prio 0) */
@@ -47,6 +48,9 @@ static struct bt_conn *acl_conn;
 static struct bt_gatt_indicate_params ind_params;
 
 static K_SEM_DEFINE(acl_connected, 0, 1);
+
+extern void buffer_timer_handler(struct k_timer *timer_id);
+K_TIMER_DEFINE(buffer_timer, buffer_timer_handler, NULL);
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -74,6 +78,12 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 		acl_conn = conn;
 		printk("ACL Connected\n");
 		k_sem_give(&acl_connected);
+
+		/* Start buffer timer */
+		if (!buffer_timer_started) {
+			k_timer_start(&buffer_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
+			buffer_timer_started = true;
+		}
 	}
 }
 
@@ -173,6 +183,57 @@ void acl_indicate()
 	k_work_submit(&indicate_work);
 }
 
+void buffer_timer_handler(struct k_timer *timer_id)
+{
+	// uint32_t free_slots = ring_buf_space_get(&PacketBuffer);
+
+	// // initial buffer fill as stream establishment
+	// if (PACKET_BUFFER_SIZE - (free_slots / DATA_SIZE_BYTE) > PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH && iso_just_established) {
+	// 	iso_just_established = false;
+	// } 
+	
+	// if (iso_just_established) {
+	// 	return;
+	// }
+	
+	// if (!ring_buf_is_empty(&PacketBuffer)) {
+	// 	uint8_t data[DATA_SIZE_BYTE];
+	// 	ring_buf_get(&PacketBuffer, (uint8_t*)&data, DATA_SIZE_BYTE);
+
+	// 	uint8_t count_arr[4];
+	// 	for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
+	// 		if(i < 4) {
+	// 			count_arr[i] = data[i];
+	// 		}
+	// 	}
+	// 	seq_num = sys_get_le32(count_arr);
+
+	// 	gpio_pin_toggle_dt(&led2);
+
+	// 	if (seq_num - 1 != prev_seq_num && prev_seq_num < seq_num) {
+	// 		for (uint8_t i = 0; i < seq_num - prev_seq_num; i++) {
+	// 			prr = RollingmAvg(0);
+	// 		}
+	// 	} else {
+	// 		prr = RollingmAvg(1);
+	// 	}
+
+	// 	// acl_indicate(prr);
+
+	// 	if (seq_num - 1 != prev_seq_num) {
+	// 		printk("LOST - ");
+	// 	}
+
+	// 	prev_seq_num = seq_num;
+	// } else {
+	// 	prr = RollingmAvg(0);
+	// }
+
+	acl_indicate(0);
+
+	// printk("Buffer occupied: %u out of %u - prr: %.02f%% - seq_num: %u - rssi: %d, tx_power index: %d, per_adv_txp: %d\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, prr, seq_num, per_adv_rssi, per_adv_txp_idx, per_adv_txp);
+}
+
 /* ------------------------------------------------------ */
 /* ISO Stuff */
 /* ------------------------------------------------------ */
@@ -248,7 +309,6 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *info,
 		struct net_buf *buf)
 {
-	// printk("Received ISO Frame with flag: %u\n", info->flags);
 	if(info->flags == (BT_ISO_FLAGS_VALID | BT_ISO_FLAGS_TS)) { // valid ISO packet
 		uint8_t count_arr[4];
 		for(uint8_t i = 0; i < 4; i++) {
@@ -317,65 +377,6 @@ static struct bt_iso_big_sync_param big_sync_param = {
 	.sync_timeout = 100, /* in 10 ms units */ // BT_ISO_SYNC_TIMEOUT_MAX
 };
 
-
-
-
-
-
-
-
-void buffer_timer_handler(struct k_timer *dummy)
-{
-	// uint32_t free_slots = ring_buf_space_get(&PacketBuffer);
-
-	// // initial buffer fill as stream establishment
-	// if (PACKET_BUFFER_SIZE - (free_slots / DATA_SIZE_BYTE) > PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH && iso_just_established) {
-	// 	iso_just_established = false;
-	// } 
-	
-	// if (iso_just_established) {
-	// 	return;
-	// }
-	
-	// if (!ring_buf_is_empty(&PacketBuffer)) {
-	// 	uint8_t data[DATA_SIZE_BYTE];
-	// 	ring_buf_get(&PacketBuffer, (uint8_t*)&data, DATA_SIZE_BYTE);
-
-	// 	uint8_t count_arr[4];
-	// 	for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
-	// 		if(i < 4) {
-	// 			count_arr[i] = data[i];
-	// 		}
-	// 	}
-	// 	seq_num = sys_get_le32(count_arr);
-
-	// 	gpio_pin_toggle_dt(&led2);
-
-	// 	if (seq_num - 1 != prev_seq_num && prev_seq_num < seq_num) {
-	// 		for (uint8_t i = 0; i < seq_num - prev_seq_num; i++) {
-	// 			prr = RollingmAvg(0);
-	// 		}
-	// 	} else {
-	// 		prr = RollingmAvg(1);
-	// 	}
-
-	// 	// acl_indicate(prr);
-
-	// 	if (seq_num - 1 != prev_seq_num) {
-	// 		printk("LOST - ");
-	// 	}
-
-	// 	prev_seq_num = seq_num;
-	// } else {
-	// 	prr = RollingmAvg(0);
-	// }
-
-	acl_indicate(0);
-
-	// printk("Buffer occupied: %u out of %u - prr: %.02f%% - seq_num: %u - rssi: %d, tx_power index: %d, per_adv_txp: %d\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, prr, seq_num, per_adv_rssi, per_adv_txp_idx, per_adv_txp);
-}
-K_TIMER_DEFINE(buffer_timer, buffer_timer_handler, NULL);
-
 void main(void)
 {
 	struct bt_le_per_adv_sync_param sync_create_param;
@@ -414,9 +415,6 @@ void main(void)
 	printk("Periodic Advertising callbacks register...");
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
 	printk("Success.\n");
-
-	/* Start buffer timer */
-	k_timer_start(&buffer_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
 
 	do {
 		per_adv_lost = false;
