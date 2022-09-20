@@ -5,3 +5,5 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(iso_broadcast)
 
 target_sources(app PRIVATE src/main.c)
+
+zephyr_library_include_directories(include)

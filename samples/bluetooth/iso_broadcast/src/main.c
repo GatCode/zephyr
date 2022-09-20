@@ -4,6 +4,7 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <stdlib.h>
+#include <lut.h>
 
 /* ------------------------------------------------------ */
 /* Basic Definitions */
@@ -14,6 +15,8 @@
 #define DATA_SIZE_BYTE 50
 
 #define HEARTBEAT_THRESHOLD_MS 1000
+
+#define LUT_INIT_SETTING_IDX 0
 
 /* ------------------------------------------------------ */
 /* Global Controller Overwrites */
@@ -76,6 +79,39 @@ static MAVG rssi_mavg;
 K_THREAD_STACK_DEFINE(thread_adaptation_stack_area, STACKSIZE);
 static struct k_thread thread_adaptation_data;
 
+uint8_t get_current_lut_setting_index()
+{
+	uint8_t lut_size = sizeof(iso_lut) / sizeof(iso_lut[0]);
+	for (uint8_t i = 0; i < lut_size; i++) {
+		if (iso_lut[i].rtn == rtn_global_overwrite && iso_lut[i].txp == txp_global_overwrite) {
+			return i;
+		}
+	}
+	return 0;
+}
+
+void adapt_parameters(bool heartbeat_lost)
+{
+	/* Get Current LUT Setting */
+	uint8_t current_lut_setting_index = get_current_lut_setting_index();
+
+	uint8_t lut_size = sizeof(iso_lut) / sizeof(iso_lut[0]);
+	struct isochronous_parameter_lut current_setting = iso_lut[current_lut_setting_index];
+	struct isochronous_parameter_lut lower_setting = iso_lut[current_lut_setting_index > 0 ? current_lut_setting_index - 1 : 0];
+	struct isochronous_parameter_lut higher_setting = iso_lut[current_lut_setting_index < lut_size - 1 ? current_lut_setting_index + 1 : lut_size - 1];
+
+	double possible_delta_prr_loss = current_setting.delta_prr - lower_setting.delta_prr;
+	double possible_delta_prr_gain = lower_setting.delta_prr - current_setting.delta_prr;
+
+	int8_t possible_rssi_move_downshift = lower_setting.txp - current_setting.txp; // go lower
+	int8_t possible_rssi_move_upshift = higher_setting.txp - current_setting.txp; // go higher
+
+	uint8_t rssi_after_downshift = rssi - possible_rssi_move_downshift; // expected
+	uint8_t rssi_after_upshift = rssi - possible_rssi_move_upshift; // expected
+
+	printk("RSSI DOWN: -%u | RSSI UP: -%u | ", rssi_after_downshift, rssi_after_upshift);
+}
+
 void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 {
 	ARG_UNUSED(dummy1);
@@ -86,10 +122,16 @@ void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 		/* Take it easy */
 		k_sleep(K_USEC(SDU_INTERVAL_US));
 
-		/* Heartbeat Check */
+		/* Heartbeat Calculation */
 		uint32_t curr = k_uptime_get_32();
 		int32_t delta = curr - last_indication_ts;
-		if (abs(delta) > HEARTBEAT_THRESHOLD_MS) {
+		bool heartbeat_lost = abs(delta) > HEARTBEAT_THRESHOLD_MS;
+
+		/* Dynamic Parameter Adaptation */
+		adapt_parameters(heartbeat_lost);
+
+		/* Heartbeat Check */
+		if (heartbeat_lost) {
 			printk("Heartbeat Lost\n");
 			continue;
 		}
@@ -391,14 +433,6 @@ static void iso_sent(struct bt_iso_chan *chan)
 		net_buf_unref(buf);
 		return;
 	}
-
-	// if (seq_num % 1000 > 600) {
-	// 	txp_global_overwrite = 8;
-	// } else if (seq_num % 1000 > 300) {
-	// 	txp_global_overwrite = 0;
-	// } else {
-		txp_global_overwrite = -40;
-	// }
 }
 
 static struct bt_iso_chan_ops iso_ops = {
@@ -451,6 +485,10 @@ void main(void)
 		printk("Bluetooth init failed (err %d)\n", err);
 		return;
 	}
+
+	/* Initialize RTN and TXP (lowest LUT setting) */
+	txp_global_overwrite = iso_lut[LUT_INIT_SETTING_IDX].txp;
+	rtn_global_overwrite = iso_lut[LUT_INIT_SETTING_IDX].rtn;
 
 	/* Start ACL Scanning */
 	k_work_submit(&start_scan_work);
@@ -524,9 +562,6 @@ void main(void)
 		return;
 	}
 	printk("done.\n");
-
-	txp_global_overwrite = 8;
-	rtn_global_overwrite = 8;
 
 	/* Start ISO Stream */
 	iso_sent(&bis_iso_chan);
