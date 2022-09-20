@@ -22,6 +22,43 @@ extern uint8_t rtn_global_overwrite;
 /* Important Globals */
 /* ------------------------------------------------------ */
 static uint32_t seq_num;
+static uint8_t prr = 0;
+static uint8_t rssi = 0;
+
+/* ------------------------------------------------------ */
+/* Windowed Moving Average */
+/* ------------------------------------------------------ */
+// moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
+
+#define RSSI_MAVG_WINDOW_SIZE 10 // ~ 200ms
+
+typedef struct {
+	uint64_t *maverage_values;
+	uint64_t maverage_current_position;
+	uint64_t maverage_current_sum;
+	uint64_t maverage_sample_length;
+} MAVG;
+
+void init_mavg(MAVG *mavg, uint64_t *maverage_values, uint8_t window_size)
+{
+	mavg->maverage_values = maverage_values;
+	mavg->maverage_current_position = 0;
+	mavg->maverage_current_sum = 0;
+	mavg->maverage_sample_length = window_size;
+}
+
+uint8_t RollingMAvg8Bit(MAVG *mavg, uint8_t newValue)
+{
+	mavg->maverage_current_sum = mavg->maverage_current_sum - ((uint64_t*)mavg->maverage_values)[mavg->maverage_current_position] + newValue;
+	((uint64_t*)mavg->maverage_values)[mavg->maverage_current_position] = newValue;
+	mavg->maverage_current_position++;
+	if (mavg->maverage_current_position >= mavg->maverage_sample_length) { // Don't go beyond the size of the array...
+		mavg->maverage_current_position = 0;
+	}
+	return mavg->maverage_current_sum / mavg->maverage_sample_length;
+}
+
+static MAVG rssi_mavg;
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -169,14 +206,17 @@ static uint8_t notify_func(struct bt_conn *conn,
 	if (err) {
 		printk("Failed to read ACL connection handle\n");
 	}
-	int8_t rssi = 0;
-	read_conn_rssi(handle, &rssi);
+	int8_t tmp_rssi = 0;
+	read_conn_rssi(handle, &tmp_rssi);
+	rssi = RollingMAvg8Bit(&rssi_mavg, (uint8_t)-tmp_rssi);
 
-	uint8_t iso_receiver_rssi = ((uint8_t *)data)[0];
-	printk("ACL RSSI: %d | PER RSSI: -%d\n", rssi, iso_receiver_rssi);
+	prr = ((uint8_t *)data)[0]; // PRR == HEARTBEAT
+	printk("ACL RSSI: -%u | PRR: %u%%\n", rssi, prr);
 	
 	return BT_GATT_ITER_CONTINUE;
 }
+
+// TODO: Implement a Buffer of some sort to examine the ACL heartbeat
 
 static uint8_t discover_func(struct bt_conn *conn,
 			     const struct bt_gatt_attr *attr,
@@ -315,13 +355,13 @@ static void iso_sent(struct bt_iso_chan *chan)
 		return;
 	}
 
-	if (seq_num % 1000 > 600) {
-		txp_global_overwrite = 8;
-	} else if (seq_num % 1000 > 300) {
-		txp_global_overwrite = 0;
-	} else {
+	// if (seq_num % 1000 > 600) {
+	// 	txp_global_overwrite = 8;
+	// } else if (seq_num % 1000 > 300) {
+	// 	txp_global_overwrite = 0;
+	// } else {
 		txp_global_overwrite = -40;
-	}
+	// }
 }
 
 static struct bt_iso_chan_ops iso_ops = {
@@ -363,6 +403,10 @@ void main(void)
 	struct bt_le_ext_adv *adv;
 	struct bt_iso_big *big;
 	int err;
+
+	/* Initialize the moving average filter */
+	static uint64_t rssi_mavg_values[RSSI_MAVG_WINDOW_SIZE] = {0};
+	init_mavg(&rssi_mavg, rssi_mavg_values, RSSI_MAVG_WINDOW_SIZE);
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);

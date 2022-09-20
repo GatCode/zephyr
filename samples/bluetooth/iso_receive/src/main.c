@@ -12,6 +12,7 @@
 /* Basic Definitions */
 /* ------------------------------------------------------ */
 #define SDU_INTERVAL_US 20000
+#define DATA_SIZE_BYTE 50
 
 /* ------------------------------------------------------ */
 /* Global Controller Overwrites */
@@ -21,15 +22,54 @@ extern int8_t txp_global_overwrite;
 /* ------------------------------------------------------ */
 /* Important Globals */
 /* ------------------------------------------------------ */
+static double prr = 0.0;
 static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
-static bool buffer_timer_started = false;
+static bool just_received_error_iso_packet = false;
+
+/* ------------------------------------------------------ */
+/* PRR Calculation */
+/* ------------------------------------------------------ */
+#define PRR_MAVG_WINDOW_SIZE 100
 
 /* ------------------------------------------------------ */
 /* Defines Threads (main thread = prio 0) */
 /* ------------------------------------------------------ */
 #define STACKSIZE 1024
 #define ACL_PRIORITY 10
+
+/* ------------------------------------------------------ */
+/* Windowed Moving Average */
+/* ------------------------------------------------------ */
+// moving average algo copied from: https://gist.github.com/mrfaptastic/3fd6394c5d6294c993d8b42b026578da
+
+typedef struct {
+	uint64_t *maverage_values;
+	uint64_t maverage_current_position;
+	uint64_t maverage_current_sum;
+	uint64_t maverage_sample_length;
+} MAVG;
+
+void init_mavg(MAVG *mavg, uint64_t *maverage_values, uint8_t window_size)
+{
+	mavg->maverage_values = maverage_values;
+	mavg->maverage_current_position = 0;
+	mavg->maverage_current_sum = 0;
+	mavg->maverage_sample_length = window_size;
+}
+
+double RollingMAvgDouble(MAVG *mavg, uint8_t newValue)
+{
+	mavg->maverage_current_sum = mavg->maverage_current_sum - ((uint64_t*)mavg->maverage_values)[mavg->maverage_current_position] + newValue;
+	((uint64_t*)mavg->maverage_values)[mavg->maverage_current_position] = newValue;
+	mavg->maverage_current_position++;
+	if (mavg->maverage_current_position >= mavg->maverage_sample_length) { // Don't go beyond the size of the array...
+		mavg->maverage_current_position = 0;
+	}
+	return (double)mavg->maverage_current_sum * 100 / (double)mavg->maverage_sample_length;
+}
+
+static MAVG prr_mavg;
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -48,9 +88,6 @@ static struct bt_conn *acl_conn;
 static struct bt_gatt_indicate_params ind_params;
 
 static K_SEM_DEFINE(acl_connected, 0, 1);
-
-extern void buffer_timer_handler(struct k_timer *timer_id);
-K_TIMER_DEFINE(buffer_timer, buffer_timer_handler, NULL);
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -78,12 +115,6 @@ static void acl_connected_cb(struct bt_conn *conn, uint8_t err)
 		acl_conn = conn;
 		printk("ACL Connected\n");
 		k_sem_give(&acl_connected);
-
-		/* Start buffer timer */
-		if (!buffer_timer_started) {
-			k_timer_start(&buffer_timer, K_NO_WAIT, K_USEC(SDU_INTERVAL_US));
-			buffer_timer_started = true;
-		}
 	}
 }
 
@@ -120,7 +151,6 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 }
 
 static int8_t per_adv_rssi = 0;
-static uint8_t acl_rssi = 0;
 
 void indicate_work_handler(struct k_work *item)
 {
@@ -132,48 +162,12 @@ void indicate_work_handler(struct k_work *item)
 		return;
 	}
 
-	// /* Set TXP */
-	// err = ble_hci_vsc_set_conn_tx_pwr_index(acl_handle, per_adv_txp_idx);
-	// if (err) {
-	// 	printk("Failed to set tx power (err %d)\n", err);
-	// 	return;
-	// }
-
-	// /* Determine Opcode */
-	// uint8_t new_opc = 0;
-	// uint32_t free_slots = ring_buf_space_get(&PacketBuffer) / DATA_SIZE_BYTE;
-	// if (PACKET_BUFFER_SIZE - free_slots > PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH) {
-	// 	new_opc = 10; // ready for downshift
-	// } else if (PACKET_BUFFER_SIZE - free_slots > PACKET_BUFFER_OCCUPIED_THRESHOLD_LOW) {
-	// 	new_opc = 11; // normal buffering speed - ready for next adjustment
-	// } else if (PACKET_BUFFER_SIZE - free_slots < 20) {
-	// 	new_opc = 12; // buffer is critical - let's suggest refill
-	// } else {
-	// 	new_opc = 13; // ignore
-	// }
-
-	/* Prepare Indication */
-	// #define CONST_IND_DATA_SIZE 3
-	// uint8_t ind_data_size = CONST_IND_DATA_SIZE;
-	// static uint8_t ind_data[CONST_IND_DATA_SIZE];
-
-	// if (last_indicated_opcode == new_opc) { // don't indicate the same opcode twice
-	// 	ind_data_size = ind_data_size - 1;
-	// } else {
-	// 	last_indicated_opcode = new_opc;
-	// }
-
-	static uint8_t ind_data[1];
-
-	acl_rssi = (uint8_t)-per_adv_rssi; // convert to uint8_t
-
 	/* Create Indication */
-	ind_data[0] = acl_rssi;
-	// ind_data[1] = (uint8_t)prr;
-	// ind_data[2] = new_opc;
+	static uint8_t ind_data[1];
+	ind_data[0] = (uint8_t)prr;
 	ind_params.attr = &hts_svc.attrs[2];
 	ind_params.data = &ind_data;
-	ind_params.len = sizeof(uint8_t);// * ind_data_size;
+	ind_params.len = sizeof(uint8_t);
 	(void)bt_gatt_indicate(NULL, &ind_params);
 }
 K_WORK_DEFINE(indicate_work, indicate_work_handler);
@@ -181,57 +175,6 @@ K_WORK_DEFINE(indicate_work, indicate_work_handler);
 void acl_indicate()
 {
 	k_work_submit(&indicate_work);
-}
-
-void buffer_timer_handler(struct k_timer *timer_id)
-{
-	// uint32_t free_slots = ring_buf_space_get(&PacketBuffer);
-
-	// // initial buffer fill as stream establishment
-	// if (PACKET_BUFFER_SIZE - (free_slots / DATA_SIZE_BYTE) > PACKET_BUFFER_OCCUPIED_THRESHOLD_HIGH && iso_just_established) {
-	// 	iso_just_established = false;
-	// } 
-	
-	// if (iso_just_established) {
-	// 	return;
-	// }
-	
-	// if (!ring_buf_is_empty(&PacketBuffer)) {
-	// 	uint8_t data[DATA_SIZE_BYTE];
-	// 	ring_buf_get(&PacketBuffer, (uint8_t*)&data, DATA_SIZE_BYTE);
-
-	// 	uint8_t count_arr[4];
-	// 	for(uint8_t i = 0; i < DATA_SIZE_BYTE; i++) {
-	// 		if(i < 4) {
-	// 			count_arr[i] = data[i];
-	// 		}
-	// 	}
-	// 	seq_num = sys_get_le32(count_arr);
-
-	// 	gpio_pin_toggle_dt(&led2);
-
-	// 	if (seq_num - 1 != prev_seq_num && prev_seq_num < seq_num) {
-	// 		for (uint8_t i = 0; i < seq_num - prev_seq_num; i++) {
-	// 			prr = RollingmAvg(0);
-	// 		}
-	// 	} else {
-	// 		prr = RollingmAvg(1);
-	// 	}
-
-	// 	// acl_indicate(prr);
-
-	// 	if (seq_num - 1 != prev_seq_num) {
-	// 		printk("LOST - ");
-	// 	}
-
-	// 	prev_seq_num = seq_num;
-	// } else {
-	// 	prr = RollingmAvg(0);
-	// }
-
-	acl_indicate(0);
-
-	// printk("Buffer occupied: %u out of %u - prr: %.02f%% - seq_num: %u - rssi: %d, tx_power index: %d, per_adv_txp: %d\n", PACKET_BUFFER_SIZE - free_slots / DATA_SIZE_BYTE, PACKET_BUFFER_SIZE, prr, seq_num, per_adv_rssi, per_adv_txp_idx, per_adv_txp);
 }
 
 /* ------------------------------------------------------ */
@@ -316,20 +259,26 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		}
 		seq_num = sys_get_le32(count_arr);
 		txp_global_overwrite = (int8_t)buf->data[4];
+		prr = RollingMAvgDouble(&prr_mavg, 1);
 
-		// str_len = bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
-		printk("Incoming data channel %p flags 0x%x seq_num %u ts %u len %u: "
-			" counter value %u txp %d", chan, info->flags, info->seq_num,
-			info->ts, buf->len, seq_num, txp_global_overwrite);
-
-		if (seq_num != prev_seq_num + 1 && seq_num != prev_seq_num) {
-			printk(" - LOST\n");
-		} else {
-			printk("\n");
+		if (seq_num - 1 != prev_seq_num) {
+			printk("LOST - ");
 		}
 
 		prev_seq_num = seq_num;
+		just_received_error_iso_packet = false;
+	} else if(info->flags == (BT_ISO_FLAGS_TS | BT_ISO_FLAGS_ERROR)) { // possibly valid ISO packet
+		/* Hack since the scheduling has problems (off by 1) */
+		if (!just_received_error_iso_packet) {
+			prr = RollingMAvgDouble(&prr_mavg, 1); // good one
+		} else {
+			prr = RollingMAvgDouble(&prr_mavg, 0); // yeah, this one is a fail
+		}
+		just_received_error_iso_packet = true;
 	}
+
+	printk("Last seq_num: %u, PRR: %.02f%%\n", seq_num, prr);
+	acl_indicate();
 }
 
 static void iso_connected(struct bt_iso_chan *chan)
@@ -385,7 +334,9 @@ void main(void)
 	uint32_t sem_timeout;
 	int err;
 
-	printk("Starting Synchronized Receiver Demo\n");
+	/* Initialize the moving average filter */
+	static uint64_t prr_mavg_values[PRR_MAVG_WINDOW_SIZE] = {0};
+	init_mavg(&prr_mavg, prr_mavg_values, PRR_MAVG_WINDOW_SIZE);
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
