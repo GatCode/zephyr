@@ -3,6 +3,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <stdlib.h>
 
 /* ------------------------------------------------------ */
 /* Basic Definitions */
@@ -11,6 +12,8 @@
 #define SDU_INTERVAL_US 20000
 #define TRANSPORT_LATENCY_MS 20
 #define DATA_SIZE_BYTE 50
+
+#define HEARTBEAT_THRESHOLD_MS 1000
 
 /* ------------------------------------------------------ */
 /* Global Controller Overwrites */
@@ -24,6 +27,13 @@ extern uint8_t rtn_global_overwrite;
 static uint32_t seq_num;
 static uint8_t prr = 0;
 static uint8_t rssi = 0;
+static uint32_t last_indication_ts = 0;
+
+/* ------------------------------------------------------ */
+/* Defines Threads (main thread = prio 0) */
+/* ------------------------------------------------------ */
+#define STACKSIZE 1024
+#define ADAPTATION_THREAD_PRIORITY 10
 
 /* ------------------------------------------------------ */
 /* Windowed Moving Average */
@@ -59,6 +69,35 @@ uint8_t RollingMAvg8Bit(MAVG *mavg, uint8_t newValue)
 }
 
 static MAVG rssi_mavg;
+
+/* ------------------------------------------------------ */
+/* Adaptation Thread */
+/* ------------------------------------------------------ */
+K_THREAD_STACK_DEFINE(thread_adaptation_stack_area, STACKSIZE);
+static struct k_thread thread_adaptation_data;
+
+void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
+{
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
+
+	while(1) {
+		/* Take it easy */
+		k_sleep(K_USEC(SDU_INTERVAL_US));
+
+		/* Heartbeat Check */
+		uint32_t curr = k_uptime_get_32();
+		int32_t delta = curr - last_indication_ts;
+		if (abs(delta) > HEARTBEAT_THRESHOLD_MS) {
+			printk("Heartbeat Lost\n");
+			continue;
+		}
+
+		printk("ACL RSSI: -%u | PRR: %u%% | RTN: %u | TXP %d\n", 
+			rssi, prr, rtn_global_overwrite, txp_global_overwrite);
+	}
+}
 
 /* ------------------------------------------------------ */
 /* ACL */
@@ -211,12 +250,10 @@ static uint8_t notify_func(struct bt_conn *conn,
 	rssi = RollingMAvg8Bit(&rssi_mavg, (uint8_t)-tmp_rssi);
 
 	prr = ((uint8_t *)data)[0]; // PRR == HEARTBEAT
-	printk("ACL RSSI: -%u | PRR: %u%%\n", rssi, prr);
-	
+
+	last_indication_ts = k_uptime_get_32();
 	return BT_GATT_ITER_CONTINUE;
 }
-
-// TODO: Implement a Buffer of some sort to examine the ACL heartbeat
 
 static uint8_t discover_func(struct bt_conn *conn,
 			     const struct bt_gatt_attr *attr,
@@ -423,6 +460,14 @@ void main(void)
 		printk("failed (err %d)\n", err);
 		return;
 	}
+
+	/* Start Adaptation Thread */
+	k_thread_create(&thread_adaptation_data, thread_adaptation_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_adaptation_stack_area),
+			adaptation_thread, NULL, NULL, NULL,
+			ADAPTATION_THREAD_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_adaptation_data, "adaptation_thread");
+	k_thread_start(&thread_adaptation_data);
 
 	#define BT_LE_EXT_ADV_NCONN_NAME_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME, \
