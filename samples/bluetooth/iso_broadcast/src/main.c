@@ -4,6 +4,7 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/logging/log.h>
+#include <io_coder.h>
 #include <stdlib.h>
 #include <lut.h>
 
@@ -42,9 +43,10 @@ static uint32_t last_indication_ts = 0;
 #define ADAPTATION_THREAD_PRIORITY 10
 
 /* ------------------------------------------------------ */
-/* Logging */
+/* Logging & IO Coder*/
 /* ------------------------------------------------------ */
 LOG_MODULE_REGISTER(ISOLogger, CONFIG_LOG_DEFAULT_LEVEL);
+static struct io_coder io_encoder = {0};
 
 /* ------------------------------------------------------ */
 /* Windowed Moving Average */
@@ -199,6 +201,11 @@ void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 		} else {
 			LOG_INF("ACL RSSI: -%u | PRR: %u%% | RTN: %u | TXP %d | Trend looking bad: %u | RSSI Trend looking bad: %u", 
 			rssi, prr, rtn_global_overwrite, txp_global_overwrite, prr_trend_looking_bad, rssi_trend_looking_bad);
+		}
+
+		int err = write_8_bit(&io_encoder, prr);
+		if(err) {
+			printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
 		}
 	}
 }
@@ -543,6 +550,12 @@ void main(void)
 	/* Initialize the moving average filter */
 	static uint64_t rssi_mavg_values[RSSI_MAVG_WINDOW_SIZE] = {0};
 	init_mavg(&rssi_mavg, rssi_mavg_values, RSSI_MAVG_WINDOW_SIZE);
+
+	/* Initialize IO Coder */
+	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
+	if(err) {
+		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
+	}
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
