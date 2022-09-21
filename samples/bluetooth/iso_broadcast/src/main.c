@@ -3,6 +3,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <zephyr/logging/log.h>
 #include <stdlib.h>
 #include <lut.h>
 
@@ -39,6 +40,11 @@ static uint32_t last_indication_ts = 0;
 /* ------------------------------------------------------ */
 #define STACKSIZE 1024
 #define ADAPTATION_THREAD_PRIORITY 10
+
+/* ------------------------------------------------------ */
+/* Logging */
+/* ------------------------------------------------------ */
+LOG_MODULE_REGISTER(ISOLogger, CONFIG_LOG_DEFAULT_LEVEL);
 
 /* ------------------------------------------------------ */
 /* Windowed Moving Average */
@@ -125,20 +131,10 @@ void adapt_parameters(bool heartbeat_lost, uint32_t current_timestamp)
 	uint8_t lut_size = sizeof(iso_lut) / sizeof(iso_lut[0]);
 	struct isochronous_parameter_lut current_setting = iso_lut[current_lut_setting_index];
 	struct isochronous_parameter_lut lower_setting = iso_lut[current_lut_setting_index > 0 ? current_lut_setting_index - 1 : 0];
-	struct isochronous_parameter_lut higher_setting = iso_lut[current_lut_setting_index < lut_size - 1 ? current_lut_setting_index + 1 : lut_size - 1];
-
-	double possible_delta_prr_loss = current_setting.delta_prr - lower_setting.delta_prr;
-	double possible_delta_prr_gain = lower_setting.delta_prr - current_setting.delta_prr;
-
 	int8_t possible_rssi_move_downshift = lower_setting.txp - current_setting.txp; // go lower
-	int8_t possible_rssi_move_upshift = higher_setting.txp - current_setting.txp; // go higher
-
 	uint8_t rssi_after_downshift = rssi - possible_rssi_move_downshift; // expected
-	uint8_t rssi_after_upshift = rssi - possible_rssi_move_upshift; // expected
 
-	printk("RSSI DOWN: -%u | RSSI UP: -%u | ", rssi_after_downshift, rssi_after_upshift);
-
-	if (rssi_trend_looking_bad || prr_trend_looking_bad && trend_status > 10) {
+	if (rssi_trend_looking_bad || (prr_trend_looking_bad && trend_status > 10)) {
 		current_lut_setting_index = MIN(current_lut_setting_index + 1, lut_size - 1); // INCREASE
 		trend_status = 0;
 	} else if (prr < 97) {
@@ -157,8 +153,6 @@ void adapt_parameters(bool heartbeat_lost, uint32_t current_timestamp)
 		}
 	}
 	trend_status++;
-
-	// TODO: Calculate RSSI Trend
 
 	if (heartbeat_lost) {
 		current_lut_setting_index = lut_size - 1; // emergency
@@ -192,12 +186,20 @@ void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 
 		/* Heartbeat Check */
 		if (heartbeat_lost) {
-			printk("Heartbeat Lost\n");
+			LOG_INF("Heartbeat Lost");
 			continue;
 		}
 
-		printk("ACL RSSI: -%u | PRR: %u%% | RTN: %u | TXP %d | Trend looking bad: %u | RSSI Trend looking bad: %u\n", 
+		if (prr < 94) {
+			LOG_ERR("ACL RSSI: -%u | PRR: %u%% | RTN: %u | TXP %d | Trend looking bad: %u | RSSI Trend looking bad: %u", 
 			rssi, prr, rtn_global_overwrite, txp_global_overwrite, prr_trend_looking_bad, rssi_trend_looking_bad);
+		} else if (prr < 100) {
+			LOG_WRN("ACL RSSI: -%u | PRR: %u%% | RTN: %u | TXP %d | Trend looking bad: %u | RSSI Trend looking bad: %u", 
+			rssi, prr, rtn_global_overwrite, txp_global_overwrite, prr_trend_looking_bad, rssi_trend_looking_bad);
+		} else {
+			LOG_INF("ACL RSSI: -%u | PRR: %u%% | RTN: %u | TXP %d | Trend looking bad: %u | RSSI Trend looking bad: %u", 
+			rssi, prr, rtn_global_overwrite, txp_global_overwrite, prr_trend_looking_bad, rssi_trend_looking_bad);
+		}
 	}
 }
 
