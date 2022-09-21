@@ -30,6 +30,7 @@ extern uint8_t rtn_global_overwrite;
 static uint32_t seq_num;
 static uint8_t prr = 0;
 static uint8_t rssi = 0;
+static uint8_t trend_looking_bad = 0;
 static uint32_t last_indication_ts = 0;
 
 /* ------------------------------------------------------ */
@@ -90,7 +91,12 @@ uint8_t get_current_lut_setting_index()
 	return 0;
 }
 
-void adapt_parameters(bool heartbeat_lost)
+static uint8_t prev_lut_index = 0;
+static uint64_t status = 0;
+static uint64_t trend_status = 0;
+static uint32_t last_adjusted_ts = 0;
+
+void adapt_parameters(bool heartbeat_lost, uint32_t current_timestamp)
 {
 	/* Get Current LUT Setting */
 	uint8_t current_lut_setting_index = get_current_lut_setting_index();
@@ -110,6 +116,39 @@ void adapt_parameters(bool heartbeat_lost)
 	uint8_t rssi_after_upshift = rssi - possible_rssi_move_upshift; // expected
 
 	printk("RSSI DOWN: -%u | RSSI UP: -%u | ", rssi_after_downshift, rssi_after_upshift);
+
+	if (trend_looking_bad && trend_status > 50) {
+		current_lut_setting_index = MIN(current_lut_setting_index + 1, lut_size - 1); // INCREASE
+		trend_status = 0;
+	} else if (prr < 97) {
+		current_lut_setting_index = MIN(current_lut_setting_index + 1, lut_size - 1); // INCREASE
+		status = 0;
+	} else if (prr < 99) {
+		// DO NOTHING
+	} else {
+		if (status < 50) { // 1s
+			status++;
+		} else {
+			if (rssi_after_downshift < 80) { // not reliable anymore if rssi > 87
+				current_lut_setting_index = MAX(current_lut_setting_index - 1, 0); // DECREASE
+				status = 0;
+			}
+		}
+	}
+	trend_status++;
+
+	// TODO: Calculate RSSI Trend
+
+	if (heartbeat_lost) {
+		current_lut_setting_index = lut_size - 1; // emergency
+	}
+
+	if (current_lut_setting_index != prev_lut_index) {
+		txp_global_overwrite = iso_lut[current_lut_setting_index].txp;
+		rtn_global_overwrite = iso_lut[current_lut_setting_index].rtn;
+		prev_lut_index = current_lut_setting_index;
+		last_adjusted_ts = current_timestamp;
+	}
 }
 
 void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
@@ -128,7 +167,7 @@ void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 		bool heartbeat_lost = abs(delta) > HEARTBEAT_THRESHOLD_MS;
 
 		/* Dynamic Parameter Adaptation */
-		adapt_parameters(heartbeat_lost);
+		adapt_parameters(heartbeat_lost, curr);
 
 		/* Heartbeat Check */
 		if (heartbeat_lost) {
@@ -136,8 +175,8 @@ void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 			continue;
 		}
 
-		printk("ACL RSSI: -%u | PRR: %u%% | RTN: %u | TXP %d\n", 
-			rssi, prr, rtn_global_overwrite, txp_global_overwrite);
+		printk("ACL RSSI: -%u | PRR: %u%% | RTN: %u | TXP %d | Trend looking bad: %u\n", 
+			rssi, prr, rtn_global_overwrite, txp_global_overwrite, trend_looking_bad);
 	}
 }
 
@@ -291,7 +330,9 @@ static uint8_t notify_func(struct bt_conn *conn,
 	read_conn_rssi(handle, &tmp_rssi);
 	rssi = RollingMAvg8Bit(&rssi_mavg, (uint8_t)-tmp_rssi);
 
-	prr = ((uint8_t *)data)[0]; // PRR == HEARTBEAT
+	uint8_t tmp = ((uint8_t *)data)[0]; // PRR == HEARTBEAT
+	trend_looking_bad = (tmp >> 7) & 1U;
+	prr = tmp & ~(1UL << 7);
 
 	last_indication_ts = k_uptime_get_32();
 	return BT_GATT_ITER_CONTINUE;

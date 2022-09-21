@@ -25,12 +25,14 @@ extern int8_t txp_global_overwrite;
 static double prr = 0.0;
 static uint32_t seq_num = 0;
 static uint32_t prev_seq_num = 0;
+static uint8_t trend_looking_bad = 0;
 static bool just_received_error_iso_packet = false;
 
 /* ------------------------------------------------------ */
 /* PRR Calculation */
 /* ------------------------------------------------------ */
 #define PRR_MAVG_WINDOW_SIZE 100
+#define PRR_TREND_THRESHOLD 3 // last x packets lost
 
 /* ------------------------------------------------------ */
 /* Defines Threads (main thread = prio 0) */
@@ -48,6 +50,8 @@ typedef struct {
 	uint64_t maverage_current_position;
 	uint64_t maverage_current_sum;
 	uint64_t maverage_sample_length;
+	uint64_t last_packets[PRR_TREND_THRESHOLD];
+	uint64_t last_packets_position;
 } MAVG;
 
 void init_mavg(MAVG *mavg, uint64_t *maverage_values, uint8_t window_size)
@@ -60,6 +64,12 @@ void init_mavg(MAVG *mavg, uint64_t *maverage_values, uint8_t window_size)
 
 double RollingMAvgDouble(MAVG *mavg, uint8_t newValue)
 {
+	((uint64_t*)mavg->last_packets)[mavg->last_packets_position] = newValue;
+	mavg->last_packets_position++;
+	if (mavg->last_packets_position >= PRR_TREND_THRESHOLD - 1) { // Don't go beyond the size of the array...
+		mavg->last_packets_position = 0;
+	}
+
 	mavg->maverage_current_sum = mavg->maverage_current_sum - ((uint64_t*)mavg->maverage_values)[mavg->maverage_current_position] + newValue;
 	((uint64_t*)mavg->maverage_values)[mavg->maverage_current_position] = newValue;
 	mavg->maverage_current_position++;
@@ -67,6 +77,16 @@ double RollingMAvgDouble(MAVG *mavg, uint8_t newValue)
 		mavg->maverage_current_position = 0;
 	}
 	return (double)mavg->maverage_current_sum * 100 / (double)mavg->maverage_sample_length;
+}
+
+bool MAvgTrendLookingBad(MAVG *mavg)
+{
+	for (uint8_t i = 0; i < PRR_TREND_THRESHOLD; i++) {
+		if (((uint64_t*)mavg->last_packets)[i] == 1) {
+			return false;
+		}
+	}
+	return true;
 }
 
 static MAVG prr_mavg;
@@ -162,9 +182,14 @@ void indicate_work_handler(struct k_work *item)
 		return;
 	}
 
+	uint8_t tmp = (uint8_t)prr;
+	if (trend_looking_bad) {
+		tmp |= 1UL << 7;
+	}
+
 	/* Create Indication */
 	static uint8_t ind_data[1];
-	ind_data[0] = (uint8_t)prr;
+	ind_data[0] = tmp;
 	ind_params.attr = &hts_svc.attrs[2];
 	ind_params.data = &ind_data;
 	ind_params.len = sizeof(uint8_t);
@@ -258,11 +283,17 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 			count_arr[i] = buf->data[i];
 		}
 		seq_num = sys_get_le32(count_arr);
-		txp_global_overwrite = (int8_t)buf->data[4];
+		
 		prr = RollingMAvgDouble(&prr_mavg, 1);
 
 		if (seq_num - 1 != prev_seq_num) {
 			printk("LOST - ");
+		}
+
+		trend_looking_bad = MAvgTrendLookingBad(&prr_mavg);
+		txp_global_overwrite = (int8_t)buf->data[4];
+		if (trend_looking_bad) {
+			txp_global_overwrite = MIN(txp_global_overwrite + 1, 8);
 		}
 
 		prev_seq_num = seq_num;
@@ -274,10 +305,15 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		} else {
 			prr = RollingMAvgDouble(&prr_mavg, 0); // yeah, this one is a fail
 		}
+		trend_looking_bad = MAvgTrendLookingBad(&prr_mavg);
 		just_received_error_iso_packet = true;
 	}
 
-	printk("Last seq_num: %u, PRR: %.02f%%\n", seq_num, prr);
+	if (trend_looking_bad) {
+		txp_global_overwrite = MIN(txp_global_overwrite + 1, 8);
+	}
+	
+	printk("Last seq_num: %u, PRR: %.02f%%, MAvgTrendLookingBad: %u\n", seq_num, prr, trend_looking_bad);
 	acl_indicate();
 }
 
