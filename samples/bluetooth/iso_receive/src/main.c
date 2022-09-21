@@ -66,7 +66,7 @@ double RollingMAvgDouble(MAVG *mavg, uint8_t newValue)
 {
 	((uint64_t*)mavg->last_packets)[mavg->last_packets_position] = newValue;
 	mavg->last_packets_position++;
-	if (mavg->last_packets_position >= PRR_TREND_THRESHOLD - 1) { // Don't go beyond the size of the array...
+	if (mavg->last_packets_position >= PRR_TREND_THRESHOLD) { // Don't go beyond the size of the array...
 		mavg->last_packets_position = 0;
 	}
 

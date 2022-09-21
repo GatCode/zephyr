@@ -30,7 +30,8 @@ extern uint8_t rtn_global_overwrite;
 static uint32_t seq_num;
 static uint8_t prr = 0;
 static uint8_t rssi = 0;
-static uint8_t trend_looking_bad = 0;
+static uint8_t prr_trend_looking_bad = 0;
+static uint8_t rssi_trend_looking_bad = 0;
 static uint32_t last_indication_ts = 0;
 
 /* ------------------------------------------------------ */
@@ -96,6 +97,26 @@ static uint64_t status = 0;
 static uint64_t trend_status = 0;
 static uint32_t last_adjusted_ts = 0;
 
+#define RSSI_TREND_WINDOW 2
+#define RSSI_TREND_THRESHOLD 1
+static uint8_t rssi_trend[RSSI_TREND_WINDOW];
+
+bool is_rssi_rend_getting_worse(uint8_t rssi) {
+
+	for (uint8_t i = 0; i < RSSI_TREND_WINDOW - 1; i++) {
+		rssi_trend[i] = rssi_trend[i+1];
+	}
+	rssi_trend[RSSI_TREND_WINDOW - 1] = rssi;
+
+	for (uint8_t i = 0; i < RSSI_TREND_WINDOW - 1; i++) {
+		if (rssi_trend[i] < rssi_trend[i+1] && (rssi_trend[i+1] - rssi_trend[i]) > RSSI_TREND_THRESHOLD) {
+			return true;
+		}
+	}
+	
+	return false;
+}
+
 void adapt_parameters(bool heartbeat_lost, uint32_t current_timestamp)
 {
 	/* Get Current LUT Setting */
@@ -117,7 +138,7 @@ void adapt_parameters(bool heartbeat_lost, uint32_t current_timestamp)
 
 	printk("RSSI DOWN: -%u | RSSI UP: -%u | ", rssi_after_downshift, rssi_after_upshift);
 
-	if (trend_looking_bad && trend_status > 50) {
+	if (rssi_trend_looking_bad || prr_trend_looking_bad && trend_status > 10) {
 		current_lut_setting_index = MIN(current_lut_setting_index + 1, lut_size - 1); // INCREASE
 		trend_status = 0;
 	} else if (prr < 97) {
@@ -175,8 +196,8 @@ void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 			continue;
 		}
 
-		printk("ACL RSSI: -%u | PRR: %u%% | RTN: %u | TXP %d | Trend looking bad: %u\n", 
-			rssi, prr, rtn_global_overwrite, txp_global_overwrite, trend_looking_bad);
+		printk("ACL RSSI: -%u | PRR: %u%% | RTN: %u | TXP %d | Trend looking bad: %u | RSSI Trend looking bad: %u\n", 
+			rssi, prr, rtn_global_overwrite, txp_global_overwrite, prr_trend_looking_bad, rssi_trend_looking_bad);
 	}
 }
 
@@ -329,9 +350,10 @@ static uint8_t notify_func(struct bt_conn *conn,
 	int8_t tmp_rssi = 0;
 	read_conn_rssi(handle, &tmp_rssi);
 	rssi = RollingMAvg8Bit(&rssi_mavg, (uint8_t)-tmp_rssi);
+	rssi_trend_looking_bad = is_rssi_rend_getting_worse(rssi);
 
 	uint8_t tmp = ((uint8_t *)data)[0]; // PRR == HEARTBEAT
-	trend_looking_bad = (tmp >> 7) & 1U;
+	prr_trend_looking_bad = (tmp >> 7) & 1U;
 	prr = tmp & ~(1UL << 7);
 
 	last_indication_ts = k_uptime_get_32();
