@@ -7,6 +7,8 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <zephyr/logging/log.h>
+#include <io_coder.h>
 
 /* ------------------------------------------------------ */
 /* Basic Definitions */
@@ -39,6 +41,12 @@ static bool just_received_error_iso_packet = false;
 /* ------------------------------------------------------ */
 #define STACKSIZE 1024
 #define ACL_PRIORITY 10
+
+/* ------------------------------------------------------ */
+/* Logging & IO Coder*/
+/* ------------------------------------------------------ */
+LOG_MODULE_REGISTER(ISOLogger, CONFIG_LOG_DEFAULT_LEVEL);
+static struct io_coder io_encoder = {0};
 
 /* ------------------------------------------------------ */
 /* Windowed Moving Average */
@@ -312,6 +320,11 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 	if (trend_looking_bad) {
 		txp_global_overwrite = MIN(txp_global_overwrite + 1, 8);
 	}
+
+	int err = write_8_bit(&io_encoder, (uint8_t)prr);
+	if(err) {
+		printk("Error writing 8bit value to P1.01 - P1.08 (err %d)\n", err);
+	}
 	
 	printk("Last seq_num: %u, PRR: %.02f%%, MAvgTrendLookingBad: %u\n", seq_num, prr, trend_looking_bad);
 	acl_indicate();
@@ -373,6 +386,12 @@ void main(void)
 	/* Initialize the moving average filter */
 	static uint64_t prr_mavg_values[PRR_MAVG_WINDOW_SIZE] = {0};
 	init_mavg(&prr_mavg, prr_mavg_values, PRR_MAVG_WINDOW_SIZE);
+
+	/* Initialize IO Coder */
+	err = setup_8_bit_io_consecutive(&io_encoder, 1, 8, true, false);
+	if(err) {
+		printk("Error setting up P1.01 - P1.08 (err %d)\n", err);
+	}
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
