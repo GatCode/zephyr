@@ -9,6 +9,16 @@
 #include <lut.h>
 
 /* ------------------------------------------------------ */
+/* ADAPTATION ALGORITHM SELECTION TOGGLE (only select 1)  */
+/* ------------------------------------------------------ */
+#define DYNAMIC_ALGORITHM
+
+/* ------------------------------------------------------ */
+/* START TXP and RTN */
+/* ------------------------------------------------------ */
+#define LUT_INIT_SETTING_IDX 0 // Start Value
+
+/* ------------------------------------------------------ */
 /* Basic Definitions */
 /* ------------------------------------------------------ */
 #define MAX_RTN 8
@@ -17,8 +27,6 @@
 #define DATA_SIZE_BYTE 50
 
 #define HEARTBEAT_THRESHOLD_MS 1000
-
-#define LUT_INIT_SETTING_IDX 0 // Start Value
 
 /* ------------------------------------------------------ */
 /* Dynamic Adaptation Algorithm Definitions */
@@ -194,7 +202,9 @@ void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 		bool heartbeat_lost = abs(delta) > HEARTBEAT_THRESHOLD_MS;
 
 		/* Dynamic Parameter Adaptation */
+		#ifdef DYNAMIC_ALGORITHM
 		adapt_parameters_dynamically(heartbeat_lost, curr);
+		#endif
 
 		/* Heartbeat Check */
 		if (heartbeat_lost) {
