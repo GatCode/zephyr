@@ -18,7 +18,19 @@
 
 #define HEARTBEAT_THRESHOLD_MS 1000
 
-#define LUT_INIT_SETTING_IDX 0
+#define LUT_INIT_SETTING_IDX 0 // Start Value
+
+/* ------------------------------------------------------ */
+/* Dynamic Adaptation Algorithm Definitions */
+/* ------------------------------------------------------ */
+#define THETA_L 97
+#define THETA_H 100
+#define THETA_RSSI 80
+#define PRR_TREND_MARGIN 10 // stickyness
+#define RSSI_TREND_MARGIN 50 // stickyness
+
+#define RSSI_TREND_WINDOW 2
+#define RSSI_TREND_THRESHOLD 1
 
 /* ------------------------------------------------------ */
 /* Global Controller Overwrites */
@@ -100,13 +112,6 @@ uint8_t get_current_lut_setting_index()
 	return 0;
 }
 
-static uint8_t prev_lut_index = 0;
-static uint64_t status = 0;
-static uint64_t trend_status = 0;
-static uint32_t last_adjusted_ts = 0;
-
-#define RSSI_TREND_WINDOW 2
-#define RSSI_TREND_THRESHOLD 1
 static uint8_t rssi_trend[RSSI_TREND_WINDOW];
 
 bool is_rssi_rend_getting_worse(uint8_t rssi) {
@@ -125,7 +130,12 @@ bool is_rssi_rend_getting_worse(uint8_t rssi) {
 	return false;
 }
 
-void adapt_parameters(bool heartbeat_lost, uint32_t current_timestamp)
+static uint8_t prev_lut_index = 0;
+static uint64_t status = 0;
+static uint64_t trend_status = 0;
+static uint32_t last_adjusted_ts = 0;
+
+void adapt_parameters_dynamically(bool heartbeat_lost, uint32_t current_timestamp)
 {
 	/* Get Current LUT Setting */
 	uint8_t current_lut_setting_index = get_current_lut_setting_index();
@@ -136,19 +146,19 @@ void adapt_parameters(bool heartbeat_lost, uint32_t current_timestamp)
 	int8_t possible_rssi_move_downshift = lower_setting.txp - current_setting.txp; // go lower
 	uint8_t rssi_after_downshift = rssi - possible_rssi_move_downshift; // expected
 
-	if (rssi_trend_looking_bad || (prr_trend_looking_bad && trend_status > 10)) {
+	if (rssi_trend_looking_bad || (prr_trend_looking_bad && trend_status > PRR_TREND_MARGIN)) {
 		current_lut_setting_index = MIN(current_lut_setting_index + 1, lut_size - 1); // INCREASE
 		trend_status = 0;
-	} else if (prr < 97) {
+	} else if (prr < THETA_L) {
 		current_lut_setting_index = MIN(current_lut_setting_index + 1, lut_size - 1); // INCREASE
 		status = 0;
-	} else if (prr < 99) {
+	} else if (prr < THETA_H) {
 		// DO NOTHING
 	} else {
-		if (status < 50) { // 1s
+		if (status < RSSI_TREND_MARGIN) { // 1s
 			status++;
 		} else {
-			if (rssi_after_downshift < 80) { // not reliable anymore if rssi > 87
+			if (rssi_after_downshift < THETA_RSSI) { // not reliable anymore if rssi > 87
 				current_lut_setting_index = MAX(current_lut_setting_index - 1, 0); // DECREASE
 				status = 0;
 			}
@@ -184,7 +194,7 @@ void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 		bool heartbeat_lost = abs(delta) > HEARTBEAT_THRESHOLD_MS;
 
 		/* Dynamic Parameter Adaptation */
-		adapt_parameters(heartbeat_lost, curr);
+		adapt_parameters_dynamically(heartbeat_lost, curr);
 
 		/* Heartbeat Check */
 		if (heartbeat_lost) {

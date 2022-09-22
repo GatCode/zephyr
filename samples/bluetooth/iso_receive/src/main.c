@@ -17,6 +17,11 @@
 #define DATA_SIZE_BYTE 50
 
 /* ------------------------------------------------------ */
+/* Dynamic Adaptation Algorithm Definitions */
+/* ------------------------------------------------------ */
+#define PRR_TREND_THRESHOLD 3 // last x packets lost
+
+/* ------------------------------------------------------ */
 /* Global Controller Overwrites */
 /* ------------------------------------------------------ */
 extern int8_t txp_global_overwrite;
@@ -34,7 +39,6 @@ static bool just_received_error_iso_packet = false;
 /* PRR Calculation */
 /* ------------------------------------------------------ */
 #define PRR_MAVG_WINDOW_SIZE 100
-#define PRR_TREND_THRESHOLD 3 // last x packets lost
 
 /* ------------------------------------------------------ */
 /* Defines Threads (main thread = prio 0) */
