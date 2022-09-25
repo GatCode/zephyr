@@ -11,6 +11,12 @@
 #include <io_coder.h>
 
 /* ------------------------------------------------------ */
+/* ADAPTATION ALGORITHM SELECTION TOGGLE (only select 1)  */
+/* ------------------------------------------------------ */
+// #define NO_ALGORITHM // disables ACL connection
+// NOTE: only activate this if broadcaster also uses this!
+
+/* ------------------------------------------------------ */
 /* Basic Definitions */
 /* ------------------------------------------------------ */
 #define SDU_INTERVAL_US 20000
@@ -421,6 +427,7 @@ void main(void)
 	}
 
 	/* Start ACL */
+	#ifndef NO_ALGORITHM
 	k_thread_create(&thread_acl_data, thread_acl_stack_area,
 			K_THREAD_STACK_SIZEOF(thread_acl_stack_area),
 			acl_thread, NULL, NULL, NULL,
@@ -441,6 +448,7 @@ void main(void)
 			ACL_PRIORITY, 0, K_FOREVER);
 	k_thread_name_set(&thread_ind_data, "ind_thread");
 	k_thread_start(&thread_ind_data);
+	#endif
 
 	printk("Scan callbacks register...");
 	bt_le_scan_cb_register(&scan_callbacks);

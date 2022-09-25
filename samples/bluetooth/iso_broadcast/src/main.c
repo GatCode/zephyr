@@ -13,6 +13,8 @@
 /* ------------------------------------------------------ */
 #define DYNAMIC_ALGORITHM
 // #define NAIVE_ALGORITHMS // conservative or aggressive
+// #define NO_ALGORITHM // bare broadcast with LUT setting
+// NOTE: if NO_ALGORITHM selected, also change recv side!
 
 /* ------------------------------------------------------ */
 /* START TXP and RTN */
@@ -580,6 +582,10 @@ static void iso_sent(struct bt_iso_chan *chan)
 		net_buf_unref(buf);
 		return;
 	}
+
+	#ifdef NO_ALGORITHM
+	printk("Sent: %u | RTN: %u | TXP %d \n", seq_num, rtn_global_overwrite, txp_global_overwrite);
+	#endif
 }
 
 static struct bt_iso_chan_ops iso_ops = {
@@ -643,6 +649,7 @@ void main(void)
 	txp_global_overwrite = iso_lut[LUT_INIT_SETTING_IDX].txp;
 	rtn_global_overwrite = iso_lut[LUT_INIT_SETTING_IDX].rtn;
 
+	#ifndef NO_ALGORITHM
 	/* Start ACL Scanning */
 	k_work_submit(&start_scan_work);
 
@@ -659,6 +666,7 @@ void main(void)
 			ADAPTATION_THREAD_PRIORITY, 0, K_FOREVER);
 	k_thread_name_set(&thread_adaptation_data, "adaptation_thread");
 	k_thread_start(&thread_adaptation_data);
+	#endif
 
 	#define BT_LE_EXT_ADV_NCONN_NAME_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
 			BT_LE_ADV_OPT_USE_NAME, \
