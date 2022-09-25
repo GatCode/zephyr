@@ -12,7 +12,7 @@
 /* ADAPTATION ALGORITHM SELECTION TOGGLE (only select 1)  */
 /* ------------------------------------------------------ */
 #define DYNAMIC_ALGORITHM
-// #define CONSERVATIVE_ALGORITHM
+// #define NAIVE_ALGORITHMS // conservative or aggressive
 
 /* ------------------------------------------------------ */
 /* START TXP and RTN */
@@ -252,7 +252,7 @@ void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 		/* Dynamic Parameter Adaptation */
 		#ifdef DYNAMIC_ALGORITHM
 		adapt_parameters_dynamically(heartbeat_lost, curr);
-		#elif defined CONSERVATIVE_ALGORITHM
+		#elif defined NAIVE_ALGORITHMS
 		adapt_parameters_naive(heartbeat_lost, curr);
 		#endif
 
@@ -290,8 +290,13 @@ static struct bt_gatt_subscribe_params subscribe_params;
 #define DEVICE_NAME_ACL "nRF52840"
 #define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
 
+#ifdef NAIVE_ALGORITHMS
+#define CONFIG_BLE_ACL_CONN_INTERVAL_MIN 8 // * 1.25 - 10ms
+#define CONFIG_BLE_ACL_CONN_INTERVAL_MAX 8 // * 1.25 - 10ms
+#else
 #define CONFIG_BLE_ACL_CONN_INTERVAL_MIN 16 // * 1.25 - 20ms
 #define CONFIG_BLE_ACL_CONN_INTERVAL_MAX 16 // * 1.25 - 20ms
+#endif
 #define CONFIG_BLE_ACL_SLAVE_LATENCY 0
 #define CONFIG_BLE_ACL_SUP_TIMEOUT 400
 
