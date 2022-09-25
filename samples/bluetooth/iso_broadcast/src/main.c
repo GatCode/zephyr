@@ -12,6 +12,7 @@
 /* ADAPTATION ALGORITHM SELECTION TOGGLE (only select 1)  */
 /* ------------------------------------------------------ */
 #define DYNAMIC_ALGORITHM
+// #define CONSERVATIVE_ALGORITHM
 
 /* ------------------------------------------------------ */
 /* START TXP and RTN */
@@ -39,6 +40,14 @@
 
 #define RSSI_TREND_WINDOW 2
 #define RSSI_TREND_THRESHOLD 1
+
+/* ------------------------------------------------------ */
+/* Naive Adaptation Algorithm Definitions */
+/* ------------------------------------------------------ */
+#define RSSI_TREND_MARGIN_NAIVE 20 // x * SDU_Interval (NAIVE ALGO)
+#define THETA_L_NAIVE 98
+#define THETA_H_NAIVE 100
+#define AGGRESSIVE // if defined - aggressive algo is used
 
 /* ------------------------------------------------------ */
 /* Global Controller Overwrites */
@@ -186,6 +195,45 @@ void adapt_parameters_dynamically(bool heartbeat_lost, uint32_t current_timestam
 	}
 }
 
+static uint8_t curr_lut_index_naive = 0;
+static uint8_t prev_lut_index_naive = 0;
+static uint8_t release_status = 0;
+
+void adapt_parameters_naive(bool heartbeat_lost, uint32_t current_timestamp)
+{
+	uint8_t lut_size = sizeof(iso_lut_naive) / sizeof(iso_lut_naive[0]);
+
+	if (prr < THETA_L_NAIVE) {
+		#ifdef AGGRESSIVE
+		curr_lut_index_naive = lut_size - 1; // INCREASE MAX
+		#else
+		curr_lut_index_naive = MIN(curr_lut_index_naive + 1, lut_size - 1); // INCREASE
+		#endif
+		release_status = 0; // reset
+	}
+	 else if (prr < THETA_H_NAIVE) {
+		// do nothing
+	} else {
+		if (release_status < RSSI_TREND_MARGIN_NAIVE) {
+			release_status++;
+		} else {
+			curr_lut_index_naive = MAX(curr_lut_index_naive - 1, 0); // DECREASE
+			release_status = 0; // reset
+		}
+	}
+
+	if (heartbeat_lost) {
+		curr_lut_index_naive = lut_size - 1; // emergency
+	}
+
+	if (curr_lut_index_naive != prev_lut_index_naive) {
+		txp_global_overwrite = iso_lut_naive[curr_lut_index_naive].txp;
+		rtn_global_overwrite = iso_lut_naive[curr_lut_index_naive].rtn;
+		prev_lut_index_naive = curr_lut_index_naive;
+		last_adjusted_ts = current_timestamp;
+	}
+}
+
 void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 {
 	ARG_UNUSED(dummy1);
@@ -204,6 +252,8 @@ void adaptation_thread(void *dummy1, void *dummy2, void *dummy3)
 		/* Dynamic Parameter Adaptation */
 		#ifdef DYNAMIC_ALGORITHM
 		adapt_parameters_dynamically(heartbeat_lost, curr);
+		#elif defined CONSERVATIVE_ALGORITHM
+		adapt_parameters_naive(heartbeat_lost, curr);
 		#endif
 
 		/* Heartbeat Check */
@@ -241,7 +291,7 @@ static struct bt_gatt_subscribe_params subscribe_params;
 #define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
 
 #define CONFIG_BLE_ACL_CONN_INTERVAL_MIN 16 // * 1.25 - 20ms
-#define CONFIG_BLE_ACL_CONN_INTERVAL_MAX 32 // * 1.25 - 40ms
+#define CONFIG_BLE_ACL_CONN_INTERVAL_MAX 16 // * 1.25 - 20ms
 #define CONFIG_BLE_ACL_SLAVE_LATENCY 0
 #define CONFIG_BLE_ACL_SUP_TIMEOUT 400
 

@@ -110,6 +110,9 @@ K_THREAD_STACK_DEFINE(thread_acl_stack_area, STACKSIZE);
 static struct k_thread thread_acl_data;
 static struct bt_conn *acl_conn;
 
+K_THREAD_STACK_DEFINE(thread_ind_stack_area, STACKSIZE);
+static struct k_thread thread_ind_data;
+
 #define DEVICE_NAME_ACL "nRF52840"
 #define DEVICE_NAME_ACL_LEN (sizeof(DEVICE_NAME_ACL) - 1)
 
@@ -120,6 +123,7 @@ static struct bt_conn *acl_conn;
 static struct bt_gatt_indicate_params ind_params;
 
 static K_SEM_DEFINE(acl_connected, 0, 1);
+static K_SEM_DEFINE(sem_indicate, 0, 1);
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -184,34 +188,46 @@ void acl_thread(void *dummy1, void *dummy2, void *dummy3)
 
 static int8_t per_adv_rssi = 0;
 
-void indicate_work_handler(struct k_work *item)
+void ind_thread(void *dummy1, void *dummy2, void *dummy3)
 {
-	/* Fetch ACL connection handle */
-	uint16_t acl_handle = 0;
-	int err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
-	if (err) {
-		printk("Failed to fetch the ACL connection handle (err %d)\n", err);
-		return;
-	}
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
 
-	uint8_t tmp = (uint8_t)prr;
-	if (trend_looking_bad) {
-		tmp |= 1UL << 7;
-	}
+	while(1) {
+		/* Fetch ACL connection handle */
+		uint16_t acl_handle = 0;
+		int err = bt_hci_get_conn_handle(acl_conn, &acl_handle);
+		if (err) {
+			printk("Failed to fetch the ACL connection handle (err %d)\n", err);
+			return;
+		}
 
-	/* Create Indication */
-	static uint8_t ind_data[1];
-	ind_data[0] = tmp;
-	ind_params.attr = &hts_svc.attrs[2];
-	ind_params.data = &ind_data;
-	ind_params.len = sizeof(uint8_t);
-	(void)bt_gatt_indicate(NULL, &ind_params);
+		/* Take it easy */
+		err = k_sem_take(&sem_indicate, K_FOREVER);
+		if (err) {
+			printk("failed (err %d)\n", err);
+			return;
+		}
+
+		uint8_t tmp = (uint8_t)prr;
+		if (trend_looking_bad) {
+			tmp |= 1UL << 7;
+		}
+
+		/* Create Indication */
+		static uint8_t ind_data[1];
+		ind_data[0] = tmp;
+		ind_params.attr = &hts_svc.attrs[2];
+		ind_params.data = &ind_data;
+		ind_params.len = sizeof(uint8_t);
+		(void)bt_gatt_indicate(NULL, &ind_params);
+	}
 }
-K_WORK_DEFINE(indicate_work, indicate_work_handler);
 
 void acl_indicate()
 {
-	k_work_submit(&indicate_work);
+	k_sem_give(&sem_indicate);
 }
 
 /* ------------------------------------------------------ */
@@ -417,6 +433,14 @@ void main(void)
 		printk("failed (err %d)\n", err);
 		return;
 	}
+
+	/* Start Indication Thread */
+	k_thread_create(&thread_ind_data, thread_ind_stack_area,
+			K_THREAD_STACK_SIZEOF(thread_ind_stack_area),
+			ind_thread, NULL, NULL, NULL,
+			ACL_PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&thread_ind_data, "ind_thread");
+	k_thread_start(&thread_ind_data);
 
 	printk("Scan callbacks register...");
 	bt_le_scan_cb_register(&scan_callbacks);
