@@ -38,7 +38,7 @@
 #define THETA_H 100
 #define THETA_RSSI 80
 #define PRR_TREND_MARGIN 10 // stickyness
-#define RSSI_TREND_MARGIN 50 // stickyness
+#define RSSI_TREND_MARGIN 15 // stickyness
 
 #define RSSI_TREND_WINDOW 2
 #define RSSI_TREND_THRESHOLD 1
