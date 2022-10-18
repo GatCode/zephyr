@@ -1,3 +1,6 @@
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/iso.h>
 #include <zephyr/sys/byteorder.h>
@@ -11,6 +14,22 @@
 #define TRANSPORT_LATENCY_MS 20
 #define RETRANSMISSION_NUMBER 2
 #define PHY BT_GAP_LE_PHY_2M
+
+/* ------------------------------------------------------ */
+/* Light */
+/* ------------------------------------------------------ */
+typedef union {
+	struct {
+		bool brake;
+		bool indicator_left;
+		bool indicator_right;
+		bool reverse;
+		bool fog;
+	} fields;
+    uint32_t bits;
+} light_status;
+
+static light_status l_status = { 0 };
 
 /* ------------------------------------------------------ */
 /* ISO */
@@ -37,9 +56,24 @@ static void iso_disconnected(struct bt_iso_chan *chan, uint8_t reason)
 	k_sem_give(&sem_big_term);
 }
 
+static void iso_sent(struct bt_iso_chan *chan)
+{
+	buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
+	net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
+	sys_put_le32(l_status.bits, iso_data);
+	net_buf_add_mem(buf, iso_data, sizeof(iso_data));
+
+	int ret = bt_iso_chan_send(&bis_iso_chan, buf, seq_num++, BT_ISO_TIMESTAMP_NONE);
+	if (ret < 0) {
+		printk("Unable to broadcast data: %d", ret);
+		net_buf_unref(buf);
+	}
+}
+
 static struct bt_iso_chan_ops iso_ops = {
 	.connected	= iso_connected,
 	.disconnected	= iso_disconnected,
+	.sent = iso_sent,
 };
 
 static struct bt_iso_chan_io_qos iso_tx_qos = {
@@ -71,6 +105,55 @@ static struct bt_iso_big_create_param big_create_param = {
 };
 
 /* ------------------------------------------------------ */
+/* Buttons */
+/* ------------------------------------------------------ */
+static const struct gpio_dt_spec button_1 = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw0), gpios, {0});
+static const struct gpio_dt_spec button_2 = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw1), gpios, {0});
+static const struct gpio_dt_spec button_3 = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw2), gpios, {0});
+static const struct gpio_dt_spec button_4 = GPIO_DT_SPEC_GET_OR(DT_ALIAS(sw3), gpios, {0});
+
+static struct gpio_callback button_1_cb_data;
+static struct gpio_callback button_2_cb_data;
+static struct gpio_callback button_3_cb_data;
+static struct gpio_callback button_4_cb_data;
+
+void button_1_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+    if (gpio_pin_get_dt(&button_1)) {
+		l_status.fields.indicator_left = true;
+    } else {
+		l_status.fields.indicator_left = false;
+    }
+}
+
+void button_2_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	if (gpio_pin_get_dt(&button_2)) {
+		l_status.fields.indicator_right = true;
+    } else {
+		l_status.fields.indicator_right = false;
+    }
+}
+
+void button_3_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	if (gpio_pin_get_dt(&button_3)) {
+		l_status.fields.brake = true;
+    } else {
+		l_status.fields.brake = false;
+    }
+}
+
+void button_4_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	if (gpio_pin_get_dt(&button_4)) {
+		l_status.fields.reverse = true;
+    } else {
+		l_status.fields.reverse = false;
+    }
+}
+
+/* ------------------------------------------------------ */
 /* Main */
 /* ------------------------------------------------------ */
 void main(void)
@@ -78,6 +161,42 @@ void main(void)
 	struct bt_le_ext_adv *adv;
 	struct bt_iso_big *big;
 	int err;
+
+	/* Initialize the Button */
+	int ret;
+	if (!device_is_ready(button_1.port) | !device_is_ready(button_2.port) | 
+			!device_is_ready(button_3.port) | !device_is_ready(button_4.port)) {
+		printk("Error: one of the buttons is not ready\n");
+		return;
+	}
+
+	ret = gpio_pin_configure_dt(&button_1, GPIO_INPUT);
+	ret |= gpio_pin_configure_dt(&button_2, GPIO_INPUT);
+	ret |= gpio_pin_configure_dt(&button_3, GPIO_INPUT);
+	ret |= gpio_pin_configure_dt(&button_4, GPIO_INPUT);
+	if (ret != 0) {
+		printk("Error: failed to configure one of the buttons\n");
+		return;
+	}
+
+	ret = gpio_pin_interrupt_configure_dt(&button_1, GPIO_INT_EDGE_BOTH);
+	ret |= gpio_pin_interrupt_configure_dt(&button_2, GPIO_INT_EDGE_BOTH);
+	ret |= gpio_pin_interrupt_configure_dt(&button_3, GPIO_INT_EDGE_BOTH);
+	ret |= gpio_pin_interrupt_configure_dt(&button_4, GPIO_INT_EDGE_BOTH);
+	if (ret != 0) {
+		printk("Error: failed to configure interrupt on one of the buttons\n");
+		return;
+	}
+
+	gpio_init_callback(&button_1_cb_data, button_1_pressed, BIT(button_1.pin));
+	gpio_init_callback(&button_2_cb_data, button_2_pressed, BIT(button_2.pin));
+	gpio_init_callback(&button_3_cb_data, button_3_pressed, BIT(button_3.pin));
+	gpio_init_callback(&button_4_cb_data, button_4_pressed, BIT(button_4.pin));
+
+	gpio_add_callback(button_1.port, &button_1_cb_data);
+	gpio_add_callback(button_2.port, &button_2_cb_data);
+	gpio_add_callback(button_3.port, &button_3_cb_data);
+	gpio_add_callback(button_4.port, &button_4_cb_data);
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
@@ -131,21 +250,5 @@ void main(void)
 	printk("done.\n");
 
 	/* Start Broadcasting */
-	while (true) {
-		k_sleep(K_USEC(big_create_param.interval));
-
-		buf = net_buf_alloc(&bis_tx_pool, K_FOREVER);
-		net_buf_reserve(buf, BT_ISO_CHAN_SEND_RESERVE);
-		sys_put_le32(++seq_num, iso_data);
-		net_buf_add_mem(buf, iso_data, sizeof(iso_data));
-
-		int ret = bt_iso_chan_send(&bis_iso_chan, buf, seq_num, BT_ISO_TIMESTAMP_NONE);
-		if (ret < 0) {
-			printk("Unable to broadcast data: %d", ret);
-			net_buf_unref(buf);
-			return;
-		}
-
-		printk("Sent: %u\n", seq_num);
-	}
+	iso_sent(&bis_iso_chan);
 }

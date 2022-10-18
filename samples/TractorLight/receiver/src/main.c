@@ -1,3 +1,6 @@
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/iso.h>
@@ -8,6 +11,61 @@
 /* ------------------------------------------------------ */
 #define ISO_CHAN_COUNT 1
 #define ISO_SYNC_TIMEOUT 100 // N * 10ms
+
+/* ------------------------------------------------------ */
+/* Light */
+/* ------------------------------------------------------ */
+typedef union {
+	struct {
+		bool brake;
+		bool indicator_left;
+		bool indicator_right;
+		bool reverse;
+		bool fog;
+	} fields;
+    uint32_t bits;
+} light_status;
+
+static light_status l_status = { 0 };
+
+/* ------------------------------------------------------ */
+/* LEDs */
+/* ------------------------------------------------------ */
+#define LED0_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+#define LED1_NODE DT_ALIAS(led1)
+static const struct gpio_dt_spec led2 = GPIO_DT_SPEC_GET(LED1_NODE, gpios);
+#define LED2_NODE DT_ALIAS(led2)
+static const struct gpio_dt_spec led3 = GPIO_DT_SPEC_GET(LED2_NODE, gpios);
+#define LED3_NODE DT_ALIAS(led3)
+static const struct gpio_dt_spec led4 = GPIO_DT_SPEC_GET(LED3_NODE, gpios);
+
+void light_it_up()
+{
+	if (l_status.fields.indicator_left) {
+		gpio_pin_set_dt(&led1, 1);
+	} else {
+		gpio_pin_set_dt(&led1, 0);
+	}
+
+	if (l_status.fields.indicator_right) {
+		gpio_pin_set_dt(&led2, 1);
+	} else {
+		gpio_pin_set_dt(&led2, 0);
+	}
+
+	if (l_status.fields.brake) {
+		gpio_pin_set_dt(&led3, 1);
+	} else {
+		gpio_pin_set_dt(&led3, 0);
+	}
+
+	if (l_status.fields.reverse) {
+		gpio_pin_set_dt(&led4, 1);
+	} else {
+		gpio_pin_set_dt(&led4, 0);
+	}
+}
 
 /* ------------------------------------------------------ */
 /* ISO */
@@ -88,13 +146,8 @@ static void iso_recv(struct bt_iso_chan *chan, const struct bt_iso_recv_info *in
 		for(uint8_t i = 0; i < 4; i++) {
 			count_arr[i] = buf->data[i];
 		}
-		seq_num = sys_get_le32(count_arr);
-
-		if (seq_num - 1 != prev_seq_num) {
-			printk("seq_num: %u -- LOST\n", seq_num);
-		} else {
-			printk("seq_num: %u\n", seq_num);
-		}
+		l_status.bits = sys_get_le32(count_arr);
+		light_it_up();
 	}
 	prev_seq_num = seq_num;
 }
@@ -154,6 +207,20 @@ void main(void)
 	struct bt_iso_big *big;
 	uint32_t sem_timeout;
 	int err;
+
+	/* Initialize the LEDs */
+	if (!device_is_ready(led1.port) || !device_is_ready(led2.port) ||  \
+		!device_is_ready(led3.port) || !device_is_ready(led4.port)) {
+ 		printk("Error setting LED\n");
+ 	}
+
+ 	err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led2, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led3, GPIO_OUTPUT_INACTIVE);
+	err |= gpio_pin_configure_dt(&led4, GPIO_OUTPUT_INACTIVE);
+ 	if (err < 0) {
+ 		printk("Error setting LED (err %d)\n", err);
+ 	}
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
