@@ -163,25 +163,6 @@ void main(void)
 
 	printk("Starting Periodic Advertising Synchronization Demo\n");
 
-#if defined(HAS_LED)
-	printk("Checking LED device...");
-	if (!device_is_ready(led.port)) {
-		printk("failed.\n");
-		return;
-	}
-	printk("done.\n");
-
-	printk("Configuring GPIO pin...");
-	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-	if (err) {
-		printk("failed.\n");
-		return;
-	}
-	printk("done.\n");
-
-	k_work_init_delayable(&blink_work, blink_timeout);
-#endif /* HAS_LED */
-
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
 	if (err) {
@@ -206,15 +187,6 @@ void main(void)
 	printk("success.\n");
 
 	do {
-#if defined(HAS_LED)
-		struct k_work_sync work_sync;
-
-		printk("Start blinking LED...\n");
-		led_is_on = false;
-		gpio_pin_set(led.port, led.pin, (int)led_is_on);
-		k_work_schedule(&blink_work, BLINK_ONOFF);
-#endif /* HAS_LED */
-
 		printk("Waiting for periodic advertising...\n");
 		per_adv_found = false;
 		err = k_sem_take(&sem_per_adv, K_FOREVER);
@@ -251,15 +223,6 @@ void main(void)
 			continue;
 		}
 		printk("Periodic sync established.\n");
-
-#if defined(HAS_LED)
-		printk("Stop blinking LED.\n");
-		k_work_cancel_delayable_sync(&blink_work, &work_sync);
-
-		/* Keep LED on */
-		led_is_on = true;
-		gpio_pin_set(led.port, led.pin, (int)led_is_on);
-#endif /* HAS_LED */
 
 		printk("Waiting for periodic sync lost...\n");
 		err = k_sem_take(&sem_per_sync_lost, K_FOREVER);
