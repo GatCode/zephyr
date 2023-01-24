@@ -8,6 +8,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/hci.h>
 
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
 #define NAME_LEN            30
@@ -20,6 +21,15 @@ static K_SEM_DEFINE(sem_per_adv, 0, 1);
 static K_SEM_DEFINE(sem_per_sync, 0, 1);
 static K_SEM_DEFINE(sem_per_sync_lost, 0, 1);
 
+/* size of stack area used by each thread */
+#define STACKSIZE 1024
+
+/* scheduling priority used by each thread */
+#define PRIORITY 7
+
+K_THREAD_STACK_DEFINE(threadA_stack_area, STACKSIZE);
+static struct k_thread threadA_data;
+
 /* The devicetree node identifier for the "led0" alias. */
 #define LED0_NODE DT_ALIAS(led0)
 
@@ -30,6 +40,20 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
 static struct k_work_delayable blink_work;
 static bool                  led_is_on;
+extern uint8_t sync_chan_idx;
+extern uint16_t sync_ival_us;
+extern uint16_t sync_event_counter;
+extern uint16_t sync_skip_event;
+
+extern uint8_t lll_chan_sel_2_custom(uint16_t counter, uint16_t chan_id);
+extern uint8_t ll_test_tx(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy,
+		   uint8_t cte_len, uint8_t cte_type, uint8_t switch_pattern_len,
+		   const uint8_t *ant_id, int8_t tx_power);
+
+uint8_t sync_chan_idx = 255;
+uint16_t sync_ival_us = 0;
+uint16_t sync_event_counter = 0;
+uint16_t sync_skip_event = 0;
 
 static void blink_timeout(struct k_work *work)
 {
@@ -79,17 +103,17 @@ static void scan_recv(const struct bt_le_scan_recv_info *info,
 	bt_data_parse(buf, data_cb, name);
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-	printk("[DEVICE]: %s, AD evt type %u, Tx Pwr: %i, RSSI %i %s "
-	       "C:%u S:%u D:%u SR:%u E:%u Prim: %s, Secn: %s, "
-	       "Interval: 0x%04x (%u ms), SID: %u\n",
-	       le_addr, info->adv_type, info->tx_power, info->rssi, name,
-	       (info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_SCANNABLE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_DIRECTED) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_SCAN_RESPONSE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_EXT_ADV) != 0,
-	       phy2str(info->primary_phy), phy2str(info->secondary_phy),
-	       info->interval, info->interval * 5 / 4, info->sid);
+	// printk("[DEVICE]: %s, AD evt type %u, Tx Pwr: %i, RSSI %i %s "
+	//        "C:%u S:%u D:%u SR:%u E:%u Prim: %s, Secn: %s, "
+	//        "Interval: 0x%04x (%u ms), SID: %u\n",
+	//        le_addr, info->adv_type, info->tx_power, info->rssi, name,
+	//        (info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_SCANNABLE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_DIRECTED) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_SCAN_RESPONSE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_EXT_ADV) != 0,
+	//        phy2str(info->primary_phy), phy2str(info->secondary_phy),
+	//        info->interval, info->interval * 5 / 4, info->sid);
 
 	if (!per_adv_found && info->interval) {
 		per_adv_found = true;
@@ -112,10 +136,10 @@ static void sync_cb(struct bt_le_per_adv_sync *sync,
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
-	       "Interval 0x%04x (%u ms), PHY %s\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr,
-	       info->interval, info->interval * 5 / 4, phy2str(info->phy));
+	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
+	//        "Interval 0x%04x (%u ms), PHY %s\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr,
+	//        info->interval, info->interval * 5 / 4, phy2str(info->phy));
 
 	k_sem_give(&sem_per_sync);
 }
@@ -155,6 +179,85 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 	.recv = recv_cb
 };
 
+struct k_poll_signal signal;
+
+struct k_poll_event sync_stablished = K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_SIGNAL,
+                                    K_POLL_MODE_NOTIFY_ONLY, &signal);
+
+void my_work_handler(struct k_work *work)
+{
+    printk("Send DTM on channel %u\n", sync_chan_idx);
+
+	// send
+	struct bt_hci_cp_le_tx_test *cp;
+	struct net_buf *buf;
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_TX_TEST, sizeof(*cp));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->tx_ch = sync_chan_idx;
+	cp->test_data_len = 255;
+	cp->pkt_payload = BT_HCI_TEST_PKT_PAYLOAD_01010101;
+	int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TX_TEST, buf);
+	// printk("%d\n", r_val);
+
+	// ll_test_tx(sync_chan_idx, 255, BT_HCI_TEST_PKT_PAYLOAD_01010101, BT_HCI_LE_TX_PHY_2M, BT_HCI_LE_TEST_CTE_DISABLED, BT_HCI_LE_TEST_CTE_TYPE_ANY, BT_HCI_LE_TEST_SWITCH_PATTERN_LEN_ANY, NULL, BT_HCI_TX_TEST_POWER_MAX);
+
+	// calc the next one
+	sync_event_counter++;
+	sync_chan_idx = lll_chan_sel_2_custom(sync_event_counter + sync_skip_event, sync_chan_idx);
+}
+
+K_WORK_DEFINE(my_work, my_work_handler);
+
+void my_timer_handler(struct k_timer *dummy)
+{
+    k_work_submit(&my_work);
+}
+
+K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
+
+void threadA(void *dummy1, void *dummy2, void *dummy3)
+{
+	ARG_UNUSED(dummy1);
+	ARG_UNUSED(dummy2);
+	ARG_UNUSED(dummy3);
+
+	while(1) {
+		if (sync_stablished.signal->signaled) {
+			printk("sync_stablished.signal->signaled - ival: %u us\n", sync_ival_us); // TODO: Sync invercal is off - 1.25
+			// k_timer_start(&my_timer, K_NO_WAIT, K_USEC(1000));
+			while(1) {
+				
+
+				struct bt_hci_cp_le_tx_test *cp;
+				struct net_buf *buf;
+
+				buf = bt_hci_cmd_create(BT_HCI_OP_LE_TX_TEST, sizeof(*cp));
+				if (!buf) {
+					return -ENOBUFS;
+				}
+
+				cp = net_buf_add(buf, sizeof(*cp));
+				cp->tx_ch = sync_chan_idx;
+				cp->test_data_len = 255;
+				cp->pkt_payload = BT_HCI_TEST_PKT_PAYLOAD_01010101;
+				int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TX_TEST, buf);
+				
+				sync_event_counter++;
+				sync_chan_idx = lll_chan_sel_2_custom(sync_event_counter + sync_skip_event, sync_chan_idx);
+
+				k_sleep(K_MSEC(1000));
+			}
+		}
+		k_sleep(K_USEC(1));
+	}
+}
+
+
 void main(void)
 {
 	struct bt_le_per_adv_sync_param sync_create_param;
@@ -162,25 +265,6 @@ void main(void)
 	int err;
 
 	printk("Starting Periodic Advertising Synchronization Demo\n");
-
-#if defined(HAS_LED)
-	printk("Checking LED device...");
-	if (!device_is_ready(led.port)) {
-		printk("failed.\n");
-		return;
-	}
-	printk("done.\n");
-
-	printk("Configuring GPIO pin...");
-	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-	if (err) {
-		printk("failed.\n");
-		return;
-	}
-	printk("done.\n");
-
-	k_work_init_delayable(&blink_work, blink_timeout);
-#endif /* HAS_LED */
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
@@ -205,16 +289,17 @@ void main(void)
 	}
 	printk("success.\n");
 
+	k_poll_signal_init(&signal);
+
+	k_thread_create(&threadA_data, threadA_stack_area,
+			K_THREAD_STACK_SIZEOF(threadA_stack_area),
+			threadA, NULL, NULL, NULL,
+			PRIORITY, 0, K_FOREVER);
+	k_thread_name_set(&threadA_data, "thread_a");
+
+	k_thread_start(&threadA_data);
+
 	do {
-#if defined(HAS_LED)
-		struct k_work_sync work_sync;
-
-		printk("Start blinking LED...\n");
-		led_is_on = false;
-		gpio_pin_set(led.port, led.pin, (int)led_is_on);
-		k_work_schedule(&blink_work, BLINK_ONOFF);
-#endif /* HAS_LED */
-
 		printk("Waiting for periodic advertising...\n");
 		per_adv_found = false;
 		err = k_sem_take(&sem_per_adv, K_FOREVER);
@@ -252,21 +337,32 @@ void main(void)
 		}
 		printk("Periodic sync established.\n");
 
-#if defined(HAS_LED)
-		printk("Stop blinking LED.\n");
-		k_work_cancel_delayable_sync(&blink_work, &work_sync);
-
-		/* Keep LED on */
-		led_is_on = true;
-		gpio_pin_set(led.port, led.pin, (int)led_is_on);
-#endif /* HAS_LED */
-
-		printk("Waiting for periodic sync lost...\n");
-		err = k_sem_take(&sem_per_sync_lost, K_FOREVER);
+		printk("Deleting Periodic Advertising Sync...");
+		err = bt_le_per_adv_sync_delete(sync);
 		if (err) {
 			printk("failed (err %d)\n", err);
 			return;
 		}
-		printk("Periodic sync lost.\n");
+
+		while(1) {
+			// if(sync_chan_idx <= 40) {
+			// 	k_timer_start(&my_timer, K_NO_WAIT, K_MSEC(sync_ival_ms));
+
+			// 	err = bt_le_per_adv_sync_delete(sync);
+			// 	if (err) {
+			// 		printk("failed (err %d)\n", err);
+			// 		return;
+			// 	}
+			// }
+			k_sleep(K_MSEC(1000));
+		}
+
+		// printk("Waiting for periodic sync lost...\n");
+		// err = k_sem_take(&sem_per_sync_lost, K_FOREVER);
+		// if (err) {
+		// 	printk("failed (err %d)\n", err);
+		// 	return;
+		// }
+		// printk("Periodic sync lost.\n");
 	} while (true);
 }

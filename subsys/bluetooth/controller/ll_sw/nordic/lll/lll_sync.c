@@ -258,6 +258,12 @@ static int init_reset(void)
 	return 0;
 }
 
+extern uint8_t sync_chan_idx;
+// extern uint16_t sync_ival_ms;
+extern uint16_t sync_event_counter;
+extern uint16_t sync_skip_event;
+extern struct k_poll_signal signal;
+
 static int create_prepare_cb(struct lll_prepare_param *p)
 {
 	uint16_t event_counter;
@@ -279,6 +285,12 @@ static int create_prepare_cb(struct lll_prepare_param *p)
 	lll->skip_prepare = 0U;
 
 	chan_idx = data_channel_calc(lll);
+
+	sync_event_counter = lll->event_counter;
+	sync_skip_event = lll->skip_event;
+	sync_chan_idx = chan_idx;
+	// sync_ival_ms = lll->window_size_event_us;
+	k_poll_signal_raise(&signal, 0x1337);
 
 	/* Update event counter to next value */
 	lll->event_counter = (event_counter + 1U);

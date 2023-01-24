@@ -48,40 +48,57 @@ void main(void)
 		return;
 	}
 
+	printk("Start Extended Advertising...");
+	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+	if (err) {
+		printk("Failed to start extended advertising "
+				"(err %d)\n", err);
+		return;
+	}
+	printk("done.\n");
+
+	printk("Set Periodic Advertising Data...");
+	err = bt_le_per_adv_set_data(adv, ad, ARRAY_SIZE(ad));
+	if (err) {
+		printk("Failed (err %d)\n", err);
+		return;
+	}
+	printk("done.\n");
+
 	while (true) {
-		printk("Start Extended Advertising...");
-		err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
-		if (err) {
-			printk("Failed to start extended advertising "
-			       "(err %d)\n", err);
-			return;
-		}
-		printk("done.\n");
+		// printk("Start Extended Advertising...");
+		// err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+		// if (err) {
+		// 	printk("Failed to start extended advertising "
+		// 	       "(err %d)\n", err);
+		// 	return;
+		// }
+		// printk("done.\n");
 
-		for (int i = 0; i < 3; i++) {
-			k_sleep(K_SECONDS(10));
+		// for (int i = 0; i < 3; i++) {
+		// 	k_sleep(K_SECONDS(10));
 
-			mfg_data[2]++;
+		// 	mfg_data[2]++;
 
-			printk("Set Periodic Advertising Data...");
-			err = bt_le_per_adv_set_data(adv, ad, ARRAY_SIZE(ad));
-			if (err) {
-				printk("Failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
-		}
+		// 	printk("Set Periodic Advertising Data...");
+		// 	err = bt_le_per_adv_set_data(adv, ad, ARRAY_SIZE(ad));
+		// 	if (err) {
+		// 		printk("Failed (err %d)\n", err);
+		// 		return;
+		// 	}
+		// 	printk("done.\n");
+		// }
 
-		k_sleep(K_SECONDS(10));
+		// k_sleep(K_SECONDS(10));
 
-		printk("Stop Extended Advertising...");
-		err = bt_le_ext_adv_stop(adv);
-		if (err) {
-			printk("Failed to stop extended advertising "
-			       "(err %d)\n", err);
-			return;
-		}
-		printk("done.\n");
+		// printk("Stop Extended Advertising...");
+		// err = bt_le_ext_adv_stop(adv);
+		// if (err) {
+		// 	printk("Failed to stop extended advertising "
+		// 	       "(err %d)\n", err);
+		// 	return;
+		// }
+		// printk("done.\n");
 
 		k_sleep(K_SECONDS(10));
 	}

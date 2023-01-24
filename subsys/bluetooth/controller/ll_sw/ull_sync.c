@@ -648,6 +648,8 @@ bool ull_sync_setup_sid_match(struct ll_scan_set *scan, uint8_t sid)
 		  (sid == scan->periodic.sid)));
 }
 
+extern uint16_t sync_ival_us;
+
 void ull_sync_setup(struct ll_scan_set *scan, struct ll_scan_aux_set *aux,
 		    struct node_rx_hdr *node_rx, struct pdu_adv_sync_info *si)
 {
@@ -711,6 +713,7 @@ void ull_sync_setup(struct ll_scan_set *scan, struct ll_scan_aux_set *aux,
 
 	interval = sys_le16_to_cpu(si->interval);
 	interval_us = interval * PERIODIC_INT_UNIT_US;
+	sync_ival_us = si->interval;
 
 	/* Convert fromm 10ms units to interval units */
 	sync->timeout_reload = RADIO_SYNC_EVENTS((sync->timeout * 10U *
