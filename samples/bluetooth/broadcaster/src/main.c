@@ -1,11 +1,3 @@
-/* main.c - Application main entry point */
-
-/*
- * Copyright (c) 2015-2016 Intel Corporation
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include <zephyr/types.h>
 #include <stddef.h>
 #include <zephyr/sys/printk.h>
@@ -14,49 +6,59 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 
-static uint8_t mfg_data[] = { 0xff, 0xff, 0x00 };
-
-static const struct bt_data ad[] = {
-	BT_DATA(BT_DATA_MANUFACTURER_DATA, mfg_data, 3),
-};
+// #include "../../../subsys/bluetooth/controller/ll_sw/ll_test.h"
 
 void main(void)
 {
-	int err;
-
-	printk("Starting Broadcaster\n");
-
-	/* Initialize the Bluetooth Subsystem */
-	err = bt_enable(NULL);
+	int err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
 		return;
 	}
 
-	printk("Bluetooth initialized\n");
-
 	do {
-		k_msleep(1000);
+		// struct bt_hci_cp_le_tx_test_v4 *cp;
+		// struct bt_hci_cp_le_tx_test_v4_tx_power *pw;
+		// struct net_buf *buf;
 
-		printk("Sending advertising data: 0x%02X\n", mfg_data[2]);
+		// buf = bt_hci_cmd_create(BT_HCI_OP_LE_TX_TEST_V4, sizeof(*cp) + sizeof(*pw));
+		// if (!buf) {
+		// 	return;
+		// }
 
-		/* Start advertising */
-		err = bt_le_adv_start(BT_LE_ADV_NCONN, ad, ARRAY_SIZE(ad),
-				      NULL, 0);
-		if (err) {
-			printk("Advertising failed to start (err %d)\n", err);
-			return;
+		// cp = net_buf_add(buf, sizeof(*cp));
+		// cp->tx_ch = 35;
+		// cp->test_data_len = 11;
+		// cp->pkt_payload = BT_HCI_TEST_PKT_PAYLOAD_01010101;
+		// cp->phy = BT_HCI_LE_TX_PHY_2M;
+		// cp->cte_len = BT_HCI_LE_TEST_CTE_DISABLED;
+		// cp->cte_type = BT_HCI_LE_TEST_CTE_TYPE_ANY;
+		// cp->switch_pattern_len = BT_HCI_LE_TEST_SWITCH_PATTERN_LEN_ANY;
+
+		// pw = net_buf_add(buf, sizeof(*pw));
+		// pw->tx_power = BT_HCI_TX_TEST_POWER_MAX;
+
+		// err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_TX_TEST_V4, buf, NULL);
+		// if (err) {
+		// 	return;
+		// }
+
+		struct bt_hci_cp_le_tx_test *cp;
+		struct net_buf *buf;
+
+		buf = bt_hci_cmd_create(BT_HCI_OP_LE_TX_TEST, sizeof(*cp));
+		if (!buf) {
+			return -ENOBUFS;
 		}
 
-		k_msleep(1000);
+		cp = net_buf_add(buf, sizeof(*cp));
+		cp->tx_ch = 5;
+		cp->test_data_len = 255;
+		cp->pkt_payload = BT_HCI_TEST_PKT_PAYLOAD_01010101;
+		int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TX_TEST, buf);
 
-		err = bt_le_adv_stop();
-		if (err) {
-			printk("Advertising failed to stop (err %d)\n", err);
-			return;
-		}
+		printk("Go\n");
 
-		mfg_data[2]++;
-
+		k_sleep(K_MSEC(100));
 	} while (1);
 }

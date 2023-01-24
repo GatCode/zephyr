@@ -1,88 +1,67 @@
-/* main.c - Application main entry point */
+#include <nrfx.h>
 
-/*
- * Copyright (c) 2015-2016 Intel Corporation
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
-#include <zephyr/types.h>
-#include <stddef.h>
-#include <zephyr/sys/printk.h>
-#include <zephyr/sys/util.h>
-
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/hci.h>
-
-#define DEVICE_NAME CONFIG_BT_DEVICE_NAME
-#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
-
-/*
- * Set Advertisement data. Based on the Eddystone specification:
- * https://github.com/google/eddystone/blob/master/protocol-specification.md
- * https://github.com/google/eddystone/tree/master/eddystone-url
- */
-static const struct bt_data ad[] = {
-	BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_NO_BREDR),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL, 0xaa, 0xfe),
-	BT_DATA_BYTES(BT_DATA_SVC_DATA16,
-		      0xaa, 0xfe, /* Eddystone UUID */
-		      0x10, /* Eddystone-URL frame type */
-		      0x00, /* Calibrated Tx power at 0m */
-		      0x00, /* URL Scheme Prefix http://www. */
-		      'z', 'e', 'p', 'h', 'y', 'r',
-		      'p', 'r', 'o', 'j', 'e', 'c', 't',
-		      0x08) /* .org */
-};
-
-/* Set Scan Response data */
-static const struct bt_data sd[] = {
-	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
-};
-
-static void bt_ready(int err)
+int main(void)
 {
-	char addr_s[BT_ADDR_LE_STR_LEN];
-	bt_addr_le_t addr = {0};
-	size_t count = 1;
-
-	if (err) {
-		printk("Bluetooth init failed (err %d)\n", err);
-		return;
-	}
-
-	printk("Bluetooth initialized\n");
-
-	/* Start advertising */
-	err = bt_le_adv_start(BT_LE_ADV_NCONN_IDENTITY, ad, ARRAY_SIZE(ad),
-			      sd, ARRAY_SIZE(sd));
-	if (err) {
-		printk("Advertising failed to start (err %d)\n", err);
-		return;
-	}
-
-
-	/* For connectable advertising you would use
-	 * bt_le_oob_get_local().  For non-connectable non-identity
-	 * advertising an non-resolvable private address is used;
-	 * there is no API to retrieve that.
-	 */
-
-	bt_id_get(&addr, &count);
-	bt_addr_le_to_str(&addr, addr_s, sizeof(addr_s));
-
-	printk("Beacon started, advertising as %s\n", addr_s);
-}
-
-void main(void)
-{
-	int err;
-
-	printk("Starting Beacon Demo\n");
-
-	/* Initialize the Bluetooth Subsystem */
-	err = bt_enable(bt_ready);
-	if (err) {
-		printk("Bluetooth init failed (err %d)\n", err);
-	}
+  // Packet to send
+  uint8_t packet[16] = "demopacket";
+  
+  // Start HFCLK from crystal oscillator. The radio needs crystal to function correctly.
+  NRF_CLOCK->TASKS_HFCLKSTART = 1;
+  while (NRF_CLOCK->EVENTS_HFCLKSTARTED == 0);
+  
+  // Configure radio with 2Mbit Nordic proprietary mode
+  NRF_RADIO->MODE = RADIO_MODE_MODE_Nrf_2Mbit << RADIO_MODE_MODE_Pos;
+  
+  // Configure packet with no S0,S1 or Length fields and 8-bit preamble.
+  NRF_RADIO->PCNF0 = (0 << RADIO_PCNF0_LFLEN_Pos) |
+                     (0 << RADIO_PCNF0_S0LEN_Pos) |
+                     (0 << RADIO_PCNF0_S1LEN_Pos) | 
+                     (RADIO_PCNF0_S1INCL_Automatic << RADIO_PCNF0_S1INCL_Pos) |
+                     (RADIO_PCNF0_PLEN_8bit << RADIO_PCNF0_PLEN_Pos);
+  
+  // Configure static payload length of 16 bytes. 3 bytes address, little endian with whitening enabled.
+  NRF_RADIO->PCNF1 =  (16 << RADIO_PCNF1_MAXLEN_Pos) |
+                      (16 << RADIO_PCNF1_STATLEN_Pos) |
+                      (2  << RADIO_PCNF1_BALEN_Pos) | 
+                      (RADIO_PCNF1_ENDIAN_Little << RADIO_PCNF1_ENDIAN_Pos) |
+                      (RADIO_PCNF1_WHITEEN_Enabled << RADIO_PCNF1_WHITEEN_Pos);
+  
+  // initialize whitening value
+  NRF_RADIO->DATAWHITEIV = 0x55;
+  
+  // Configure address Prefix0 + Base0
+  NRF_RADIO->BASE0   = 0x0000BABE;
+  NRF_RADIO->PREFIX0 = 0x41 << RADIO_PREFIX0_AP0_Pos;
+  
+  // Use logical address 0 (BASE0 + PREFIX0 byte 0)
+  NRF_RADIO->TXADDRESS = 0 << RADIO_TXADDRESS_TXADDRESS_Pos;
+  
+  // Initialize CRC (two bytes)
+  NRF_RADIO->CRCCNF = (RADIO_CRCCNF_LEN_Two << RADIO_CRCCNF_LEN_Pos) |
+                      (RADIO_CRCCNF_SKIPADDR_Skip << RADIO_CRCCNF_SKIPADDR_Pos);
+  NRF_RADIO->CRCPOLY = 0x0000AAAA;
+  NRF_RADIO->CRCINIT = 0x12345678;
+  
+  // Enable fast rampup, new in nRF52
+  NRF_RADIO->MODECNF0 = (RADIO_MODECNF0_DTX_B0 << RADIO_MODECNF0_DTX_Pos) |
+                        (RADIO_MODECNF0_RU_Fast << RADIO_MODECNF0_RU_Pos);
+                        
+  // 0dBm output power, sending packets at 2400MHz
+  NRF_RADIO->TXPOWER = RADIO_TXPOWER_TXPOWER_0dBm << RADIO_TXPOWER_TXPOWER_Pos;
+  NRF_RADIO->FREQUENCY = 0 << RADIO_FREQUENCY_FREQUENCY_Pos;
+  
+  // Configure address of the packet and logic address to use
+  NRF_RADIO->PACKETPTR = (uint32_t)&packet[0];
+  
+  // Configure shortcuts to start as soon as READY event is received, and disable radio as soon as packet is sent.
+  NRF_RADIO->SHORTS = (RADIO_SHORTS_READY_START_Enabled << RADIO_SHORTS_READY_START_Pos) |
+                      (RADIO_SHORTS_END_DISABLE_Enabled << RADIO_SHORTS_END_DISABLE_Pos);
+  
+  // Continuously send the same packet
+  while (1)
+  {
+    NRF_RADIO->TASKS_TXEN = 1;
+    while (NRF_RADIO->EVENTS_DISABLED == 0);
+    NRF_RADIO->EVENTS_DISABLED = 0;
+  }
 }

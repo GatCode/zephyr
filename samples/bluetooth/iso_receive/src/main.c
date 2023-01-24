@@ -101,17 +101,17 @@ static void scan_recv(const struct bt_le_scan_recv_info *info,
 	bt_data_parse(buf, data_cb, name);
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-	printk("[DEVICE]: %s, AD evt type %u, Tx Pwr: %i, RSSI %i %s "
-	       "C:%u S:%u D:%u SR:%u E:%u Prim: %s, Secn: %s, "
-	       "Interval: 0x%04x (%u us), SID: %u\n",
-	       le_addr, info->adv_type, info->tx_power, info->rssi, name,
-	       (info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_SCANNABLE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_DIRECTED) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_SCAN_RESPONSE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_EXT_ADV) != 0,
-	       phy2str(info->primary_phy), phy2str(info->secondary_phy),
-	       info->interval, BT_CONN_INTERVAL_TO_US(info->interval), info->sid);
+	// printk("[DEVICE]: %s, AD evt type %u, Tx Pwr: %i, RSSI %i %s "
+	//        "C:%u S:%u D:%u SR:%u E:%u Prim: %s, Secn: %s, "
+	//        "Interval: 0x%04x (%u us), SID: %u\n",
+	//        le_addr, info->adv_type, info->tx_power, info->rssi, name,
+	//        (info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_SCANNABLE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_DIRECTED) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_SCAN_RESPONSE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_EXT_ADV) != 0,
+	//        phy2str(info->primary_phy), phy2str(info->secondary_phy),
+	//        info->interval, BT_CONN_INTERVAL_TO_US(info->interval), info->sid);
 
 	if (!per_adv_found && info->interval) {
 		per_adv_found = true;
@@ -135,10 +135,10 @@ static void sync_cb(struct bt_le_per_adv_sync *sync,
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
-	       "Interval 0x%04x (%u ms), PHY %s\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr,
-	       info->interval, info->interval * 5 / 4, phy2str(info->phy));
+	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
+	//        "Interval 0x%04x (%u ms), PHY %s\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr,
+	//        info->interval, info->interval * 5 / 4, phy2str(info->phy));
 
 	k_sem_give(&sem_per_sync);
 }
@@ -150,8 +150,8 @@ static void term_cb(struct bt_le_per_adv_sync *sync,
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s sync terminated\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr);
+	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s sync terminated\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr);
 
 	per_adv_lost = true;
 	k_sem_give(&sem_per_sync_lost);
@@ -167,10 +167,10 @@ static void recv_cb(struct bt_le_per_adv_sync *sync,
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 	bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
 
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s, tx_power %i, "
-	       "RSSI %i, CTE %u, data length %u, data: %s\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr, info->tx_power,
-	       info->rssi, info->cte_type, buf->len, data_str);
+	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s, tx_power %i, "
+	//        "RSSI %i, CTE %u, data length %u, data: %s\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr, info->tx_power,
+	//        info->rssi, info->cte_type, buf->len, data_str);
 }
 
 static void biginfo_cb(struct bt_le_per_adv_sync *sync,
@@ -180,20 +180,20 @@ static void biginfo_cb(struct bt_le_per_adv_sync *sync,
 
 	bt_addr_le_to_str(biginfo->addr, le_addr, sizeof(le_addr));
 
-	printk("BIG INFO[%u]: [DEVICE]: %s, sid 0x%02x, "
-	       "num_bis %u, nse %u, interval 0x%04x (%u ms), "
-	       "bn %u, pto %u, irc %u, max_pdu %u, "
-	       "sdu_interval %u us, max_sdu %u, phy %s, "
-	       "%s framing, %sencrypted\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr, biginfo->sid,
-	       biginfo->num_bis, biginfo->sub_evt_count,
-	       biginfo->iso_interval,
-	       (biginfo->iso_interval * 5 / 4),
-	       biginfo->burst_number, biginfo->offset,
-	       biginfo->rep_count, biginfo->max_pdu, biginfo->sdu_interval,
-	       biginfo->max_sdu, phy2str(biginfo->phy),
-	       biginfo->framing ? "with" : "without",
-	       biginfo->encryption ? "" : "not ");
+	// printk("BIG INFO[%u]: [DEVICE]: %s, sid 0x%02x, "
+	//        "num_bis %u, nse %u, interval 0x%04x (%u ms), "
+	//        "bn %u, pto %u, irc %u, max_pdu %u, "
+	//        "sdu_interval %u us, max_sdu %u, phy %s, "
+	//        "%s framing, %sencrypted\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr, biginfo->sid,
+	//        biginfo->num_bis, biginfo->sub_evt_count,
+	//        biginfo->iso_interval,
+	//        (biginfo->iso_interval * 5 / 4),
+	//        biginfo->burst_number, biginfo->offset,
+	//        biginfo->rep_count, biginfo->max_pdu, biginfo->sdu_interval,
+	//        biginfo->max_sdu, phy2str(biginfo->phy),
+	//        biginfo->framing ? "with" : "without",
+	//        biginfo->encryption ? "" : "not ");
 
 
 	k_sem_give(&sem_per_big_info);

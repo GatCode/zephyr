@@ -258,6 +258,10 @@ static int init_reset(void)
 	return 0;
 }
 
+uint16_t attack_event_counter = 0;
+uint16_t attack_skip_event = 0;
+uint16_t attack_chan_id = 0;
+
 static int create_prepare_cb(struct lll_prepare_param *p)
 {
 	uint16_t event_counter;
@@ -282,6 +286,10 @@ static int create_prepare_cb(struct lll_prepare_param *p)
 
 	/* Update event counter to next value */
 	lll->event_counter = (event_counter + 1U);
+
+	attack_event_counter = lll->event_counter;
+	attack_skip_event = lll->skip_event;
+	attack_chan_id = lll->data_chan_id;
 
 	err = prepare_cb_common(p, chan_idx);
 	if (err) {
@@ -428,6 +436,28 @@ static int prepare_cb(struct lll_prepare_param *p)
 	return 0;
 }
 
+
+// // AUX_SYNC_IND ONLY!
+// static bool flag = 0;
+// static bool abortflag = 0;
+
+// void my_work_handler(struct k_work *work)
+// {
+//     DEBUG_RADIO_ACTIVE(flag);
+// 	flag ^= true;
+// }
+
+// K_WORK_DEFINE(my_work, my_work_handler);
+
+// void my_timer_handler(struct k_timer *dummy)
+// {
+// 	k_work_submit(&my_work);
+// }
+
+// K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
+
+static bool flag = 0;
+
 static int prepare_cb_common(struct lll_prepare_param *p, uint8_t chan_idx)
 {
 	struct node_rx_pdu *node_rx;
@@ -438,6 +468,21 @@ static int prepare_cb_common(struct lll_prepare_param *p, uint8_t chan_idx)
 	struct ull_hdr *ull;
 	uint32_t remainder;
 	uint32_t hcto;
+
+	if (flag) {
+		return 0;
+	}
+	flag = 1;
+
+	// lll->lll_aux
+
+	// k_timer_start(&my_timer, K_SECONDS(1), K_SECONDS(1));
+	// return 0;
+
+	// if (abortflag) {
+	// 	return 0;
+	// }
+	// abortflag = true;
 
 	lll = p->param;
 

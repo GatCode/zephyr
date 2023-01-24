@@ -1271,6 +1271,9 @@ isr_rx_do_close:
 
 static void isr_done(void *param)
 {
+	// DEBUG_RADIO_ACTIVE(1);
+	// DEBUG_RADIO_ACTIVE(0);
+
 	struct lll_adv *lll;
 
 	/* Clear radio status and events */

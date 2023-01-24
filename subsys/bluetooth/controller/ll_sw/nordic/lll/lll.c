@@ -129,15 +129,11 @@ static void rtc0_nrf5_isr(const void *arg)
 
 static void swi_lll_nrf5_isr(const void *arg)
 {
-	DEBUG_RADIO_ISR(1);
-
 	lll_prof_enter_lll();
 
 	mayfly_run(TICKER_USER_ID_LLL);
 
 	lll_prof_exit_lll();
-
-	DEBUG_RADIO_ISR(0);
 }
 
 #if defined(CONFIG_BT_CTLR_LOW_LAT) || \

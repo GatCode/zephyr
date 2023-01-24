@@ -295,21 +295,21 @@ void main(void)
 	get_tx_power(BT_HCI_VS_LL_HANDLE_TYPE_ADV, 0, &txp_get);
 	printk("-> default TXP = %d\n", txp_get);
 
-	/* Wait for 5 seconds to give a chance users/testers
-	 * to check that default Tx power is indeed the one
-	 * selected in Kconfig.
-	 */
-	k_sleep(K_SECONDS(5));
+	// /* Wait for 5 seconds to give a chance users/testers
+	//  * to check that default Tx power is indeed the one
+	//  * selected in Kconfig.
+	//  */
+	// k_sleep(K_SECONDS(5));
 
-	k_thread_create(&pwr_thread_data, pwr_thread_stack,
-			K_THREAD_STACK_SIZEOF(pwr_thread_stack),
-			modulate_tx_power, NULL, NULL, NULL,
-			K_PRIO_COOP(10),
-			0, K_NO_WAIT);
-	k_thread_name_set(&pwr_thread_data, "DYN TX");
+	// k_thread_create(&pwr_thread_data, pwr_thread_stack,
+	// 		K_THREAD_STACK_SIZEOF(pwr_thread_stack),
+	// 		modulate_tx_power, NULL, NULL, NULL,
+	// 		K_PRIO_COOP(10),
+	// 		0, K_NO_WAIT);
+	// k_thread_name_set(&pwr_thread_data, "DYN TX");
 
-	while (1) {
-		hrs_notify();
-		k_sleep(K_SECONDS(2));
-	}
+	// while (1) {
+	// 	hrs_notify();
+	// 	k_sleep(K_SECONDS(2));
+	// }
 }

@@ -6,10 +6,10 @@
 
 #include <zephyr/bluetooth/bluetooth.h>
 
-static uint8_t mfg_data[] = { 0xff, 0xff, 0x00 };
+static uint8_t mfg_data[] = { 0xde, 0xad, 0xbe, 0xef };
 
 static const struct bt_data ad[] = {
-	BT_DATA(BT_DATA_MANUFACTURER_DATA, mfg_data, 3),
+	BT_DATA(BT_DATA_MANUFACTURER_DATA, mfg_data, 4),
 };
 
 void main(void)
@@ -25,6 +25,12 @@ void main(void)
 		printk("Bluetooth init failed (err %d)\n", err);
 		return;
 	}
+
+	#define BT_LE_EXT_ADV_NCONN_NAME_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
+						 BT_LE_ADV_OPT_USE_NAME, \
+						 BT_GAP_ADV_SLOW_INT_MIN, \
+						 BT_GAP_ADV_SLOW_INT_MAX, \
+						 NULL)
 
 	/* Create a non-connectable non-scannable advertising set */
 	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN_NAME, NULL, &adv);
@@ -48,41 +54,24 @@ void main(void)
 		return;
 	}
 
+	printk("Start Extended Advertising...");
+	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+	if (err) {
+		printk("Failed to start extended advertising "
+				"(err %d)\n", err);
+		return;
+	}
+	printk("done.\n");
+
+	printk("Set Periodic Advertising Data...");
+	err = bt_le_per_adv_set_data(adv, ad, ARRAY_SIZE(ad));
+	if (err) {
+		printk("Failed (err %d)\n", err);
+		return;
+	}
+	printk("done.\n");
+
 	while (true) {
-		printk("Start Extended Advertising...");
-		err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
-		if (err) {
-			printk("Failed to start extended advertising "
-			       "(err %d)\n", err);
-			return;
-		}
-		printk("done.\n");
-
-		for (int i = 0; i < 3; i++) {
-			k_sleep(K_SECONDS(10));
-
-			mfg_data[2]++;
-
-			printk("Set Periodic Advertising Data...");
-			err = bt_le_per_adv_set_data(adv, ad, ARRAY_SIZE(ad));
-			if (err) {
-				printk("Failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
-		}
-
-		k_sleep(K_SECONDS(10));
-
-		printk("Stop Extended Advertising...");
-		err = bt_le_ext_adv_stop(adv);
-		if (err) {
-			printk("Failed to stop extended advertising "
-			       "(err %d)\n", err);
-			return;
-		}
-		printk("done.\n");
-
 		k_sleep(K_SECONDS(10));
 	}
 }

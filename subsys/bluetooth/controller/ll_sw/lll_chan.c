@@ -89,6 +89,17 @@ uint8_t lll_chan_sel_2(uint16_t counter, uint16_t chan_id, uint8_t *chan_map,
 	return chan_next;
 }
 
+uint8_t lll_chan_sel_2_custom(uint16_t counter, uint16_t chan_id)
+{
+	uint8_t chan_next;
+	uint16_t prn_e;
+
+	prn_e = chan_prn_e(counter, chan_id);
+	chan_next = prn_e % 37;
+
+	return chan_next;
+}
+
 #if defined(CONFIG_BT_CTLR_BROADCAST_ISO)
 /* Refer to Bluetooth Specification v5.2 Vol 6, Part B, Section 4.5.8.3
  * Channel Selection algorithm #2, and Section 4.5.8.3.1 Overview

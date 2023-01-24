@@ -3260,7 +3260,7 @@ static void le_tx_test(struct net_buf *buf, struct net_buf **evt)
 	uint8_t status;
 
 	status = ll_test_tx(cmd->tx_ch, cmd->test_data_len, cmd->pkt_payload,
-			    BT_HCI_LE_TX_PHY_1M, BT_HCI_LE_TEST_CTE_DISABLED,
+			    BT_HCI_LE_TX_PHY_2M, BT_HCI_LE_TEST_CTE_DISABLED,
 			    BT_HCI_LE_TEST_CTE_TYPE_ANY, BT_HCI_LE_TEST_SWITCH_PATTERN_LEN_ANY,
 			    NULL, BT_HCI_TX_TEST_POWER_MAX_SET);
 
@@ -4684,7 +4684,7 @@ static int controller_cmd_handle(uint16_t  ocf, struct net_buf *cmd,
 #endif /* CONFIG_BT_CTLR_DF_CONN_CTE_RSP */
 #endif /* CONFIG_BT_CTLR_DF */
 
-#if defined(CONFIG_BT_CTLR_DTM_HCI)
+// #if defined(CONFIG_BT_CTLR_DTM_HCI)
 	case BT_OCF(BT_HCI_OP_LE_RX_TEST):
 		le_rx_test(cmd, evt);
 		break;
@@ -4715,7 +4715,7 @@ static int controller_cmd_handle(uint16_t  ocf, struct net_buf *cmd,
 		le_tx_test_v4(cmd, evt);
 		break;
 #endif /* CONFIG_BT_CTLR_DTM_HCI_TX_V4 */
-#endif /* CONFIG_BT_CTLR_DTM_HCI */
+// #endif /* CONFIG_BT_CTLR_DTM_HCI */
 
 	default:
 		return -EINVAL;

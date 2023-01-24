@@ -593,6 +593,9 @@ uint8_t ll_test_tx(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy,
 		   uint8_t cte_len, uint8_t cte_type, uint8_t switch_pattern_len,
 		   const uint8_t *ant_id, int8_t tx_power)
 {
+	DEBUG_RADIO_ISR(1);
+	DEBUG_RADIO_ISR(0);
+
 	uint32_t start_us;
 	uint8_t err;
 	const bool cte_request = (cte_len > 0) ? true : false;
