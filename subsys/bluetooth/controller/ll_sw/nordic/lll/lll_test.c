@@ -783,23 +783,13 @@ uint8_t ll_jam(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy, int8_t tx_p
 
 	payload_set(type, len, 0, BT_HCI_LE_TEST_CTE_TYPE_ANY);
 
-	tx_tifs = calculate_tifs(len);
-
-	radio_tmr_tifs_set(tx_tifs);
+	radio_tmr_tifs_set(0);
 	radio_switch_complete_and_b2b_tx(test_phy, test_phy_flags, test_phy, test_phy_flags);
 
 	start_us = radio_tmr_start(1, cntr_cnt_get() + CNTR_MIN_DELTA, 0);
-	radio_tmr_end_capture();
-
-#if defined(HAL_RADIO_GPIO_HAVE_PA_PIN)
-	radio_gpio_pa_setup();
-	radio_gpio_pa_lna_enable(start_us +
-				 radio_tx_ready_delay_get(test_phy,
-							  test_phy_flags) -
-				 HAL_RADIO_GPIO_PA_OFFSET);
-#else /* !HAL_RADIO_GPIO_HAVE_PA_PIN */
 	ARG_UNUSED(start_us);
-#endif /* !HAL_RADIO_GPIO_HAVE_PA_PIN */
+
+	radio_tmr_end_capture();
 
 	started = true;
 
