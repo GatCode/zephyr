@@ -190,7 +190,7 @@ void my_work_handler(struct k_work *work)
 {
     printk("Calc. channel %u - counter: %u - id: %u\n", send_channel, sync_event_counter, sync_chan_id);
 
-	// for (uint8_t i = 0; i < 5; i++) {
+	for (uint8_t i = 0; i < 5; i++) {
 		// send
 		struct bt_hci_cp_le_tx_test *cp;
 		struct net_buf *buf;
@@ -207,8 +207,8 @@ void my_work_handler(struct k_work *work)
 		int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TX_TEST, buf);
 
 		ll_test_tx(sync_chan_id, 255, BT_HCI_TEST_PKT_PAYLOAD_01010101, BT_HCI_LE_TX_PHY_2M, BT_HCI_LE_TEST_CTE_DISABLED, BT_HCI_LE_TEST_CTE_TYPE_ANY, BT_HCI_LE_TEST_SWITCH_PATTERN_LEN_ANY, NULL, BT_HCI_TX_TEST_POWER_MAX);
-		k_sleep(K_MSEC(1));
-	// }
+		k_sleep(K_USEC(1500));
+	}
 
 	// calc the next one
 	send_channel = lll_chan_sel_2_custom(sync_event_counter + sync_skip_event, sync_chan_id);
