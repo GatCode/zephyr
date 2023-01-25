@@ -166,6 +166,7 @@ static int prepare_cb(struct lll_prepare_param *p)
 	radio_crc_configure(PDU_CRC_POLYNOMIAL,
 				sys_get_le24(lll->crc_init));
 	lll_chan_set(data_chan_use);
+	printk("Channel %u\n", data_chan_use);
 
 	upd = 0U;
 	pdu = lll_adv_sync_data_latest_get(lll, NULL, &upd);
@@ -285,6 +286,7 @@ static void abort_cb(struct lll_prepare_param *prepare_param, void *param)
 
 static void isr_done(void *param)
 {
+	DEBUG_RADIO_XTAL(1);
 	struct lll_adv_sync *lll = param;
 
 #if defined(CONFIG_BT_CTLR_DF_ADV_CTE_TX)
@@ -314,6 +316,7 @@ static void isr_done(void *param)
 	}
 
 	lll_isr_done(lll);
+	DEBUG_RADIO_XTAL(0);
 }
 
 #if defined(CONFIG_BT_CTLR_ADV_SYNC_PDU_BACK2BACK)

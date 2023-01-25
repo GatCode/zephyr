@@ -522,7 +522,31 @@ static uint8_t init(uint8_t chan, uint8_t phy, int8_t tx_power,
 
 	ret = tx_power_set(tx_power);
 
-	radio_freq_chan_set((chan << 1) + 2);
+	switch (chan) {
+	case 37:
+		radio_freq_chan_set(2);
+		break;
+
+	case 38:
+		radio_freq_chan_set(26);
+		break;
+
+	case 39:
+		radio_freq_chan_set(80);
+		break;
+
+	default:
+		if (chan < 11) {
+			radio_freq_chan_set(4 + (chan * 2U));
+		} else if (chan < 40) {
+			radio_freq_chan_set(28 + ((chan - 11) * 2U));
+		} else {
+			LL_ASSERT(0);
+		}
+		break;
+	}
+	
+	// radio_freq_chan_set((chan << 1) + 2);
 	radio_aa_set((uint8_t *)&test_sync_word);
 	radio_crc_configure(0x65b, PDU_AC_CRC_IV);
 	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_DTM_PAYLOAD_SIZE_MAX,
@@ -593,19 +617,26 @@ uint8_t ll_test_tx(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy,
 		   uint8_t cte_len, uint8_t cte_type, uint8_t switch_pattern_len,
 		   const uint8_t *ant_id, int8_t tx_power)
 {
+	DEBUG_RADIO_XTAL(1);
+
 	uint32_t start_us;
 	uint8_t err;
 	const bool cte_request = (cte_len > 0) ? true : false;
 
 	if ((type > BT_HCI_TEST_PKT_PAYLOAD_01010101) || !phy ||
-	    (phy > BT_HCI_LE_TX_PHY_CODED_S2)) {
+	    (phy > BT_HCI_LE_TX_PHY_CODED_S2) || chan > 40) {
 		return BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL;
 	}
+
+	printk("C: %u\n", chan);
 
 	err = init(chan, phy, tx_power, cte_request, isr_tx);
 	if (err) {
 		return err;
 	}
+
+	printk("C2: %u\n", chan);
+	// radio_freq_chan_set(chan);
 
 	/* Configure Constant Tone Extension */
 	if (cte_request) {
@@ -650,7 +681,7 @@ uint8_t ll_test_tx(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy,
 	ARG_UNUSED(start_us);
 #endif /* !HAL_RADIO_GPIO_HAVE_PA_PIN */
 
-	started = true;
+	// started = true;
 
 	return BT_HCI_ERR_SUCCESS;
 }

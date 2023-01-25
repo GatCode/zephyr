@@ -3259,12 +3259,16 @@ static void le_tx_test(struct net_buf *buf, struct net_buf **evt)
 	struct bt_hci_cp_le_tx_test *cmd = (void *)buf->data;
 	uint8_t status;
 
+	// printk("le_tx_test chan: %u\n", cmd->tx_ch);
+
 	status = ll_test_tx(cmd->tx_ch, cmd->test_data_len, cmd->pkt_payload,
 			    BT_HCI_LE_TX_PHY_1M, BT_HCI_LE_TEST_CTE_DISABLED,
 			    BT_HCI_LE_TEST_CTE_TYPE_ANY, BT_HCI_LE_TEST_SWITCH_PATTERN_LEN_ANY,
 			    NULL, BT_HCI_TX_TEST_POWER_MAX_SET);
 
 	*evt = cmd_complete_status(status);
+
+	DEBUG_RADIO_XTAL(0);
 }
 
 static void le_test_end(struct net_buf *buf, struct net_buf **evt)

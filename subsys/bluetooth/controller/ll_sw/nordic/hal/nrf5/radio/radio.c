@@ -25,6 +25,8 @@
 
 #include "radio_internal.h"
 
+#include "hal/debug.h"
+
 /* Converts the GPIO controller in a FEM property's GPIO specification
  * to its nRF register map pointer.
  *

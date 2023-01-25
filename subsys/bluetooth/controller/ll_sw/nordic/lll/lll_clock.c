@@ -101,7 +101,7 @@ int lll_hfclock_on(void)
 	}
 
 	z_nrf_clock_bt_ctlr_hf_request();
-	DEBUG_RADIO_XTAL(1);
+	// DEBUG_RADIO_XTAL(1);
 
 	return 0;
 }
@@ -116,7 +116,7 @@ int lll_hfclock_on_wait(void)
 
 	err = blocking_on(mgr, HFCLOCK_TIMEOUT_MS);
 	if (err >= 0) {
-		DEBUG_RADIO_XTAL(1);
+		// DEBUG_RADIO_XTAL(1);
 	}
 
 	return err;
@@ -133,7 +133,7 @@ int lll_hfclock_off(void)
 	}
 
 	z_nrf_clock_bt_ctlr_hf_release();
-	DEBUG_RADIO_XTAL(0);
+	// DEBUG_RADIO_XTAL(0);
 
 	return 0;
 }

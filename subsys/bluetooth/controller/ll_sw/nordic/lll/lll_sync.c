@@ -258,7 +258,7 @@ static int init_reset(void)
 	return 0;
 }
 
-extern uint8_t sync_chan_idx;
+extern uint16_t sync_chan_id;
 // extern uint16_t sync_ival_ms;
 extern uint16_t sync_event_counter;
 extern uint16_t sync_skip_event;
@@ -286,9 +286,13 @@ static int create_prepare_cb(struct lll_prepare_param *p)
 
 	chan_idx = data_channel_calc(lll);
 
+	// printk("Hello Controller\n");
+	// printk("Controller Data Channel: %u - Event_counter: %u - id: %u - chan_map: %p - chan_count: %u\n", chan_idx, lll->event_counter, lll->data_chan_id, data_chan_map, data_chan_count);
+	// printk("Event_counter: %u - id: %u - chan_map: %p - chan_count: %u\n", lll->event_counter, lll->data_chan_id, data_chan_map, data_chan_count);
+
 	sync_event_counter = lll->event_counter;
 	sync_skip_event = lll->skip_event;
-	sync_chan_idx = chan_idx;
+	// sync_chan_id = lll->data_chan_id;
 	// sync_ival_ms = lll->window_size_event_us;
 	k_poll_signal_raise(&signal, 0x1337);
 
@@ -477,6 +481,29 @@ static int prepare_cb_common(struct lll_prepare_param *p, uint8_t chan_idx)
 					sys_get_le24(lll->crc_init));
 
 	lll_chan_set(chan_idx);
+
+	uint8_t data_chan_count;
+	uint8_t *data_chan_map;
+
+	// /* Process channel map update, if any */
+	// if (lll->chm_first != lll->chm_last) {
+	// 	uint16_t instant_latency;
+
+	// 	instant_latency = (lll->event_counter + lll->skip_event - lll->chm_instant) &
+	// 			  EVENT_INSTANT_MAX;
+	// 	if (instant_latency <= EVENT_INSTANT_LATENCY_MAX) {
+	// 		/* At or past the instant, use channelMapNew */
+	// 		lll->chm_first = lll->chm_last;
+	// 	}
+	// }
+
+	/* Calculate the radio channel to use */
+	data_chan_map = lll->chm[lll->chm_first].data_chan_map;
+	data_chan_count = lll->chm[lll->chm_first].data_chan_count;
+
+	sync_chan_id = lll->data_chan_id;
+	
+	// printk("Channel: %u - Event_counter: %u - id: %u - chan_map: %p - chan_count: %u\n", chan_idx, lll->event_counter, lll->data_chan_id, data_chan_map, data_chan_count);
 
 	node_rx = ull_pdu_rx_alloc_peek(1);
 	LL_ASSERT(node_rx);

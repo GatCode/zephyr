@@ -221,6 +221,30 @@ uint8_t ll_test_tx(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy,
 		return err;
 	}
 
+	switch (chan) {
+	case 37:
+		radio_freq_chan_set(2);
+		break;
+
+	case 38:
+		radio_freq_chan_set(26);
+		break;
+
+	case 39:
+		radio_freq_chan_set(80);
+		break;
+
+	default:
+		if (chan < 11) {
+			radio_freq_chan_set(4 + (chan * 2U));
+		} else if (chan < 40) {
+			radio_freq_chan_set(28 + ((chan - 11) * 2U));
+		} else {
+			LL_ASSERT(0);
+		}
+		break;
+	}
+
 	tx_req++;
 
 	pdu = radio_pkt_scratch_get();

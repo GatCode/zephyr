@@ -27,7 +27,13 @@ void main(void)
 	}
 
 	/* Create a non-connectable non-scannable advertising set */
-	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN_NAME, NULL, &adv);
+	#define BT_LE_EXT_ADV_NCONN_NAME_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
+						 BT_LE_ADV_OPT_USE_NAME, \
+						 BT_GAP_ADV_FAST_INT_MIN_2, \
+						 BT_GAP_ADV_FAST_INT_MIN_2, \
+						 NULL)
+
+	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN_NAME_CUSTOM, NULL, &adv);
 	if (err) {
 		printk("Failed to create advertising set (err %d)\n", err);
 		return;

@@ -40,17 +40,17 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
 static struct k_work_delayable blink_work;
 static bool                  led_is_on;
-extern uint8_t sync_chan_idx;
-extern uint16_t sync_ival_us;
-extern uint16_t sync_event_counter;
-extern uint16_t sync_skip_event;
+// extern uint16_t sync_chan_id;
+// extern uint16_t sync_ival_us;
+// extern uint16_t sync_event_counter;
+// extern uint16_t sync_skip_event;
 
 extern uint8_t lll_chan_sel_2_custom(uint16_t counter, uint16_t chan_id);
 extern uint8_t ll_test_tx(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy,
 		   uint8_t cte_len, uint8_t cte_type, uint8_t switch_pattern_len,
 		   const uint8_t *ant_id, int8_t tx_power);
 
-uint8_t sync_chan_idx = 255;
+uint16_t sync_chan_id = 255;
 uint16_t sync_ival_us = 0;
 uint16_t sync_event_counter = 0;
 uint16_t sync_skip_event = 0;
@@ -167,10 +167,10 @@ static void recv_cb(struct bt_le_per_adv_sync *sync,
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 	bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
 
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s, tx_power %i, "
-	       "RSSI %i, CTE %u, data length %u, data: %s\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr, info->tx_power,
-	       info->rssi, info->cte_type, buf->len, data_str);
+	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s, tx_power %i, "
+	//        "RSSI %i, CTE %u, data length %u, data: %s\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr, info->tx_power,
+	//        info->rssi, info->cte_type, buf->len, data_str);
 }
 
 static struct bt_le_per_adv_sync_cb sync_callbacks = {
@@ -181,34 +181,38 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 
 struct k_poll_signal signal;
 
+static uint8_t send_channel = 0;
+
 struct k_poll_event sync_stablished = K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_SIGNAL,
                                     K_POLL_MODE_NOTIFY_ONLY, &signal);
 
 void my_work_handler(struct k_work *work)
 {
-    printk("Send DTM on channel %u\n", sync_chan_idx);
+    printk("Calc. channel %u - counter: %u - id: %u\n", send_channel, sync_event_counter, sync_chan_id);
 
-	// send
-	struct bt_hci_cp_le_tx_test *cp;
-	struct net_buf *buf;
+	// for (uint8_t i = 0; i < 5; i++) {
+		// send
+		struct bt_hci_cp_le_tx_test *cp;
+		struct net_buf *buf;
 
-	buf = bt_hci_cmd_create(BT_HCI_OP_LE_TX_TEST, sizeof(*cp));
-	if (!buf) {
-		return -ENOBUFS;
-	}
+		buf = bt_hci_cmd_create(BT_HCI_OP_LE_TX_TEST, sizeof(*cp));
+		if (!buf) {
+			return -ENOBUFS;
+		}
 
-	cp = net_buf_add(buf, sizeof(*cp));
-	cp->tx_ch = sync_chan_idx;
-	cp->test_data_len = 255;
-	cp->pkt_payload = BT_HCI_TEST_PKT_PAYLOAD_01010101;
-	int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TX_TEST, buf);
-	// printk("%d\n", r_val);
+		cp = net_buf_add(buf, sizeof(*cp));
+		cp->tx_ch = send_channel;
+		cp->test_data_len = 255;
+		cp->pkt_payload = BT_HCI_TEST_PKT_PAYLOAD_01010101;
+		int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TX_TEST, buf);
 
-	// ll_test_tx(sync_chan_idx, 255, BT_HCI_TEST_PKT_PAYLOAD_01010101, BT_HCI_LE_TX_PHY_2M, BT_HCI_LE_TEST_CTE_DISABLED, BT_HCI_LE_TEST_CTE_TYPE_ANY, BT_HCI_LE_TEST_SWITCH_PATTERN_LEN_ANY, NULL, BT_HCI_TX_TEST_POWER_MAX);
+		ll_test_tx(sync_chan_id, 255, BT_HCI_TEST_PKT_PAYLOAD_01010101, BT_HCI_LE_TX_PHY_2M, BT_HCI_LE_TEST_CTE_DISABLED, BT_HCI_LE_TEST_CTE_TYPE_ANY, BT_HCI_LE_TEST_SWITCH_PATTERN_LEN_ANY, NULL, BT_HCI_TX_TEST_POWER_MAX);
+		k_sleep(K_MSEC(1));
+	// }
 
 	// calc the next one
+	send_channel = lll_chan_sel_2_custom(sync_event_counter + sync_skip_event, sync_chan_id);
 	sync_event_counter++;
-	sync_chan_idx = lll_chan_sel_2_custom(sync_event_counter + sync_skip_event, sync_chan_idx);
 }
 
 K_WORK_DEFINE(my_work, my_work_handler);
@@ -229,28 +233,9 @@ void threadA(void *dummy1, void *dummy2, void *dummy3)
 	while(1) {
 		if (sync_stablished.signal->signaled) {
 			printk("sync_stablished.signal->signaled - ival: %u us\n", sync_ival_us); // TODO: Sync invercal is off - 1.25
-			// k_timer_start(&my_timer, K_NO_WAIT, K_USEC(1000));
+			k_timer_start(&my_timer, K_NO_WAIT, K_MSEC(1200));
 			while(1) {
-				
-
-				struct bt_hci_cp_le_tx_test *cp;
-				struct net_buf *buf;
-
-				buf = bt_hci_cmd_create(BT_HCI_OP_LE_TX_TEST, sizeof(*cp));
-				if (!buf) {
-					return -ENOBUFS;
-				}
-
-				cp = net_buf_add(buf, sizeof(*cp));
-				cp->tx_ch = sync_chan_idx;
-				cp->test_data_len = 255;
-				cp->pkt_payload = BT_HCI_TEST_PKT_PAYLOAD_01010101;
-				int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TX_TEST, buf);
-				
-				sync_event_counter++;
-				sync_chan_idx = lll_chan_sel_2_custom(sync_event_counter + sync_skip_event, sync_chan_idx);
-
-				k_sleep(K_MSEC(1000));
+				k_sleep(K_MSEC(100));
 			}
 		}
 		k_sleep(K_USEC(1));
@@ -345,7 +330,7 @@ void main(void)
 		}
 
 		while(1) {
-			// if(sync_chan_idx <= 40) {
+			// if(sync_chan_id <= 40) {
 			// 	k_timer_start(&my_timer, K_NO_WAIT, K_MSEC(sync_ival_ms));
 
 			// 	err = bt_le_per_adv_sync_delete(sync);
