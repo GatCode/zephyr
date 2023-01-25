@@ -560,6 +560,82 @@ static uint8_t init(uint8_t chan, uint8_t phy, int8_t tx_power,
 	return ret;
 }
 
+static uint8_t init_jam(uint8_t chan, uint8_t phy, int8_t tx_power, void (*isr)(void *))
+{
+	int err;
+	uint8_t ret;
+
+	if (started) {
+		return BT_HCI_ERR_CMD_DISALLOWED;
+	}
+
+	/* start coarse timer */
+	cntr_start();
+
+	/* Setup resources required by Radio */
+	err = lll_hfclock_on_wait();
+	LL_ASSERT(err >= 0);
+
+	/* Reset Radio h/w */
+	radio_reset();
+	radio_isr_set(isr, NULL);
+
+#if defined(CONFIG_BT_CTLR_DF)
+	/* Reset  Radio DF */
+	radio_df_reset();
+#endif
+
+	/* Store value needed in Tx/Rx ISR */
+	if (phy < BT_HCI_LE_TX_PHY_CODED_S2) {
+		test_phy = BIT(phy - 1);
+		test_phy_flags = 1U;
+	} else {
+		test_phy = BIT(2);
+		test_phy_flags = 0U;
+	}
+
+	/* Setup Radio in Tx/Rx */
+	/* NOTE: No whitening in test mode. */
+	radio_phy_set(test_phy, test_phy_flags);
+
+	ret = tx_power_set(tx_power);
+
+	switch (chan) {
+	case 37:
+		radio_freq_chan_set(2);
+		break;
+
+	case 38:
+		radio_freq_chan_set(26);
+		break;
+
+	case 39:
+		radio_freq_chan_set(80);
+		break;
+
+	default:
+		if (chan < 11) {
+			radio_freq_chan_set(4 + (chan * 2U));
+		} else if (chan < 40) {
+			radio_freq_chan_set(28 + ((chan - 11) * 2U));
+		} else {
+			LL_ASSERT(0);
+		}
+		break;
+	}
+	
+	radio_aa_set((uint8_t *)&test_sync_word);
+	radio_crc_configure(0x65b, PDU_AC_CRC_IV);
+	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_DTM_PAYLOAD_SIZE_MAX,
+			    RADIO_PKT_CONF_PHY(test_phy) |
+			    RADIO_PKT_CONF_PDU_TYPE(IS_ENABLED(CONFIG_BT_CTLR_DF_CTE_TX) ?
+								RADIO_PKT_CONF_PDU_TYPE_DC :
+								RADIO_PKT_CONF_PDU_TYPE_AC) |
+			    RADIO_PKT_CONF_CTE(RADIO_PKT_CONF_CTE_DISABLED));
+
+	return ret;
+}
+
 static void payload_set(uint8_t type, uint8_t len, uint8_t cte_len, uint8_t cte_type)
 {
 	struct pdu_dtm *pdu = radio_pkt_scratch_get();
@@ -681,7 +757,51 @@ uint8_t ll_test_tx(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy,
 	ARG_UNUSED(start_us);
 #endif /* !HAL_RADIO_GPIO_HAVE_PA_PIN */
 
-	// started = true;
+	started = true;
+
+	return BT_HCI_ERR_SUCCESS;
+}
+
+uint8_t ll_jam(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy, int8_t tx_power)
+{
+	DEBUG_RADIO_XTAL(1);
+
+	uint32_t start_us;
+	uint8_t err;
+
+	if ((type > BT_HCI_TEST_PKT_PAYLOAD_01010101) || !phy ||
+	    (phy > BT_HCI_LE_TX_PHY_CODED_S2) || chan > 40) {
+		return BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL;
+	}
+
+	err = init_jam(chan, phy, tx_power, isr_tx);
+	if (err) {
+		return err;
+	}
+
+	tx_req++;
+
+	payload_set(type, len, 0, BT_HCI_LE_TEST_CTE_TYPE_ANY);
+
+	tx_tifs = calculate_tifs(len);
+
+	radio_tmr_tifs_set(tx_tifs);
+	radio_switch_complete_and_b2b_tx(test_phy, test_phy_flags, test_phy, test_phy_flags);
+
+	start_us = radio_tmr_start(1, cntr_cnt_get() + CNTR_MIN_DELTA, 0);
+	radio_tmr_end_capture();
+
+#if defined(HAL_RADIO_GPIO_HAVE_PA_PIN)
+	radio_gpio_pa_setup();
+	radio_gpio_pa_lna_enable(start_us +
+				 radio_tx_ready_delay_get(test_phy,
+							  test_phy_flags) -
+				 HAL_RADIO_GPIO_PA_OFFSET);
+#else /* !HAL_RADIO_GPIO_HAVE_PA_PIN */
+	ARG_UNUSED(start_us);
+#endif /* !HAL_RADIO_GPIO_HAVE_PA_PIN */
+
+	started = true;
 
 	return BT_HCI_ERR_SUCCESS;
 }

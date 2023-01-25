@@ -192,21 +192,20 @@ void my_work_handler(struct k_work *work)
 
 	for (uint8_t i = 0; i < 5; i++) {
 		// send
-		struct bt_hci_cp_le_tx_test *cp;
+		struct bt_hci_cp_le_jam *cp;
 		struct net_buf *buf;
 
-		buf = bt_hci_cmd_create(BT_HCI_OP_LE_TX_TEST, sizeof(*cp));
+		buf = bt_hci_cmd_create(BT_HCI_OP_LE_JAM, sizeof(*cp));
 		if (!buf) {
 			return -ENOBUFS;
 		}
 
 		cp = net_buf_add(buf, sizeof(*cp));
-		cp->tx_ch = send_channel;
-		cp->test_data_len = 255;
-		cp->pkt_payload = BT_HCI_TEST_PKT_PAYLOAD_01010101;
-		int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TX_TEST, buf);
+		cp->chan = send_channel;
+		cp->len = 255;
+		cp->phy = BT_HCI_LE_PHY_1M;
+		int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_JAM, buf);
 
-		ll_test_tx(sync_chan_id, 255, BT_HCI_TEST_PKT_PAYLOAD_01010101, BT_HCI_LE_TX_PHY_2M, BT_HCI_LE_TEST_CTE_DISABLED, BT_HCI_LE_TEST_CTE_TYPE_ANY, BT_HCI_LE_TEST_SWITCH_PATTERN_LEN_ANY, NULL, BT_HCI_TX_TEST_POWER_MAX);
 		k_sleep(K_USEC(1500));
 	}
 
@@ -233,7 +232,7 @@ void threadA(void *dummy1, void *dummy2, void *dummy3)
 	while(1) {
 		if (sync_stablished.signal->signaled) {
 			printk("sync_stablished.signal->signaled - ival: %u us\n", sync_ival_us); // TODO: Sync invercal is off - 1.25
-			k_timer_start(&my_timer, K_NO_WAIT, K_MSEC(500));
+			k_timer_start(&my_timer, K_NO_WAIT, K_MSEC(1200));
 			while(1) {
 				k_sleep(K_MSEC(100));
 			}

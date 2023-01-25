@@ -1090,6 +1090,13 @@ struct bt_hci_cp_le_tx_test {
 	uint8_t  pkt_payload;
 } __packed;
 
+#define BT_HCI_OP_LE_JAM                    	BT_OP(BT_OGF_LE, 0x0081)
+struct bt_hci_cp_le_jam {
+	uint8_t chan;
+	uint8_t len;
+	uint8_t phy;
+} __packed;
+
 #define BT_HCI_OP_LE_TEST_END                   BT_OP(BT_OGF_LE, 0x001f)
 struct bt_hci_rp_le_test_end {
 	uint8_t  status;
