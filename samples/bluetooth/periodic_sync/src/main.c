@@ -233,7 +233,7 @@ void threadA(void *dummy1, void *dummy2, void *dummy3)
 	while(1) {
 		if (sync_stablished.signal->signaled) {
 			printk("sync_stablished.signal->signaled - ival: %u us\n", sync_ival_us); // TODO: Sync invercal is off - 1.25
-			k_timer_start(&my_timer, K_NO_WAIT, K_MSEC(1200));
+			k_timer_start(&my_timer, K_NO_WAIT, K_MSEC(500));
 			while(1) {
 				k_sleep(K_MSEC(100));
 			}
