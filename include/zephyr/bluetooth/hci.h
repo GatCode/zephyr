@@ -1097,6 +1097,13 @@ struct bt_hci_cp_le_jam {
 	uint8_t phy;
 } __packed;
 
+#define BT_HCI_OP_LE_REPLAY                    	BT_OP(BT_OGF_LE, 0x0082)
+struct bt_hci_cp_le_replay {
+	uint8_t chan;
+	uint8_t phy;
+	void* pdu_ptr;
+} __packed;
+
 #define BT_HCI_OP_LE_TEST_END                   BT_OP(BT_OGF_LE, 0x001f)
 struct bt_hci_rp_le_test_end {
 	uint8_t  status;

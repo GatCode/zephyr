@@ -9,6 +9,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
+#include <pdu.h>
 
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
 #define NAME_LEN            30
@@ -186,28 +187,39 @@ static uint8_t send_channel = 0;
 struct k_poll_event sync_stablished = K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_SIGNAL,
                                     K_POLL_MODE_NOTIFY_ONLY, &signal);
 
+
+struct pdu_adv sniffed_pdu;
+uint8_t sniffed_access_addr[4] = { 0 };
+uint8_t sniffed_crc_init[3];
+
 void my_work_handler(struct k_work *work)
 {
     printk("Calc. channel %u - counter: %u - id: %u\n", send_channel, sync_event_counter, sync_chan_id);
 
-	for (uint8_t i = 0; i < 5; i++) {
+	// for (uint8_t i = 0; i < 5; i++) {
 		// send
-		struct bt_hci_cp_le_jam *cp;
+		struct bt_hci_cp_le_replay *cp;
 		struct net_buf *buf;
 
-		buf = bt_hci_cmd_create(BT_HCI_OP_LE_JAM, sizeof(*cp));
+		buf = bt_hci_cmd_create(BT_HCI_OP_LE_REPLAY, sizeof(*cp));
 		if (!buf) {
 			return -ENOBUFS;
 		}
 
 		cp = net_buf_add(buf, sizeof(*cp));
-		cp->chan = send_channel;
-		cp->len = 255;
-		cp->phy = BT_HCI_LE_PHY_1M;
-		int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_JAM, buf);
+		cp->chan = 6;//send_channel;
+		cp->phy = BT_HCI_LE_PHY_2M;
+		cp->pdu_ptr = &sniffed_pdu;
+		int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_REPLAY, buf);
 
-		k_sleep(K_USEC(1500));
-	}
+		// k_sleep(K_USEC(1500));
+	// }
+
+	// start the per adv
+
+	// printk("Type: %u\n", sniffed_pdu.type);
+	printk("Sniffed AA: 0x%x%x%x%x\n", sniffed_access_addr[0], sniffed_access_addr[1], sniffed_access_addr[2], sniffed_access_addr[3]);
+
 
 	// calc the next one
 	send_channel = lll_chan_sel_2_custom(sync_event_counter + sync_skip_event, sync_chan_id);

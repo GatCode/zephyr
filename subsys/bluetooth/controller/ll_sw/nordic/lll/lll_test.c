@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <zephyr/toolchain.h>
+#include <zephyr/sys/byteorder.h>
 
 #include <soc.h>
 
@@ -560,6 +561,9 @@ static uint8_t init(uint8_t chan, uint8_t phy, int8_t tx_power,
 	return ret;
 }
 
+extern uint8_t sniffed_access_addr[4];
+extern uint8_t sniffed_crc_init[3];
+
 static uint8_t init_jam(uint8_t chan, uint8_t phy, int8_t tx_power, void (*isr)(void *))
 {
 	int err;
@@ -585,18 +589,18 @@ static uint8_t init_jam(uint8_t chan, uint8_t phy, int8_t tx_power, void (*isr)(
 	radio_df_reset();
 #endif
 
-	/* Store value needed in Tx/Rx ISR */
-	if (phy < BT_HCI_LE_TX_PHY_CODED_S2) {
-		test_phy = BIT(phy - 1);
-		test_phy_flags = 1U;
-	} else {
-		test_phy = BIT(2);
-		test_phy_flags = 0U;
-	}
+	// /* Store value needed in Tx/Rx ISR */
+	// if (phy < BT_HCI_LE_TX_PHY_CODED_S2) {
+	// 	test_phy = BIT(phy - 1);
+	// 	test_phy_flags = 1U;
+	// } else {
+	// 	test_phy = BIT(2);
+	// 	test_phy_flags = 0U;
+	// }
 
-	/* Setup Radio in Tx/Rx */
-	/* NOTE: No whitening in test mode. */
-	radio_phy_set(test_phy, test_phy_flags);
+	// /* Setup Radio in Tx/Rx */
+	// /* NOTE: No whitening in test mode. */
+	// radio_phy_set(test_phy, test_phy_flags);
 
 	ret = tx_power_set(tx_power);
 
@@ -624,14 +628,19 @@ static uint8_t init_jam(uint8_t chan, uint8_t phy, int8_t tx_power, void (*isr)(
 		break;
 	}
 	
-	radio_aa_set((uint8_t *)&test_sync_word);
-	radio_crc_configure(0x65b, PDU_AC_CRC_IV);
-	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_DTM_PAYLOAD_SIZE_MAX,
-			    RADIO_PKT_CONF_PHY(test_phy) |
-			    RADIO_PKT_CONF_PDU_TYPE(IS_ENABLED(CONFIG_BT_CTLR_DF_CTE_TX) ?
-								RADIO_PKT_CONF_PDU_TYPE_DC :
-								RADIO_PKT_CONF_PDU_TYPE_AC) |
-			    RADIO_PKT_CONF_CTE(RADIO_PKT_CONF_CTE_DISABLED));
+	radio_aa_set(sniffed_access_addr);
+	radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(sniffed_crc_init));
+	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_AC_PAYLOAD_SIZE_MAX,
+			    RADIO_PKT_CONF_PHY(phy));
+
+	// radio_aa_set((uint8_t *)&test_sync_word);
+	// radio_crc_configure(0x65b, PDU_AC_CRC_IV);
+	// radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_DTM_PAYLOAD_SIZE_MAX,
+	// 		    RADIO_PKT_CONF_PHY(test_phy) |
+	// 		    RADIO_PKT_CONF_PDU_TYPE(IS_ENABLED(CONFIG_BT_CTLR_DF_CTE_TX) ?
+	// 							RADIO_PKT_CONF_PDU_TYPE_DC :
+	// 							RADIO_PKT_CONF_PDU_TYPE_AC) |
+	// 		    RADIO_PKT_CONF_CTE(RADIO_PKT_CONF_CTE_DISABLED));
 
 	return ret;
 }
@@ -796,6 +805,41 @@ uint8_t ll_jam(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy, int8_t tx_p
 	return BT_HCI_ERR_SUCCESS;
 }
 
+uint8_t ll_replay(uint8_t chan, uint8_t phy, void* pdu_ptr)
+{
+	DEBUG_RADIO_XTAL(1);
+
+	uint32_t start_us;
+	uint8_t err;
+
+	if (chan > 40) {
+		return BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL;
+	}
+
+	struct pdu_adv *sniffed_pdu = (struct pdu_adv*)pdu_ptr;
+
+	err = init_jam(chan, phy, BT_HCI_TX_TEST_POWER_MAX_SET, isr_tx);
+	if (err) {
+		return err;
+	}
+
+	tx_req++;
+
+	// payload_set(type, len, 0, BT_HCI_LE_TEST_CTE_TYPE_ANY);
+	radio_pkt_tx_set(sniffed_pdu);
+
+	radio_switch_complete_and_disable();
+
+	start_us = radio_tmr_start(1, cntr_cnt_get() + CNTR_MIN_DELTA, 0);
+	ARG_UNUSED(start_us);
+
+	radio_tmr_end_capture();
+
+	started = true;
+
+	return BT_HCI_ERR_SUCCESS;
+}
+
 uint8_t ll_test_rx(uint8_t chan, uint8_t phy, uint8_t mod_idx, uint8_t expected_cte_len,
 		   uint8_t expected_cte_type, uint8_t slot_duration, uint8_t switch_pattern_len,
 		   const uint8_t *ant_ids)
@@ -839,10 +883,10 @@ uint8_t ll_test_rx(uint8_t chan, uint8_t phy, uint8_t mod_idx, uint8_t expected_
 	test_slot_duration = slot_duration;
 #endif /* CONFIG_BT_CTLR_DTM_HCI_DF_IQ_REPORT */
 
-	radio_pkt_rx_set(radio_pkt_scratch_get());
-	radio_tmr_tifs_set(EVENT_IFS_US);
-	radio_switch_complete_and_b2b_rx(test_phy, test_phy_flags, test_phy, test_phy_flags);
-	radio_tmr_start(0, cntr_cnt_get() + CNTR_MIN_DELTA, 0);
+	// radio_pkt_rx_set(radio_pkt_scratch_get());
+	// radio_tmr_tifs_set(EVENT_IFS_US);
+	radio_switch_complete_and_disable();
+	// radio_tmr_start(0, cntr_cnt_get() + CNTR_MIN_DELTA, 0);
 
 #if defined(HAL_RADIO_GPIO_HAVE_LNA_PIN)
 	radio_gpio_lna_on();

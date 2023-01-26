@@ -5,3 +5,4 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(periodic_sync)
 
 target_sources(app PRIVATE src/main.c)
+zephyr_library_include_directories(../../../subsys/bluetooth/controller/ll_sw)

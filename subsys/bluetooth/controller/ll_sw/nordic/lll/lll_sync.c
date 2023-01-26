@@ -444,6 +444,9 @@ static int prepare_cb(struct lll_prepare_param *p)
 	return 0;
 }
 
+extern uint8_t sniffed_access_addr[4];
+extern uint8_t sniffed_crc_init[3];
+
 static int prepare_cb_common(struct lll_prepare_param *p, uint8_t chan_idx)
 {
 	struct node_rx_pdu *node_rx;
@@ -456,6 +459,9 @@ static int prepare_cb_common(struct lll_prepare_param *p, uint8_t chan_idx)
 	uint32_t hcto;
 
 	lll = p->param;
+
+	memcpy(sniffed_access_addr, lll->access_addr, 4 * sizeof(uint8_t));
+	memcpy(sniffed_crc_init, lll->crc_init, 3 * sizeof(uint8_t));
 
 	/* Current window widening */
 	lll->window_widening_event_us += lll->window_widening_prepare_us;
@@ -806,6 +812,8 @@ static void isr_aux_setup(void *param)
 #endif /* HAL_RADIO_GPIO_HAVE_LNA_PIN */
 }
 
+extern struct pdu_adv sniffed_pdu;
+
 /**
  * @brief Common part of ISR responsible for handling PDU receive.
  *
@@ -874,6 +882,8 @@ static int isr_rx(struct lll_sync *lll, uint8_t node_type, uint8_t crc_ok,
 			}
 
 			pdu = (void *)node_rx->pdu;
+
+			sniffed_pdu = *pdu;
 
 			ftr->aux_lll_sched = lll_scan_aux_setup(pdu, lll->phy,
 								phy_flags_rx,
