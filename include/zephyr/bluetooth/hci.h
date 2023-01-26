@@ -1000,7 +1000,7 @@ struct hci_cp_le_conn_update {
 	uint16_t max_ce_len;
 } __packed;
 
-#define BT_HCI_OP_LE_SET_HOST_CHAN_CLASSIF      BT_OP(BT_OGF_LE, 0x0014)
+#define BT_HCI_OP_LE_SET_HOST_CHAN_CLASSIF      BT_OP(BT_OGF_LE, 0x0090)
 struct bt_hci_cp_le_set_host_chan_classif {
 	uint8_t  ch_map[5];
 } __packed;
@@ -1435,6 +1435,11 @@ struct bt_hci_cp_le_set_per_adv_data {
 struct bt_hci_cp_le_set_per_adv_enable {
 	uint8_t  enable;
 	uint8_t  handle;
+} __packed;
+
+#define BT_HCI_OP_LE_PER_ADV_CHM_UPDATE      	BT_OP(BT_OGF_LE, 0x0014)
+struct bt_hci_cp_le_per_adv_chm_update {
+	uint8_t  ch_map[5];
 } __packed;
 
 #define BT_HCI_OP_LE_SET_EXT_SCAN_PARAM         BT_OP(BT_OGF_LE, 0x0041)

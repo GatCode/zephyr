@@ -5,12 +5,15 @@
  */
 
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/hci.h>
 
 static uint8_t mfg_data[] = { 0xff, 0xff, 0x00 };
 
 static const struct bt_data ad[] = {
 	BT_DATA(BT_DATA_MANUFACTURER_DATA, mfg_data, 3),
 };
+
+#define PDU_CHANNEL_MAP_SIZE 5
 
 void main(void)
 {
@@ -48,41 +51,53 @@ void main(void)
 		return;
 	}
 
+	printk("Start Extended Advertising...");
+	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+	if (err) {
+		printk("Failed to start extended advertising "
+				"(err %d)\n", err);
+		return;
+	}
+	printk("done.\n");
+
+	printk("Set Periodic Advertising Data...");
+	err = bt_le_per_adv_set_data(adv, ad, ARRAY_SIZE(ad));
+	if (err) {
+		printk("Failed (err %d)\n", err);
+		return;
+	}
+	printk("done.\n");
+
+	static uint8_t chan_map[PDU_CHANNEL_MAP_SIZE];
+	uint8_t ch = 0x1F;
+
 	while (true) {
-		printk("Start Extended Advertising...");
-		err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
-		if (err) {
-			printk("Failed to start extended advertising "
-			       "(err %d)\n", err);
+		k_sleep(K_SECONDS(10));
+		
+		for (uint8_t i = 0; i < PDU_CHANNEL_MAP_SIZE; i++) {
+			chan_map[i] = ch++;
+		}
+		chan_map[PDU_CHANNEL_MAP_SIZE - 1] = 0x1F; // packet validity
+				
+		struct bt_hci_cp_le_per_adv_chm_update *cp;
+		struct net_buf *buf;
+
+		buf = bt_hci_cmd_create(BT_HCI_OP_LE_PER_ADV_CHM_UPDATE, sizeof(*cp));
+		if (!buf) {
 			return;
 		}
-		printk("done.\n");
 
-		for (int i = 0; i < 3; i++) {
-			k_sleep(K_SECONDS(10));
+		cp = net_buf_add(buf, sizeof(*cp));
 
-			mfg_data[2]++;
+		memcpy(&cp->ch_map[0], &chan_map[0], 4);
+		cp->ch_map[4] = chan_map[4] & BIT_MASK(5);
 
-			printk("Set Periodic Advertising Data...");
-			err = bt_le_per_adv_set_data(adv, ad, ARRAY_SIZE(ad));
-			if (err) {
-				printk("Failed (err %d)\n", err);
-				return;
-			}
-			printk("done.\n");
+		bt_hci_cmd_send_sync(BT_HCI_OP_LE_PER_ADV_CHM_UPDATE, buf, NULL);
+
+		printk("UPDATED PER ADV CHM\n");
+
+		while (true) {
+			// stay here
 		}
-
-		k_sleep(K_SECONDS(10));
-
-		printk("Stop Extended Advertising...");
-		err = bt_le_ext_adv_stop(adv);
-		if (err) {
-			printk("Failed to stop extended advertising "
-			       "(err %d)\n", err);
-			return;
-		}
-		printk("done.\n");
-
-		k_sleep(K_SECONDS(10));
 	}
 }

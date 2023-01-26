@@ -8,6 +8,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/hci.h>
 
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
 #define NAME_LEN            30
@@ -79,17 +80,17 @@ static void scan_recv(const struct bt_le_scan_recv_info *info,
 	bt_data_parse(buf, data_cb, name);
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-	printk("[DEVICE]: %s, AD evt type %u, Tx Pwr: %i, RSSI %i %s "
-	       "C:%u S:%u D:%u SR:%u E:%u Prim: %s, Secn: %s, "
-	       "Interval: 0x%04x (%u ms), SID: %u\n",
-	       le_addr, info->adv_type, info->tx_power, info->rssi, name,
-	       (info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_SCANNABLE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_DIRECTED) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_SCAN_RESPONSE) != 0,
-	       (info->adv_props & BT_GAP_ADV_PROP_EXT_ADV) != 0,
-	       phy2str(info->primary_phy), phy2str(info->secondary_phy),
-	       info->interval, info->interval * 5 / 4, info->sid);
+	// printk("[DEVICE]: %s, AD evt type %u, Tx Pwr: %i, RSSI %i %s "
+	//        "C:%u S:%u D:%u SR:%u E:%u Prim: %s, Secn: %s, "
+	//        "Interval: 0x%04x (%u ms), SID: %u\n",
+	//        le_addr, info->adv_type, info->tx_power, info->rssi, name,
+	//        (info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_SCANNABLE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_DIRECTED) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_SCAN_RESPONSE) != 0,
+	//        (info->adv_props & BT_GAP_ADV_PROP_EXT_ADV) != 0,
+	//        phy2str(info->primary_phy), phy2str(info->secondary_phy),
+	//        info->interval, info->interval * 5 / 4, info->sid);
 
 	if (!per_adv_found && info->interval) {
 		per_adv_found = true;
@@ -112,10 +113,10 @@ static void sync_cb(struct bt_le_per_adv_sync *sync,
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
-	       "Interval 0x%04x (%u ms), PHY %s\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr,
-	       info->interval, info->interval * 5 / 4, phy2str(info->phy));
+	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
+	//        "Interval 0x%04x (%u ms), PHY %s\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr,
+	//        info->interval, info->interval * 5 / 4, phy2str(info->phy));
 
 	k_sem_give(&sem_per_sync);
 }
@@ -127,8 +128,8 @@ static void term_cb(struct bt_le_per_adv_sync *sync,
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s sync terminated\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr);
+	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s sync terminated\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr);
 
 	k_sem_give(&sem_per_sync_lost);
 }
@@ -143,10 +144,10 @@ static void recv_cb(struct bt_le_per_adv_sync *sync,
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 	bin2hex(buf->data, buf->len, data_str, sizeof(data_str));
 
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s, tx_power %i, "
-	       "RSSI %i, CTE %u, data length %u, data: %s\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr, info->tx_power,
-	       info->rssi, info->cte_type, buf->len, data_str);
+	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s, tx_power %i, "
+	//        "RSSI %i, CTE %u, data length %u, data: %s\n",
+	//        bt_le_per_adv_sync_get_index(sync), le_addr, info->tx_power,
+	//        info->rssi, info->cte_type, buf->len, data_str);
 }
 
 static struct bt_le_per_adv_sync_cb sync_callbacks = {
@@ -162,25 +163,6 @@ void main(void)
 	int err;
 
 	printk("Starting Periodic Advertising Synchronization Demo\n");
-
-#if defined(HAS_LED)
-	printk("Checking LED device...");
-	if (!device_is_ready(led.port)) {
-		printk("failed.\n");
-		return;
-	}
-	printk("done.\n");
-
-	printk("Configuring GPIO pin...");
-	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-	if (err) {
-		printk("failed.\n");
-		return;
-	}
-	printk("done.\n");
-
-	k_work_init_delayable(&blink_work, blink_timeout);
-#endif /* HAS_LED */
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
@@ -206,15 +188,6 @@ void main(void)
 	printk("success.\n");
 
 	do {
-#if defined(HAS_LED)
-		struct k_work_sync work_sync;
-
-		printk("Start blinking LED...\n");
-		led_is_on = false;
-		gpio_pin_set(led.port, led.pin, (int)led_is_on);
-		k_work_schedule(&blink_work, BLINK_ONOFF);
-#endif /* HAS_LED */
-
 		printk("Waiting for periodic advertising...\n");
 		per_adv_found = false;
 		err = k_sem_take(&sem_per_adv, K_FOREVER);
@@ -251,15 +224,6 @@ void main(void)
 			continue;
 		}
 		printk("Periodic sync established.\n");
-
-#if defined(HAS_LED)
-		printk("Stop blinking LED.\n");
-		k_work_cancel_delayable_sync(&blink_work, &work_sync);
-
-		/* Keep LED on */
-		led_is_on = true;
-		gpio_pin_set(led.port, led.pin, (int)led_is_on);
-#endif /* HAS_LED */
 
 		printk("Waiting for periodic sync lost...\n");
 		err = k_sem_take(&sem_per_sync_lost, K_FOREVER);

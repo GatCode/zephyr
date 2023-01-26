@@ -1410,8 +1410,15 @@ static uint8_t data_channel_calc(struct lll_sync *lll)
 		}
 	}
 
-	/* Calculate the radio channel to use */
 	data_chan_map = lll->chm[lll->chm_first].data_chan_map;
+
+	for (size_t i = 0; i < PDU_CHANNEL_MAP_SIZE; i++)
+	{
+		printk("%hhX ", data_chan_map[i]);
+	}
+	printk("\n");
+
+	/* Calculate the radio channel to use */
 	data_chan_count = lll->chm[lll->chm_first].data_chan_count;
 	return lll_chan_sel_2(lll->event_counter + lll->skip_event, lll->data_chan_id,
 			      data_chan_map, data_chan_count);

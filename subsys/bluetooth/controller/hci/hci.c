@@ -3687,6 +3687,16 @@ static void le_set_per_adv_enable(struct net_buf *buf, struct net_buf **evt)
 
 	*evt = cmd_complete_status(status);
 }
+
+static void le_per_adv_chm_update(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_le_per_adv_chm_update *cmd = (void *)buf->data;
+	uint8_t status;
+
+	status = ll_per_adv_chm_update(&cmd->ch_map[0]);
+
+	*evt = cmd_complete_status(status);
+}
 #endif /* CONFIG_BT_CTLR_ADV_PERIODIC */
 #endif /* CONFIG_BT_BROADCASTER */
 
@@ -4552,6 +4562,10 @@ static int controller_cmd_handle(uint16_t  ocf, struct net_buf *cmd,
 
 	case BT_OCF(BT_HCI_OP_LE_SET_PER_ADV_ENABLE):
 		le_set_per_adv_enable(cmd, evt);
+		break;
+		
+	case BT_OCF(BT_HCI_OP_LE_PER_ADV_CHM_UPDATE):
+		le_per_adv_chm_update(cmd, evt);
 		break;
 #endif /* CONFIG_BT_CTLR_ADV_PERIODIC */
 #endif /* CONFIG_BT_BROADCASTER */

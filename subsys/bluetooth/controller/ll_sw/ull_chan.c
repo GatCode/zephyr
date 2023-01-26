@@ -68,6 +68,15 @@ uint8_t ll_chm_update(uint8_t const *const chm)
 	return 0;
 }
 
+uint8_t ll_per_adv_chm_update(uint8_t const *const chm)
+{
+	chan_map_set(chm);
+
+	(void)ull_adv_sync_chm_update();
+
+	return 0;
+}
+
 int ull_chan_reset(void)
 {
 	/* initialise connection channel map */
