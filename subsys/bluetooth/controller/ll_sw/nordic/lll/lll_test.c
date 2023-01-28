@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <zephyr/toolchain.h>
+#include <zephyr/sys/byteorder.h>
 
 #include <soc.h>
 
@@ -560,82 +561,6 @@ static uint8_t init(uint8_t chan, uint8_t phy, int8_t tx_power,
 	return ret;
 }
 
-static uint8_t init_jam(uint8_t chan, uint8_t phy, int8_t tx_power, void (*isr)(void *))
-{
-	int err;
-	uint8_t ret;
-
-	if (started) {
-		return BT_HCI_ERR_CMD_DISALLOWED;
-	}
-
-	/* start coarse timer */
-	cntr_start();
-
-	/* Setup resources required by Radio */
-	err = lll_hfclock_on_wait();
-	LL_ASSERT(err >= 0);
-
-	/* Reset Radio h/w */
-	radio_reset();
-	radio_isr_set(isr, NULL);
-
-#if defined(CONFIG_BT_CTLR_DF)
-	/* Reset  Radio DF */
-	radio_df_reset();
-#endif
-
-	/* Store value needed in Tx/Rx ISR */
-	if (phy < BT_HCI_LE_TX_PHY_CODED_S2) {
-		test_phy = BIT(phy - 1);
-		test_phy_flags = 1U;
-	} else {
-		test_phy = BIT(2);
-		test_phy_flags = 0U;
-	}
-
-	/* Setup Radio in Tx/Rx */
-	/* NOTE: No whitening in test mode. */
-	radio_phy_set(test_phy, test_phy_flags);
-
-	ret = tx_power_set(tx_power);
-
-	switch (chan) {
-	case 37:
-		radio_freq_chan_set(2);
-		break;
-
-	case 38:
-		radio_freq_chan_set(26);
-		break;
-
-	case 39:
-		radio_freq_chan_set(80);
-		break;
-
-	default:
-		if (chan < 11) {
-			radio_freq_chan_set(4 + (chan * 2U));
-		} else if (chan < 40) {
-			radio_freq_chan_set(28 + ((chan - 11) * 2U));
-		} else {
-			LL_ASSERT(0);
-		}
-		break;
-	}
-	
-	radio_aa_set((uint8_t *)&test_sync_word);
-	radio_crc_configure(0x65b, PDU_AC_CRC_IV);
-	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_DTM_PAYLOAD_SIZE_MAX,
-			    RADIO_PKT_CONF_PHY(test_phy) |
-			    RADIO_PKT_CONF_PDU_TYPE(IS_ENABLED(CONFIG_BT_CTLR_DF_CTE_TX) ?
-								RADIO_PKT_CONF_PDU_TYPE_DC :
-								RADIO_PKT_CONF_PDU_TYPE_AC) |
-			    RADIO_PKT_CONF_CTE(RADIO_PKT_CONF_CTE_DISABLED));
-
-	return ret;
-}
-
 static void payload_set(uint8_t type, uint8_t len, uint8_t cte_len, uint8_t cte_type)
 {
 	struct pdu_dtm *pdu = radio_pkt_scratch_get();
@@ -693,8 +618,6 @@ uint8_t ll_test_tx(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy,
 		   uint8_t cte_len, uint8_t cte_type, uint8_t switch_pattern_len,
 		   const uint8_t *ant_id, int8_t tx_power)
 {
-	DEBUG_RADIO_XTAL(1);
-
 	uint32_t start_us;
 	uint8_t err;
 	const bool cte_request = (cte_len > 0) ? true : false;
@@ -762,36 +685,86 @@ uint8_t ll_test_tx(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy,
 	return BT_HCI_ERR_SUCCESS;
 }
 
-uint8_t ll_jam(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy, int8_t tx_power)
+static void isr_done(void *param)
+{
+	uint8_t err;
+	
+	radio_status_reset();
+	radio_tmr_stop();
+	err = lll_hfclock_off();
+	LL_ASSERT(err >= 0);
+	cntr_stop();
+
+	DEBUG_RADIO_XTAL(0);
+}
+
+uint8_t ll_test_adv(uint8_t chan)
 {
 	DEBUG_RADIO_XTAL(1);
-
-	uint32_t start_us;
+	
 	uint8_t err;
 
-	if ((type > BT_HCI_TEST_PKT_PAYLOAD_01010101) || !phy ||
-	    (phy > BT_HCI_LE_TX_PHY_CODED_S2) || chan > 40) {
-		return BT_HCI_ERR_UNSUPP_FEATURE_PARAM_VAL;
+	cntr_start();
+	err = lll_hfclock_on_wait();
+	LL_ASSERT(err >= 0);
+	radio_reset();
+	tx_power_set(radio_tx_power_max_get());
+	radio_phy_set(PHY_1M, PHY_FLAGS_S8);
+	uint32_t aa = sys_cpu_to_le32(PDU_AC_ACCESS_ADDR);
+	radio_aa_set((uint8_t *)&aa);
+	radio_whiten_iv_set(chan);
+	radio_crc_configure(PDU_CRC_POLYNOMIAL, PDU_AC_CRC_IV); // TODO: use ll IV
+	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_AC_PAYLOAD_SIZE_MAX, PHY_1M);
+
+	switch (chan) {
+	case 37:
+		radio_freq_chan_set(2);
+		break;
+
+	case 38:
+		radio_freq_chan_set(26);
+		break;
+
+	case 39:
+		radio_freq_chan_set(80);
+		break;
+
+	default:
+		if (chan < 11) {
+			radio_freq_chan_set(4 + (chan * 2U));
+		} else if (chan < 40) {
+			radio_freq_chan_set(28 + ((chan - 11) * 2U));
+		} else {
+			LL_ASSERT(0);
+		}
+		break;
 	}
+	
+	struct pdu_adv *pdu = radio_pkt_scratch_get();
+	pdu->type = PDU_ADV_TYPE_NONCONN_IND;
+	pdu->tx_addr = BT_ADDR_LE_RANDOM;
 
-	err = init_jam(chan, phy, tx_power, isr_tx);
-	if (err) {
-		return err;
-	}
+	bt_addr_le_t addr;
+	addr.type = BT_ADDR_LE_RANDOM;
+	bt_rand(addr.a.val, 6);
+	BT_ADDR_SET_STATIC(&addr.a);
+	memcpy(&pdu->adv_ind.addr[0], &addr.a.val[0], BDADDR_SIZE);
 
-	tx_req++;
+	uint8_t company_id[] = { 0xAD, 0xDE };
+	uint8_t data[] = { 0xBE, 0xEF };
+	memset(&pdu->adv_ind.data[1], 5, 1);
+	memset(&pdu->adv_ind.data[2], BT_DATA_MANUFACTURER_DATA, 1);
+	memcpy(&pdu->adv_ind.data[3], &company_id[0], 2);
+	memcpy(&pdu->adv_ind.data[5], &data[0], 2);
 
-	payload_set(type, len, 0, BT_HCI_LE_TEST_CTE_TYPE_ANY);
+	pdu->len = BDADDR_SIZE + 6;
 
-	radio_tmr_tifs_set(0);
-	radio_switch_complete_and_b2b_tx(test_phy, test_phy_flags, test_phy, test_phy_flags);
+	radio_pkt_tx_set(pdu);
+	radio_isr_set(isr_done, NULL);
 
-	start_us = radio_tmr_start(1, cntr_cnt_get() + CNTR_MIN_DELTA, 0);
-	ARG_UNUSED(start_us);
-
+	radio_switch_complete_and_disable();
+	radio_tmr_start(1, cntr_cnt_get() + CNTR_MIN_DELTA, 0);
 	radio_tmr_end_capture();
-
-	started = true;
 
 	return BT_HCI_ERR_SUCCESS;
 }

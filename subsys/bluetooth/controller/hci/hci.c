@@ -3267,26 +3267,16 @@ static void le_tx_test(struct net_buf *buf, struct net_buf **evt)
 			    NULL, BT_HCI_TX_TEST_POWER_MAX_SET);
 
 	*evt = cmd_complete_status(status);
-
-	DEBUG_RADIO_XTAL(0);
 }
 
-static void le_jam(struct net_buf *buf, struct net_buf **evt)
+static void le_test_adv(struct net_buf *buf, struct net_buf **evt)
 {
-	struct bt_hci_cp_le_jam *cmd = (void *)buf->data;
-	uint16_t rx_pkt_count;
+	struct bt_hci_cp_le_test_adv *cmd = (void *)buf->data;
 	uint8_t status;
 
-	status = ll_jam(cmd->chan, cmd->len, BT_HCI_TEST_PKT_PAYLOAD_01010101,
-			    cmd->phy, BT_HCI_TX_TEST_POWER_MAX_SET);
-
-	status = ll_test_end(&rx_pkt_count);
-
-	ARG_UNUSED(rx_pkt_count);
+	status = ll_test_adv(cmd->chan);
 
 	*evt = cmd_complete_status(status);
-
-	DEBUG_RADIO_XTAL(0);
 }
 
 static void le_test_end(struct net_buf *buf, struct net_buf **evt)
@@ -4713,8 +4703,8 @@ static int controller_cmd_handle(uint16_t  ocf, struct net_buf *cmd,
 	case BT_OCF(BT_HCI_OP_LE_TX_TEST):
 		le_tx_test(cmd, evt);
 		break;
-	case BT_OCF(BT_HCI_OP_LE_JAM):
-		le_jam(cmd, evt);
+	case BT_OCF(BT_HCI_OP_LE_TEST_ADV):
+		le_test_adv(cmd, evt);
 		break;
 	case BT_OCF(BT_HCI_OP_LE_TEST_END):
 		le_test_end(cmd, evt);

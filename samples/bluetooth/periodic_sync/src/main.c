@@ -192,19 +192,19 @@ void my_work_handler(struct k_work *work)
 
 	for (uint8_t i = 0; i < 5; i++) {
 		// send
-		struct bt_hci_cp_le_jam *cp;
-		struct net_buf *buf;
+		// struct bt_hci_cp_le_jam *cp;
+		// struct net_buf *buf;
 
-		buf = bt_hci_cmd_create(BT_HCI_OP_LE_JAM, sizeof(*cp));
-		if (!buf) {
-			return -ENOBUFS;
-		}
+		// buf = bt_hci_cmd_create(BT_HCI_OP_LE_JAM, sizeof(*cp));
+		// if (!buf) {
+		// 	return -ENOBUFS;
+		// }
 
-		cp = net_buf_add(buf, sizeof(*cp));
-		cp->chan = send_channel;
-		cp->len = 255;
-		cp->phy = BT_HCI_LE_PHY_1M;
-		int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_JAM, buf);
+		// cp = net_buf_add(buf, sizeof(*cp));
+		// cp->chan = send_channel;
+		// cp->len = 255;
+		// cp->phy = BT_HCI_LE_PHY_1M;
+		// int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_JAM, buf);
 
 		k_sleep(K_USEC(1500));
 	}
@@ -255,6 +255,23 @@ void main(void)
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
 		return;
+	}
+
+	/* BT_HCI_OP_LE_TEST_ADV Test Loop */
+	while (true) {
+		struct bt_hci_cp_le_test_adv *cp;
+		struct net_buf *buf;
+
+		buf = bt_hci_cmd_create(BT_HCI_OP_LE_TEST_ADV, sizeof(*cp));
+		if (!buf) {
+			return -ENOBUFS;
+		}
+
+		cp = net_buf_add(buf, sizeof(*cp));
+		cp->chan = 37;
+		int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TEST_ADV, buf);
+
+		k_sleep(K_SECONDS(1));
 	}
 
 	printk("Scan callbacks register...");
@@ -329,24 +346,7 @@ void main(void)
 		}
 
 		while(1) {
-			// if(sync_chan_id <= 40) {
-			// 	k_timer_start(&my_timer, K_NO_WAIT, K_MSEC(sync_ival_ms));
-
-			// 	err = bt_le_per_adv_sync_delete(sync);
-			// 	if (err) {
-			// 		printk("failed (err %d)\n", err);
-			// 		return;
-			// 	}
-			// }
 			k_sleep(K_MSEC(1000));
 		}
-
-		// printk("Waiting for periodic sync lost...\n");
-		// err = k_sem_take(&sem_per_sync_lost, K_FOREVER);
-		// if (err) {
-		// 	printk("failed (err %d)\n", err);
-		// 	return;
-		// }
-		// printk("Periodic sync lost.\n");
 	} while (true);
 }
