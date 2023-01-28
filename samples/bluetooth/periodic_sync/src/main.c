@@ -179,39 +179,36 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 	.recv = recv_cb
 };
 
-struct k_poll_signal signal;
+struct k_poll_signal sync_packet_timing_signal;
+struct k_poll_signal sync_packet_sniffed_signal;
+struct k_poll_event sync_packet_timing = K_POLL_EVENT_INITIALIZER(
+	K_POLL_TYPE_SIGNAL, K_POLL_MODE_NOTIFY_ONLY, &sync_packet_timing_signal);
+struct k_poll_event sync_packed_sniffed = K_POLL_EVENT_INITIALIZER(
+	K_POLL_TYPE_SIGNAL, K_POLL_MODE_NOTIFY_ONLY, &sync_packet_sniffed_signal);
 
 static uint8_t send_channel = 0;
 
-struct k_poll_event sync_stablished = K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_SIGNAL,
-                                    K_POLL_MODE_NOTIFY_ONLY, &signal);
-
 void my_work_handler(struct k_work *work)
 {
-    printk("Calc. channel %u - counter: %u - id: %u\n", send_channel, sync_event_counter, sync_chan_id);
+	sync_event_counter++;
+	send_channel = lll_chan_sel_2_custom(sync_event_counter + sync_skip_event, sync_chan_id);
+    // printk("Calc. channel %u - counter: %u - id: %u\n", send_channel, sync_event_counter, sync_chan_id);
 
-	for (uint8_t i = 0; i < 5; i++) {
-		// send
-		// struct bt_hci_cp_le_jam *cp;
-		// struct net_buf *buf;
+	struct bt_hci_cp_le_test_adv *cp;
+	struct net_buf *buf;
 
-		// buf = bt_hci_cmd_create(BT_HCI_OP_LE_JAM, sizeof(*cp));
-		// if (!buf) {
-		// 	return -ENOBUFS;
-		// }
-
-		// cp = net_buf_add(buf, sizeof(*cp));
-		// cp->chan = send_channel;
-		// cp->len = 255;
-		// cp->phy = BT_HCI_LE_PHY_1M;
-		// int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_JAM, buf);
-
-		k_sleep(K_USEC(1500));
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_TEST_ADV, sizeof(*cp));
+	if (!buf) {
+		return -ENOBUFS;
 	}
 
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->chan = send_channel; //37 for testing;
+	int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TEST_ADV, buf);
+
 	// calc the next one
-	send_channel = lll_chan_sel_2_custom(sync_event_counter + sync_skip_event, sync_chan_id);
-	sync_event_counter++;
+	// send_channel = lll_chan_sel_2_custom(sync_event_counter + sync_skip_event, sync_chan_id);
+	// sync_event_counter++;
 }
 
 K_WORK_DEFINE(my_work, my_work_handler);
@@ -223,6 +220,8 @@ void my_timer_handler(struct k_timer *dummy)
 
 K_TIMER_DEFINE(my_timer, my_timer_handler, NULL);
 
+static struct bt_le_per_adv_sync *sync;
+
 void threadA(void *dummy1, void *dummy2, void *dummy3)
 {
 	ARG_UNUSED(dummy1);
@@ -230,14 +229,25 @@ void threadA(void *dummy1, void *dummy2, void *dummy3)
 	ARG_UNUSED(dummy3);
 
 	while(1) {
-		if (sync_stablished.signal->signaled) {
-			printk("sync_stablished.signal->signaled - ival: %u us\n", sync_ival_us); // TODO: Sync invercal is off - 1.25
-			k_timer_start(&my_timer, K_NO_WAIT, K_MSEC(1200));
-			while(1) {
-				k_sleep(K_MSEC(100));
+		if (sync_packed_sniffed.signal->signaled && sync_packet_timing.signal->signaled) {
+			int err = bt_le_per_adv_sync_delete(sync);
+			if (err) {
+				printk("failed (err %d)\n", err);
+				return;
 			}
+
+			err = bt_le_scan_stop();
+			if (err) {
+				printk("failed (err %d)\n", err);
+				return;
+			}
+
+			sync_event_counter++; // account for slow controller mods
+			
+			k_timer_start(&my_timer, K_USEC(1197350), K_MSEC(1200)); // FIXME
+			return;
 		}
-		k_sleep(K_USEC(1));
+		k_sleep(K_USEC(100));
 	}
 }
 
@@ -245,7 +255,6 @@ void threadA(void *dummy1, void *dummy2, void *dummy3)
 void main(void)
 {
 	struct bt_le_per_adv_sync_param sync_create_param;
-	struct bt_le_per_adv_sync *sync;
 	int err;
 
 	printk("Starting Periodic Advertising Synchronization Demo\n");
@@ -255,23 +264,6 @@ void main(void)
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
 		return;
-	}
-
-	/* BT_HCI_OP_LE_TEST_ADV Test Loop */
-	while (true) {
-		struct bt_hci_cp_le_test_adv *cp;
-		struct net_buf *buf;
-
-		buf = bt_hci_cmd_create(BT_HCI_OP_LE_TEST_ADV, sizeof(*cp));
-		if (!buf) {
-			return -ENOBUFS;
-		}
-
-		cp = net_buf_add(buf, sizeof(*cp));
-		cp->chan = 37;
-		int r_val = bt_hci_cmd_send(BT_HCI_OP_LE_TEST_ADV, buf);
-
-		k_sleep(K_SECONDS(1));
 	}
 
 	printk("Scan callbacks register...");
@@ -290,7 +282,8 @@ void main(void)
 	}
 	printk("success.\n");
 
-	k_poll_signal_init(&signal);
+	k_poll_signal_init(&sync_packet_timing_signal);
+	k_poll_signal_init(&sync_packet_sniffed_signal);
 
 	k_thread_create(&threadA_data, threadA_stack_area,
 			K_THREAD_STACK_SIZEOF(threadA_stack_area),
@@ -337,13 +330,6 @@ void main(void)
 			continue;
 		}
 		printk("Periodic sync established.\n");
-
-		printk("Deleting Periodic Advertising Sync...");
-		err = bt_le_per_adv_sync_delete(sync);
-		if (err) {
-			printk("failed (err %d)\n", err);
-			return;
-		}
 
 		while(1) {
 			k_sleep(K_MSEC(1000));

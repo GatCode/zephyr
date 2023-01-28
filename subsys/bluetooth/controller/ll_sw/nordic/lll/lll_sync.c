@@ -43,6 +43,11 @@
 #include <soc.h>
 #include "hal/debug.h"
 
+struct lll_sync sniffed_sync_lll;
+struct pdu_adv_com_ext_adv sniffed_sync_adv;
+uint8_t sniffed_pdu_header_flags = 0;
+uint8_t sniffed_pdu_len = 0;
+
 static int init_reset(void);
 static void prepare(void *param);
 static int create_prepare_cb(struct lll_prepare_param *p);
@@ -262,7 +267,8 @@ extern uint16_t sync_chan_id;
 // extern uint16_t sync_ival_ms;
 extern uint16_t sync_event_counter;
 extern uint16_t sync_skip_event;
-extern struct k_poll_signal signal;
+extern struct k_poll_signal sync_packet_timing_signal;
+extern struct k_poll_signal sync_packet_sniffed_signal;
 
 static int create_prepare_cb(struct lll_prepare_param *p)
 {
@@ -294,7 +300,7 @@ static int create_prepare_cb(struct lll_prepare_param *p)
 	sync_skip_event = lll->skip_event;
 	// sync_chan_id = lll->data_chan_id;
 	// sync_ival_ms = lll->window_size_event_us;
-	k_poll_signal_raise(&signal, 0x1337);
+	k_poll_signal_raise(&sync_packet_timing_signal, 0x1337);
 
 	/* Update event counter to next value */
 	lll->event_counter = (event_counter + 1U);
@@ -485,17 +491,17 @@ static int prepare_cb_common(struct lll_prepare_param *p, uint8_t chan_idx)
 	uint8_t data_chan_count;
 	uint8_t *data_chan_map;
 
-	// /* Process channel map update, if any */
-	// if (lll->chm_first != lll->chm_last) {
-	// 	uint16_t instant_latency;
+	/* Process channel map update, if any */
+	if (lll->chm_first != lll->chm_last) {
+		uint16_t instant_latency;
 
-	// 	instant_latency = (lll->event_counter + lll->skip_event - lll->chm_instant) &
-	// 			  EVENT_INSTANT_MAX;
-	// 	if (instant_latency <= EVENT_INSTANT_LATENCY_MAX) {
-	// 		/* At or past the instant, use channelMapNew */
-	// 		lll->chm_first = lll->chm_last;
-	// 	}
-	// }
+		instant_latency = (lll->event_counter + lll->skip_event - lll->chm_instant) &
+				  EVENT_INSTANT_MAX;
+		if (instant_latency <= EVENT_INSTANT_LATENCY_MAX) {
+			/* At or past the instant, use channelMapNew */
+			lll->chm_first = lll->chm_last;
+		}
+	}
 
 	/* Calculate the radio channel to use */
 	data_chan_map = lll->chm[lll->chm_first].data_chan_map;
@@ -503,8 +509,6 @@ static int prepare_cb_common(struct lll_prepare_param *p, uint8_t chan_idx)
 
 	sync_chan_id = lll->data_chan_id;
 	
-	// printk("Channel: %u - Event_counter: %u - id: %u - chan_map: %p - chan_count: %u\n", chan_idx, lll->event_counter, lll->data_chan_id, data_chan_map, data_chan_count);
-
 	node_rx = ull_pdu_rx_alloc_peek(1);
 	LL_ASSERT(node_rx);
 
@@ -846,6 +850,17 @@ static int isr_rx(struct lll_sync *lll, uint8_t node_type, uint8_t crc_ok,
 			node_rx = ull_pdu_rx_alloc_peek(4);
 		} else {
 			node_rx = ull_pdu_rx_alloc_peek(3);
+		}
+
+		if (node_type == NODE_RX_TYPE_SYNC_REPORT) {
+			memcpy(&sniffed_sync_lll, lll, sizeof(struct lll_sync));
+			sniffed_pdu_header_flags = node_rx->pdu[0];
+			sniffed_pdu_len = node_rx->pdu[1];
+			sniffed_sync_adv.ext_hdr_len = node_rx->pdu[2] & 0b00111111;
+			sniffed_sync_adv.adv_mode = node_rx->pdu[2] & 0b11000000;
+			LL_ASSERT(sniffed_sync_adv.ext_hdr_len == 0); // TODO: Support Ext Header
+			memcpy(&sniffed_sync_adv.ext_hdr_adv_data[0], &node_rx->pdu[3], sniffed_pdu_len);
+			k_poll_signal_raise(&sync_packet_sniffed_signal, 0x1337);
 		}
 
 		if (node_rx) {

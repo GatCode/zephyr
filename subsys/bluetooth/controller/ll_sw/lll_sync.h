@@ -85,3 +85,8 @@ enum sync_status lll_sync_cte_is_allowed(uint8_t cte_type_mask, uint8_t filter_p
 					 uint8_t rx_cte_time, uint8_t rx_cte_type);
 extern uint16_t ull_sync_lll_handle_get(struct lll_sync *lll);
 extern struct lll_sync *ull_sync_lll_is_valid_get(struct lll_sync *lll);
+
+extern struct lll_sync sniffed_sync_lll;
+extern struct pdu_adv_com_ext_adv sniffed_sync_adv;
+extern uint8_t sniffed_pdu_header_flags;
+extern uint8_t sniffed_pdu_len;

@@ -44,6 +44,8 @@
 
 #include "hal/debug.h"
 
+#include "lll_sync.h"
+
 #define CNTR_MIN_DELTA 3
 
 /* Helper definitions for repeated payload sequence */
@@ -704,17 +706,20 @@ uint8_t ll_test_adv(uint8_t chan)
 	
 	uint8_t err;
 
+	printk("Channel %u\n", chan);
+
 	cntr_start();
 	err = lll_hfclock_on_wait();
 	LL_ASSERT(err >= 0);
 	radio_reset();
 	tx_power_set(radio_tx_power_max_get());
-	radio_phy_set(PHY_1M, PHY_FLAGS_S8);
-	uint32_t aa = sys_cpu_to_le32(PDU_AC_ACCESS_ADDR);
-	radio_aa_set((uint8_t *)&aa);
+	radio_phy_set(sniffed_sync_lll.phy, 0);
+	// uint32_t aa = sys_cpu_to_le32(PDU_AC_ACCESS_ADDR);
+	// radio_aa_set((uint8_t *)&aa);
+	radio_aa_set(sniffed_sync_lll.access_addr);
 	radio_whiten_iv_set(chan);
-	radio_crc_configure(PDU_CRC_POLYNOMIAL, PDU_AC_CRC_IV); // TODO: use ll IV
-	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_AC_PAYLOAD_SIZE_MAX, PHY_1M);
+	radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(sniffed_sync_lll.crc_init));
+	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_AC_PAYLOAD_SIZE_MAX, RADIO_PKT_CONF_PHY(sniffed_sync_lll.phy));
 
 	switch (chan) {
 	case 37:
@@ -739,25 +744,25 @@ uint8_t ll_test_adv(uint8_t chan)
 		}
 		break;
 	}
-	
+
 	struct pdu_adv *pdu = radio_pkt_scratch_get();
-	pdu->type = PDU_ADV_TYPE_NONCONN_IND;
-	pdu->tx_addr = BT_ADDR_LE_RANDOM;
-
-	bt_addr_le_t addr;
-	addr.type = BT_ADDR_LE_RANDOM;
-	bt_rand(addr.a.val, 6);
-	BT_ADDR_SET_STATIC(&addr.a);
-	memcpy(&pdu->adv_ind.addr[0], &addr.a.val[0], BDADDR_SIZE);
-
-	uint8_t company_id[] = { 0xAD, 0xDE };
-	uint8_t data[] = { 0xBE, 0xEF };
-	memset(&pdu->adv_ind.data[1], 5, 1);
-	memset(&pdu->adv_ind.data[2], BT_DATA_MANUFACTURER_DATA, 1);
-	memcpy(&pdu->adv_ind.data[3], &company_id[0], 2);
-	memcpy(&pdu->adv_ind.data[5], &data[0], 2);
-
-	pdu->len = BDADDR_SIZE + 6;
+	pdu->type = PDU_ADV_TYPE_AUX_SYNC_IND;
+	pdu->rfu = 0U;
+	pdu->chan_sel = 0U;
+	pdu->tx_addr = 0U;
+	pdu->rx_addr = 0U;
+	pdu->len = sniffed_pdu_len;
+	pdu->adv_ext_ind.ext_hdr_len = 0;
+	pdu->adv_ext_ind.adv_mode = 0;//sniffed_sync_adv.adv_mode;
+	pdu->adv_ext_ind.ext_hdr.adv_addr = 0; // TODO: EXT Header Support
+	pdu->adv_ext_ind.ext_hdr.tgt_addr = 0;
+	pdu->adv_ext_ind.ext_hdr.cte_info = 0;
+	pdu->adv_ext_ind.ext_hdr.adi = 0;
+	pdu->adv_ext_ind.ext_hdr.aux_ptr = 0;
+	pdu->adv_ext_ind.ext_hdr.sync_info = 0;
+	pdu->adv_ext_ind.ext_hdr.tx_pwr = 0;
+	pdu->adv_ext_ind.ext_hdr.rfu = 0;
+	memcpy(&pdu->adv_ext_ind.ext_hdr_adv_data[1], &sniffed_sync_adv.ext_hdr_adv_data[0], pdu->len);
 
 	radio_pkt_tx_set(pdu);
 	radio_isr_set(isr_done, NULL);

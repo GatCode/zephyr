@@ -192,6 +192,7 @@ static int prepare_cb(struct lll_prepare_param *p)
 	{
 		radio_isr_set(isr_done, lll);
 		radio_switch_complete_and_disable();
+		DEBUG_RADIO_XTAL(1);
 	}
 
 	ticks_at_event = p->ticks_at_expire;
@@ -286,7 +287,7 @@ static void abort_cb(struct lll_prepare_param *prepare_param, void *param)
 
 static void isr_done(void *param)
 {
-	DEBUG_RADIO_XTAL(1);
+	DEBUG_RADIO_XTAL(0);
 	struct lll_adv_sync *lll = param;
 
 #if defined(CONFIG_BT_CTLR_DF_ADV_CTE_TX)
@@ -316,7 +317,6 @@ static void isr_done(void *param)
 	}
 
 	lll_isr_done(lll);
-	DEBUG_RADIO_XTAL(0);
 }
 
 #if defined(CONFIG_BT_CTLR_ADV_SYNC_PDU_BACK2BACK)
