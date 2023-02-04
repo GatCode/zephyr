@@ -129,31 +129,19 @@ static struct bt_le_scan_cb scan_callbacks = {
 	.recv = scan_recv,
 };
 
+extern bt_addr_le_t sniffed_bd_addr;
+bt_addr_le_t sniffed_bd_addr = {};
+
 static void sync_cb(struct bt_le_per_adv_sync *sync,
 		    struct bt_le_per_adv_sync_synced_info *info)
 {
-	char le_addr[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-
-	// printk("PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
-	//        "Interval 0x%04x (%u ms), PHY %s\n",
-	//        bt_le_per_adv_sync_get_index(sync), le_addr,
-	//        info->interval, info->interval * 5 / 4, phy2str(info->phy));
-
+	(void)memcpy(&sniffed_bd_addr, info->addr, sizeof(bt_addr_le_t));
 	k_sem_give(&sem_per_sync);
 }
 
 static void term_cb(struct bt_le_per_adv_sync *sync,
 		    const struct bt_le_per_adv_sync_term_info *info)
 {
-	char le_addr[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-
-	printk("PER_ADV_SYNC[%u]: [DEVICE]: %s sync terminated\n",
-	       bt_le_per_adv_sync_get_index(sync), le_addr);
-
 	k_sem_give(&sem_per_sync_lost);
 }
 
@@ -244,7 +232,7 @@ void threadA(void *dummy1, void *dummy2, void *dummy3)
 
 			sync_event_counter++; // account for slow controller mods
 			
-			k_timer_start(&my_timer, K_USEC(1197350), K_MSEC(1200)); // FIXME
+			k_timer_start(&my_timer, K_USEC(1198950), K_MSEC(1200)); // FIXME
 			return;
 		}
 		k_sleep(K_USEC(100));

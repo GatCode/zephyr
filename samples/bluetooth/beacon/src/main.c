@@ -54,7 +54,12 @@ static void bt_ready(int err)
 	printk("Bluetooth initialized\n");
 
 	/* Start advertising */
-	err = bt_le_adv_start(BT_LE_ADV_NCONN_IDENTITY, ad, ARRAY_SIZE(ad),
+	#define BT_LE_ADV_NCONN_IDENTITY_CUSTOM BT_LE_ADV_PARAM(BT_LE_ADV_OPT_USE_IDENTITY, \
+						 BT_GAP_ADV_FAST_INT_MIN_2, \
+						 BT_GAP_ADV_FAST_INT_MAX_2, \
+						 NULL)
+
+	err = bt_le_adv_start(BT_LE_ADV_NCONN_IDENTITY_CUSTOM, ad, ARRAY_SIZE(ad),
 			      sd, ARRAY_SIZE(sd));
 	if (err) {
 		printk("Advertising failed to start (err %d)\n", err);

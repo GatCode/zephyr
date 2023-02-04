@@ -689,6 +689,10 @@ uint8_t ll_test_tx(uint8_t chan, uint8_t len, uint8_t type, uint8_t phy,
 
 static void isr_done(void *param)
 {
+	DEBUG_RADIO_XTAL(1);
+	k_sleep(K_USEC(10));
+	DEBUG_RADIO_XTAL(0);
+
 	uint8_t err;
 	
 	radio_status_reset();
@@ -696,30 +700,43 @@ static void isr_done(void *param)
 	err = lll_hfclock_off();
 	LL_ASSERT(err >= 0);
 	cntr_stop();
-
-	DEBUG_RADIO_XTAL(0);
 }
 
+extern bt_addr_le_t sniffed_bd_addr; // MAC
+
 uint8_t ll_test_adv(uint8_t chan)
-{
-	DEBUG_RADIO_XTAL(1);
-	
+{	
 	uint8_t err;
 
 	printk("Channel %u\n", chan);
+	printk("AA: 0x%02x%02x%02x%02x\n", sniffed_sync_lll.access_addr[3], sniffed_sync_lll.access_addr[2], sniffed_sync_lll.access_addr[1], sniffed_sync_lll.access_addr[0]);
+	printk("MAC: %02x:%02x:%02x:%02x:%02x:%02x\n", sniffed_bd_addr.a.val[5], sniffed_bd_addr.a.val[4], sniffed_bd_addr.a.val[3], sniffed_bd_addr.a.val[2], sniffed_bd_addr.a.val[1], sniffed_bd_addr.a.val[0]);
+
+	// overwrite MAC
+	// NRF_FICR->DEVICEADDR[0] = 0xbec01c40UL;
+	// NRF_FICR->DEVICEADDR[1] = 0x00002f38UL;
+
+	// BT_ADDR_SET_NRPA(&sniffed_bd_addr.a);
+
+	// err = bt_id_create(&sniffed_bd_addr.a, NULL);
+	// if (err < 0) {
+	// 	printk("FUUUUUUUUUUUUUUUUUUUUUUUUUU\n");
+	// }
+
+	ll_addr_set(0, &sniffed_bd_addr.a);
+	ll_addr_set(1, &sniffed_bd_addr.a);
+
+	// adv_addr = adv_pdu_adva_get(pdu);
+	// memcpy(adv_addr, tx_addr, BDADDR_SIZE);
 
 	cntr_start();
-	err = lll_hfclock_on_wait();
-	LL_ASSERT(err >= 0);
+	lll_hfclock_on_wait();
 	radio_reset();
 	tx_power_set(radio_tx_power_max_get());
-	radio_phy_set(sniffed_sync_lll.phy, 0);
-	// uint32_t aa = sys_cpu_to_le32(PDU_AC_ACCESS_ADDR);
-	// radio_aa_set((uint8_t *)&aa);
+	radio_phy_set(PHY_2M, 0);
 	radio_aa_set(sniffed_sync_lll.access_addr);
-	radio_whiten_iv_set(chan);
+	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_AC_PAYLOAD_SIZE_MAX, RADIO_PKT_CONF_PHY(PHY_2M));
 	radio_crc_configure(PDU_CRC_POLYNOMIAL, sys_get_le24(sniffed_sync_lll.crc_init));
-	radio_pkt_configure(RADIO_PKT_CONF_LENGTH_8BIT, PDU_AC_PAYLOAD_SIZE_MAX, RADIO_PKT_CONF_PHY(sniffed_sync_lll.phy));
 
 	switch (chan) {
 	case 37:
@@ -745,6 +762,8 @@ uint8_t ll_test_adv(uint8_t chan)
 		break;
 	}
 
+	radio_whiten_iv_set(chan);
+
 	struct pdu_adv *pdu = radio_pkt_scratch_get();
 	pdu->type = PDU_ADV_TYPE_AUX_SYNC_IND;
 	pdu->rfu = 0U;
@@ -762,7 +781,9 @@ uint8_t ll_test_adv(uint8_t chan)
 	pdu->adv_ext_ind.ext_hdr.sync_info = 0;
 	pdu->adv_ext_ind.ext_hdr.tx_pwr = 0;
 	pdu->adv_ext_ind.ext_hdr.rfu = 0;
-	memcpy(&pdu->adv_ext_ind.ext_hdr_adv_data[1], &sniffed_sync_adv.ext_hdr_adv_data[0], pdu->len);
+	memcpy(&pdu->adv_ext_ind.ext_hdr_adv_data[0], &sniffed_sync_adv.ext_hdr_adv_data[0], pdu->len);
+
+	// memcpy(&pdu->adv_ind.addr[0], &sniffed_bd_addr.a, BDADDR_SIZE);
 
 	radio_pkt_tx_set(pdu);
 	radio_isr_set(isr_done, NULL);

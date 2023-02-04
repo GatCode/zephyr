@@ -6,7 +6,7 @@
 
 #include <zephyr/bluetooth/bluetooth.h>
 
-static uint8_t mfg_data[] = { 0xff, 0xff, 0x00 };
+static uint8_t mfg_data[] = { 0xad, 0xde, 0xbe, 0xef };
 
 static const struct bt_data ad[] = {
 	BT_DATA(BT_DATA_MANUFACTURER_DATA, mfg_data, 3),

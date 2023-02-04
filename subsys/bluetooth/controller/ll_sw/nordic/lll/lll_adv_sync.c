@@ -22,6 +22,7 @@
 #include "util/dbuf.h"
 
 #include "pdu.h"
+#include <zephyr/bluetooth/addr.h>
 
 #include "lll.h"
 #include "lll_vendor.h"
@@ -167,6 +168,14 @@ static int prepare_cb(struct lll_prepare_param *p)
 				sys_get_le24(lll->crc_init));
 	lll_chan_set(data_chan_use);
 	printk("Channel %u\n", data_chan_use);
+	// printk("PDU LEN %u\n", pdu->len);
+	// printk("AA: 0x%02x%02x%02x%02x\n", lll->access_addr[3], lll->access_addr[2], lll->access_addr[1], lll->access_addr[0]);
+	// NRF_FICR->DEVICEADDR[0]
+	bt_addr_t addrs;
+	sys_put_le32(NRF_FICR->DEVICEADDR[0], &addrs.val[0]);
+	sys_put_le16(NRF_FICR->DEVICEADDR[1], &addrs.val[4]);
+	// NRF_RADIO->DACNF = (1UL << RADIO_DACNF_TXADD0_Pos) & RADIO_DACNF_TXADD0_Msk; //  TODO: DISABLE!!!
+	printk("MAC: %02x:%02x:%02x:%02x:%02x:%02x | random: %u | TXADD in S0: %u\n", addrs.val[5], addrs.val[4], addrs.val[3], addrs.val[2], addrs.val[1], addrs.val[0], NRF_FICR->DEVICEADDRTYPE & FICR_DEVICEADDRTYPE_DEVICEADDRTYPE_Msk, NRF_RADIO->DACNF & RADIO_DACNF_TXADD0_Msk);
 
 	upd = 0U;
 	pdu = lll_adv_sync_data_latest_get(lll, NULL, &upd);
@@ -177,6 +186,13 @@ static int prepare_cb(struct lll_prepare_param *p)
 #else
 	cte_len_us = 0U;
 #endif /* CONFIG_BT_CTLR_DF_ADV_CTE_TX) */
+
+	printk("PDU TYPE: %u\n", pdu->type);
+	unsigned char *p1 = (void const *)pdu;
+	printk("PDU: \n");
+    for (size_t i=0; i<2+4+8; i++)
+        printk("%02x", p1[i]);
+    printk("\n");
 
 	radio_pkt_tx_set(pdu);
 
@@ -192,7 +208,6 @@ static int prepare_cb(struct lll_prepare_param *p)
 	{
 		radio_isr_set(isr_done, lll);
 		radio_switch_complete_and_disable();
-		DEBUG_RADIO_XTAL(1);
 	}
 
 	ticks_at_event = p->ticks_at_expire;
@@ -287,6 +302,8 @@ static void abort_cb(struct lll_prepare_param *prepare_param, void *param)
 
 static void isr_done(void *param)
 {
+	DEBUG_RADIO_XTAL(1);
+	k_sleep(K_USEC(10));
 	DEBUG_RADIO_XTAL(0);
 	struct lll_adv_sync *lll = param;
 
