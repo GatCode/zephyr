@@ -12,7 +12,7 @@ static bool per_adv_found;
 static bt_addr_le_t per_addr;
 static uint8_t per_sid;
 
-uint8_t per_adv_channel_map[5]; // EXTERN VAR
+extern uint8_t per_adv_channel_map[5];
 
 static K_SEM_DEFINE(sem_per_adv, 0, 1);
 static K_SEM_DEFINE(sem_per_sync, 0, 1);

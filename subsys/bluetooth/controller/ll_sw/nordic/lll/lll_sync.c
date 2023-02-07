@@ -72,7 +72,7 @@ static enum sync_status sync_filtrate_by_cte_type(uint8_t cte_type_mask, uint8_t
 
 static uint8_t trx_cnt;
 
-extern uint8_t per_adv_channel_map[5];
+uint8_t per_adv_channel_map[5];
 
 int lll_sync_init(void)
 {
