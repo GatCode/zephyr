@@ -72,6 +72,8 @@ static enum sync_status sync_filtrate_by_cte_type(uint8_t cte_type_mask, uint8_t
 
 static uint8_t trx_cnt;
 
+extern uint8_t per_adv_channel_map[5];
+
 int lll_sync_init(void)
 {
 	int err;
@@ -1414,6 +1416,9 @@ static uint8_t data_channel_calc(struct lll_sync *lll)
 
 	/* Calculate the radio channel to use */
 	data_chan_map = lll->chm[lll->chm_first].data_chan_map;
+	(void)memset(&per_adv_channel_map[0], 0, 5);
+	(void)memcpy(&per_adv_channel_map[0], &data_chan_map[0], 5);
+
 	data_chan_count = lll->chm[lll->chm_first].data_chan_count;
 	return lll_chan_sel_2(lll->event_counter + lll->skip_event, lll->data_chan_id,
 			      data_chan_map, data_chan_count);
