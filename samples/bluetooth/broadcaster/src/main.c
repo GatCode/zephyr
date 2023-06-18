@@ -1,63 +1,94 @@
-/* main.c - Application main entry point */
-
-/*
- * Copyright (c) 2015-2016 Intel Corporation
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include <zephyr/types.h>
 #include <stddef.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
 
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/hci.h>
+#include <zephyr/kernel.h>
+#include <zephyr/init.h>
+#include <nrfx_timer.h>
+#include <nrfx_dppi.h>
+#include <nrfx_i2s.h>
+#include <nrfx_ipc.h>
 
-static uint8_t mfg_data[] = { 0xff, 0xff, 0x00 };
+#define AUDIO_SYNC_TIMER_INSTANCE_NUMBER 1
 
-static const struct bt_data ad[] = {
-	BT_DATA(BT_DATA_MANUFACTURER_DATA, mfg_data, 3),
+#define AUDIO_SYNC_TIMER_I2S_FRAME_START_EVT_CAPTURE NRF_TIMER_TASK_CAPTURE0
+
+#define AUDIO_SYNC_TIMER_NET_APP_IPC_EVT NRF_IPC_EVENT_RECEIVE_4
+
+const nrfx_timer_t audio_sync_timer_instance =
+	NRFX_TIMER_INSTANCE(AUDIO_SYNC_TIMER_INSTANCE_NUMBER);
+
+static uint8_t dppi_channel_timer_clear;
+static uint8_t dppi_channel_i2s_frame_start;
+
+static nrfx_timer_config_t cfg = {
+	.frequency = NRFX_MHZ_TO_HZ(1UL),
+	.mode = NRF_TIMER_MODE_TIMER,
+	.bit_width = NRF_TIMER_BIT_WIDTH_32,
+	.interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,
+	.p_context = NULL
 };
+
+static void event_handler(nrf_timer_event_t event_type, void *ctx)
+{
+}
+
+static int audio_sync_timer_init(void)
+{
+	nrfx_err_t ret;
+
+	ret = nrfx_timer_init(&audio_sync_timer_instance, &cfg, event_handler);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		printk("nrfx timer init error - Return value: %d\n", ret);
+		return ret;
+	}
+
+	nrfx_timer_enable(&audio_sync_timer_instance);
+
+	/* Initialize capturing of I2S frame start event timestamps */
+	ret = nrfx_dppi_channel_alloc(&dppi_channel_i2s_frame_start);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		printk("nrfx DPPI channel alloc error (I2S frame start) - Return value: %d\n", ret);
+		return ret;
+	}
+
+	nrf_timer_subscribe_set(audio_sync_timer_instance.p_reg,
+				AUDIO_SYNC_TIMER_I2S_FRAME_START_EVT_CAPTURE,
+				dppi_channel_i2s_frame_start);
+	nrf_i2s_publish_set(NRF_I2S0, NRF_I2S_EVENT_FRAMESTART, dppi_channel_i2s_frame_start);
+	ret = nrfx_dppi_channel_enable(dppi_channel_i2s_frame_start);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		printk("nrfx DPPI channel enable error (I2S frame start) - Return value: %d\n", ret);
+		return ret;
+	}
+
+	/* Initialize functionality for synchronization between APP and NET core */
+	ret = nrfx_dppi_channel_alloc(&dppi_channel_timer_clear);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		printk("nrfx DPPI channel alloc error (timer clear) - Return value: %d\n", ret);
+		return ret;
+	}
+
+	nrf_ipc_publish_set(NRF_IPC, AUDIO_SYNC_TIMER_NET_APP_IPC_EVT, dppi_channel_timer_clear);
+	nrf_timer_subscribe_set(audio_sync_timer_instance.p_reg, NRF_TIMER_TASK_CLEAR,
+				dppi_channel_timer_clear);
+	ret = nrfx_dppi_channel_enable(dppi_channel_timer_clear);
+	if (ret - NRFX_ERROR_BASE_NUM) {
+		printk("nrfx DPPI channel enable error (timer clear) - Return value: %d\n", ret);
+		return ret;
+	}
+
+	printk("Audio sync timer initialized\n");
+
+	return 0;
+}
+
+SYS_INIT(audio_sync_timer_init, POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
 int main(void)
 {
-	int err;
-
-	printk("Starting Broadcaster\n");
-
-	/* Initialize the Bluetooth Subsystem */
-	err = bt_enable(NULL);
-	if (err) {
-		printk("Bluetooth init failed (err %d)\n", err);
-		return 0;
+	while(1) {
+		k_msleep(1000);
 	}
-
-	printk("Bluetooth initialized\n");
-
-	do {
-		k_msleep(1000);
-
-		printk("Sending advertising data: 0x%02X\n", mfg_data[2]);
-
-		/* Start advertising */
-		err = bt_le_adv_start(BT_LE_ADV_NCONN, ad, ARRAY_SIZE(ad),
-				      NULL, 0);
-		if (err) {
-			printk("Advertising failed to start (err %d)\n", err);
-			return 0;
-		}
-
-		k_msleep(1000);
-
-		err = bt_le_adv_stop();
-		if (err) {
-			printk("Advertising failed to stop (err %d)\n", err);
-			return 0;
-		}
-
-		mfg_data[2]++;
-
-	} while (1);
-	return 0;
 }
