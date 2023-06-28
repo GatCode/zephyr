@@ -17,6 +17,8 @@
 #include "util/memq.h"
 #include "util/dbuf.h"
 
+#include <nrfx_ipc.h>
+
 #include "pdu_df.h"
 #include "pdu_vendor.h"
 #include "pdu.h"
@@ -521,6 +523,8 @@ static void isr_rx(void *param)
 		radio_tmr_aa_save(radio_tmr_aa_get() - se_offset_us);
 		radio_tmr_ready_save(radio_tmr_ready_get() - se_offset_us);
 	}
+
+	nrf_ipc_task_trigger(NRF_IPC, NRF_IPC_TASK_SEND_4);
 
 	/* Close subevent, one tx-rx chain */
 	radio_switch_complete_and_disable();
